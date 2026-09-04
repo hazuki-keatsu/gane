@@ -1,0 +1,9 @@
+[package]
+name = "gane_parser"
+edition = "2024"
+version.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow = "1"
+thiserror = "2"
