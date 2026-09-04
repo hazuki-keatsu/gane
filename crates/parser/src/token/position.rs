@@ -98,6 +98,32 @@ impl Pos {
     pub fn is_valid(self) -> bool {
         self != NoPos
     }
+
+    /// Constructs a `Pos` from a raw integer.
+    ///
+    /// Crate-internal only: the `go/ast` port needs to build positions from
+    /// raw offsets (mirroring Go's `token.Pos(n)` conversions).
+    pub(crate) const fn from_int(n: i64) -> Pos {
+        Pos(n)
+    }
+}
+
+// Pos arithmetic: Go's `ast` code does raw integer arithmetic on token.Pos
+// (e.g. `End() = p + int(len(...))`), and Go tests write token.Pos(n) directly.
+impl core::ops::Add<i64> for Pos {
+    type Output = Pos;
+
+    fn add(self, n: i64) -> Pos {
+        Pos(self.0 + n)
+    }
+}
+
+impl core::ops::Sub<i64> for Pos {
+    type Output = Pos;
+
+    fn sub(self, n: i64) -> Pos {
+        Pos(self.0 - n)
+    }
 }
 
 impl fmt::Display for Pos {
