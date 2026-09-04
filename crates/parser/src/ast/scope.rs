@@ -2,26 +2,41 @@
 //!
 //! Ported from Go's standard `go/ast/scope.go` package (the deprecated
 //! syntactic scope/object machinery, kept for structural compatibility with
-//! `go/ast`). Deprecated in favor of the type checker; nothing in this round
-//! populates [`Object::decl`]/[`Object::data`].
+//! `go/ast`). Deprecated in favor of the type checker.
+//!
+//! `parser::resolver` (go/parser/resolver.go) populates
+//! [`Object::decl`]/[`Object::data`] and [`Ident::obj`] during deprecated
+//! identifier resolution. Go's `Object.Decl` points at the very node that
+//! lives inside the file's declaration list; in this port the AST is
+//! owned-by-value, so `Object::decl` holds a by-value copy made at
+//! declaration time (it is never updated afterwards, which also keeps the
+//! `Scope`/`Object`/`decl` graph free of cycles).
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
 
 use crate::token::{NoPos, Pos};
 
-use super::ast::{AssignStmt, Expr, Field, FuncDecl, ImportSpec, LabeledStmt, TypeSpec, ValueSpec};
+use super::ast::{
+    AssignStmt, Expr, Field, FuncDecl, Ident, ImportSpec, LabeledStmt, TypeSpec, ValueSpec,
+};
 
 /// A Scope maintains the set of named language entities declared
 /// in the scope and a link to the immediately surrounding (outer)
 /// scope.
 ///
 /// Deprecated: use the type checker instead; see [`Object`].
+///
+/// The object map is interior-mutable (`RefCell`): scopes are shared through
+/// `Rc` (a child scope's `outer` link holds an `Rc` of its parent), and the
+/// resolver inserts into a scope that may already be shared - exactly like
+/// Go, where scopes are plain pointers and maps are mutated in place.
 #[derive(Clone, Debug)]
 pub struct Scope {
     pub outer: Option<Rc<Scope>>,
-    pub objects: BTreeMap<String, Rc<Object>>,
+    objects: RefCell<BTreeMap<String, Rc<Object>>>,
 }
 
 impl Scope {
@@ -29,25 +44,26 @@ impl Scope {
     pub fn new_scope(outer: Option<Rc<Scope>>) -> Scope {
         Scope {
             outer,
-            objects: BTreeMap::new(),
+            objects: RefCell::new(BTreeMap::new()),
         }
     }
 
     /// Returns the object with the given name if it is found in scope `s`,
     /// otherwise it returns `None`. Outer scopes are ignored.
     pub fn lookup(&self, name: &str) -> Option<Rc<Object>> {
-        self.objects.get(name).cloned()
+        self.objects.borrow().get(name).cloned()
     }
 
     /// Attempts to insert a named object `obj` into the scope.
     /// If the scope already contains an object `alt` with the same name,
     /// Insert leaves the scope unchanged and returns `alt`. Otherwise
     /// it inserts `obj` and returns `None`.
-    pub fn insert(&mut self, obj: Rc<Object>) -> Option<Rc<Object>> {
-        if let Some(alt) = self.objects.get(&obj.name) {
+    pub fn insert(&self, obj: Rc<Object>) -> Option<Rc<Object>> {
+        let mut objects = self.objects.borrow_mut();
+        if let Some(alt) = objects.get(&obj.name) {
             return Some(alt.clone());
         }
-        self.objects.insert(obj.name.clone(), obj);
+        objects.insert(obj.name.clone(), obj);
         None
     }
 }
@@ -60,9 +76,10 @@ impl Scope {
 impl fmt::Display for Scope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "scope @<no-address> {{")?;
-        if !self.objects.is_empty() {
+        let objects = self.objects.borrow();
+        if !objects.is_empty() {
             writeln!(f)?;
-            for obj in self.objects.values() {
+            for obj in objects.values() {
                 writeln!(f, "\t{} {}\n", obj.kind, obj.name)?;
             }
         }
@@ -97,7 +114,13 @@ pub struct Object {
 }
 
 /// The closed set of Go's `Object.Decl any` values: the corresponding Field,
-/// XxxSpec, FuncDecl, LabeledStmt, AssignStmt, or Scope; or nil.
+/// XxxSpec, FuncDecl, LabeledStmt, AssignStmt, Scope, or Ident; or nil.
+///
+/// [`ObjectDecl::Ident`] carries receiver type parameters
+/// (go.dev/issue/50956): the resolver writes such objects into scopes but
+/// never sets them as the resolved object of an Ident. The values are
+/// by-value copies of the nodes in the file's declaration list (see the
+/// module documentation).
 #[derive(Clone, Debug)]
 pub enum ObjectDecl {
     Field(Field),
@@ -107,6 +130,7 @@ pub enum ObjectDecl {
     FuncDecl(FuncDecl),
     LabeledStmt(LabeledStmt),
     AssignStmt(AssignStmt),
+    Ident(Ident),
     Scope(Rc<Scope>),
 }
 
@@ -182,6 +206,11 @@ impl Object {
                     }
                 }
             }
+            Some(ObjectDecl::Ident(id)) => {
+                if &id.name == name {
+                    return id.name_pos;
+                }
+            }
             Some(ObjectDecl::Scope(_)) => {
                 // predeclared object - nothing to do for now
             }
@@ -252,10 +281,10 @@ mod tests {
 
     #[test]
     fn scope_lookup_insert() {
-        let mut outer_scope = Scope::new_scope(None);
-        outer_scope.objects.insert("y".into(), obj("y"));
+        let outer_scope = Scope::new_scope(None);
         let outer = Rc::new(outer_scope);
-        let mut s = Scope::new_scope(Some(outer.clone()));
+        outer.insert(obj("y"));
+        let s = Scope::new_scope(Some(outer.clone()));
 
         // Lookup in an empty scope returns None.
         assert!(s.lookup("x").is_none());

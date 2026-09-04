@@ -116,15 +116,15 @@ pub enum Token {
 impl Token {
     fn to_str(&self) -> &str {
         match self {
-            Self::Illegal => "Illegal",
+            Self::Illegal => "ILLEGAL",
             Self::EOF => "EOF",
-            Self::Comment => "Comment",
-            Self::Ident => "Ident",
-            Self::Int => "Int",
-            Self::Float => "Float",
-            Self::Imag => "Imag",
-            Self::Char => "Char",
-            Self::String => "String",
+            Self::Comment => "COMMENT",
+            Self::Ident => "IDENT",
+            Self::Int => "INT",
+            Self::Float => "FLOAT",
+            Self::Imag => "IMAG",
+            Self::Char => "CHAR",
+            Self::String => "STRING",
             Self::Add => "+",
             Self::Sub => "-",
             Self::Mul => "*",
@@ -323,6 +323,9 @@ impl Token {
                 | Token::Var
         )
     }
+
+    /// Lowest possible precedence of an operator (0 is the lowest precedence).
+    pub const LOWEST_PREC: i8 = 0;
 
     /// Get the precedence of token
     ///

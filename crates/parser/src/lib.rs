@@ -1,4 +1,4 @@
-mod scanner;
-mod token;
 mod ast;
 mod parser;
+mod scanner;
+mod token;

@@ -1,0 +1,3 @@
+# Parser test fixtures are byte-level input for the Go parser port; they must
+# stay LF regardless of core.autocrlf (position arithmetic is byte-based).
+crates/parser/src/parser/testdata/** text eol=lf
