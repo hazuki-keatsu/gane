@@ -1,5 +1,5 @@
-pub mod scanner;
 pub mod error;
+pub mod scanner;
 
-use scanner::*;
-use error::*;
+pub use error::*;
+pub use scanner::*;

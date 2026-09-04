@@ -5,7 +5,7 @@
 //! and provides features like string representation, keyword lookup,
 //! category checks, and priority calculations.
 
-#[derive(Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(usize)]
 pub enum Token {
     // Special
