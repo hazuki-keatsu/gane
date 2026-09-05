@@ -10,7 +10,7 @@
 //!   `File.Comments`) is intentionally not ported: comments are discarded by
 //!   the scanner and carry no meaning for the compiler;
 //! - Go pointer fields become `Box<T>` (singly-owned subtrees) or `Option<T>`
-//!   (nil-able), with `Rc<T>` only where Go shares nodes (`Scope`/`Object`).
+//!   (nil-able).
 //!
 //! Syntax trees may be constructed directly, but they are typically produced
 //! from Go source code by the parser.
@@ -24,11 +24,8 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::rc::Rc;
 
 use crate::token::{NO_POS, Pos, Token};
-
-use super::scope::{Object, Scope};
 
 // ----------------------------------------------------------------------------
 // Channel direction
@@ -157,9 +154,8 @@ pub struct BadExpr {
 /// An Ident node represents an identifier.
 #[derive(Clone, Debug)]
 pub struct Ident {
-    pub name_pos: Pos,           // identifier position
-    pub name: String,            // identifier name
-    pub obj: Option<Rc<Object>>, // denoted object, or nil. Deprecated: see Object.
+    pub name_pos: Pos, // identifier position
+    pub name: String,  // identifier name
 }
 
 /// An Ellipsis node stands for the "..." type in a
@@ -624,7 +620,6 @@ pub fn new_ident(name: impl Into<String>) -> Ident {
     Ident {
         name_pos: NO_POS,
         name: name.into(),
-        obj: None,
     }
 }
 
@@ -1220,9 +1215,7 @@ pub struct File {
 
     pub file_start: Pos, // start and end of entire file
     pub file_end: Pos,
-    pub scope: Option<Rc<Scope>>, // package scope (this file only). Deprecated: see Object
     pub imports: Vec<ImportSpec>, // imports in this file
-    pub unresolved: Vec<Ident>,   // unresolved identifiers in this file. Deprecated: see Object
 }
 
 impl File {
@@ -1247,14 +1240,10 @@ impl File {
 }
 
 /// A Package node represents a set of source files collectively building a Go package.
-///
-/// Deprecated: use the type checker instead; see [`Object`].
 #[derive(Clone, Debug)]
 pub struct Package {
-    pub name: String,                          // package name
-    pub scope: Option<Rc<Scope>>,              // package scope across all files
-    pub imports: BTreeMap<String, Rc<Object>>, // map of package id -> package object
-    pub files: BTreeMap<String, File>,         // Go source files by filename
+    pub name: String,
+    pub files: BTreeMap<String, File>, // Go source files by filename
 }
 
 impl Package {
@@ -1405,7 +1394,6 @@ mod tests {
         let id = new_ident("main");
         assert!(!id.name_pos.is_valid());
         assert_eq!(id.name, "main");
-        assert!(id.obj.is_none());
         assert!(!is_exported("main"));
         assert!(is_exported("Main"));
         assert!(!id.is_exported());
@@ -1435,7 +1423,6 @@ mod tests {
         let id = Ident {
             name_pos: Pos::from_int(10),
             name: "foo".into(),
-            obj: None,
         };
         assert_eq!(id.pos(), Pos::from_int(10));
         assert_eq!(id.end(), Pos::from_int(13)); // 10 + len("foo")
@@ -1467,7 +1454,6 @@ mod tests {
         let id = Ident {
             name_pos: Pos::from_int(5),
             name: "y".into(),
-            obj: None,
         };
         let e = Expr::Ident(id);
         assert_eq!(e.pos(), Pos::from_int(5));
@@ -1501,9 +1487,7 @@ mod tests {
             decls: vec![],
             file_start: Pos::from_int(0),
             file_end: Pos::from_int(40),
-            scope: None,
             imports: vec![],
-            unresolved: vec![],
         };
         assert_eq!(f.pos(), Pos::from_int(30));
         // empty decls: falls back to name.end() = NO_POS + len("p") = Pos(1)

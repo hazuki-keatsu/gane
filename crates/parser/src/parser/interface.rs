@@ -4,9 +4,7 @@
 //! providing the exported parser entry points. The Rust port deviates from
 //! Go in the ways described in the [`super`] module documentation; in
 //! particular, `Mode` drops the `ParseComments` and `Trace` bits (comments
-//! are not collected and tracing is not ported). Deprecated identifier
-//! resolution (resolver.go) is ported and runs unless
-//! `SKIP_OBJECT_RESOLUTION` is set, like Go.
+//! are not collected and tracing is not ported).
 //!
 //! Go's `readSource` is dropped: the entry points always take `&[u8]` source
 //! (file reading happens at the call site, and the Go test files read their
@@ -17,9 +15,7 @@ use std::fs;
 use std::ops::{BitAnd, BitOr};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 
-use std::rc::Rc;
-
-use crate::ast::{Expr, File, Package, Scope, new_ident};
+use crate::ast::{Expr, File, Package, new_ident};
 use crate::scanner::ErrorList;
 use crate::token::{FileSet, NO_POS, Pos};
 
@@ -43,10 +39,6 @@ pub const DECLARATION_ERRORS: Mode = Mode(1 << 4);
 
 /// Same as AllErrors, for backward-compatibility.
 pub const SPURIOUS_ERRORS: Mode = Mode(1 << 5);
-
-/// Skip the deprecated identifier resolution (resolver.go); see
-/// [`parse_file`]. Recommended by Go for new programs.
-pub const SKIP_OBJECT_RESOLUTION: Mode = Mode(1 << 6);
 
 /// AllErrors is a legacy alias for SpuriousErrors.
 pub const ALL_ERRORS: Mode = SPURIOUS_ERRORS;
@@ -84,9 +76,7 @@ fn catch_bailout<T>(f: impl FnOnce() -> T) -> Result<T, Bailout> {
     }
 }
 
-/// Implements Go's `else if bail.msg != ""` branch of the ParseFile defer
-/// (interface.go:104-106): a bailout that carries a message (object
-/// resolution exceeding the scope depth) is reported as an error.
+/// Adds a non-empty bailout message to the parse error list.
 fn add_bailout_msg(
     errors: &std::rc::Rc<std::cell::RefCell<ErrorList>>,
     file: &crate::token::File,
@@ -107,8 +97,7 @@ fn add_bailout_msg(
 /// source code); the second result is the (sorted) error list.
 ///
 /// (Go's nil-fset panic and source-reading paths are dropped: `fset` cannot
-/// be nil in this port, and the source is always provided via `src`. Object
-/// resolution runs unless `SKIP_OBJECT_RESOLUTION` is set, like Go.)
+/// be nil in this port, and the source is always provided via `src`.)
 pub fn parse_file(
     fset: &mut FileSet,
     filename: &str,
@@ -132,18 +121,13 @@ pub fn parse_file(
         None => {
             // source is not a valid Go source file - satisfy the ParseFile
             // API and return a valid (but) empty *ast.File
-            // (Go: Name: new(ast.Ident), Scope: ast.NewScope(nil); the empty
-            // file carries an empty scope like Go's, which is what every
-            // successfully parsed file carries too.)
             File {
                 package: NO_POS,
                 name: new_ident(""),
                 decls: Vec::new(),
                 file_start: NO_POS,
                 file_end: NO_POS,
-                scope: Some(Rc::new(Scope::new_scope(None))),
                 imports: Vec::new(),
-                unresolved: Vec::new(),
             }
         }
     };
@@ -238,8 +222,6 @@ pub fn parse_dir(
             let name = src.name.name.clone();
             let pkg = pkgs.entry(name.clone()).or_insert_with(|| Package {
                 name,
-                scope: None,
-                imports: BTreeMap::new(),
                 files: BTreeMap::new(),
             });
             pkg.files.insert(filename, src);

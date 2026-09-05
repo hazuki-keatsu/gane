@@ -9,9 +9,8 @@
 //!   `lineFor` are not ported; `next0` is a single `Scanner::scan`, and
 //!   `next` collapses into it (the scanner never returns comment tokens);
 //! - `expectSemi` no longer returns the line comment, so it returns `()`;
-//! - Go's `bailout` panic is a private zero-sized `Bailout` marker (its
-//!   `pos`/`msg` fields are only populated when bailing out of object
-//!   resolution, which is not ported);
+//! - Go's `bailout` panic is a private marker used for early termination
+//!   after too many parse errors;
 //! - Go's `incNestLev`/`decNestLev` pair is adapted to a nesting guard
 //!   ([`NestGuard`]) built on `Rc<Cell<i32>>` so that the guard does not
 //!   borrow the parser while further `&mut self` calls are made;
@@ -26,9 +25,7 @@ use crate::ast::*;
 use crate::scanner::{ErrorHandler, ErrorList, Mode as ScannerMode, Scanner};
 use crate::token::{File, NO_POS, Pos, Token};
 
-use super::interface::{
-    ALL_ERRORS, DECLARATION_ERRORS, IMPORTS_ONLY, Mode, PACKAGE_CLAUSE_ONLY, SKIP_OBJECT_RESOLUTION,
-};
+use super::interface::{ALL_ERRORS, DECLARATION_ERRORS, IMPORTS_ONLY, Mode, PACKAGE_CLAUSE_ONLY};
 
 /// The parser structure holds the parser's internal state.
 pub(crate) struct Parser<'src> {
@@ -341,7 +338,6 @@ impl<'src> Parser<'src> {
         Ident {
             name_pos: pos,
             name,
-            obj: None,
         }
     }
 
@@ -388,8 +384,7 @@ impl<'src> Parser<'src> {
         typ
     }
 
-    /// If the result is an identifier, it is not resolved.
-    /// (Go's comment; identifier resolution happens in the resolver pass.)
+    /// If the result is an identifier, it is retained as source syntax.
     fn parse_type_name(&mut self, ident: Option<Ident>) -> Expr {
         let ident = match ident {
             Some(ident) => ident,
@@ -943,9 +938,7 @@ impl<'src> Parser<'src> {
                             self.error(ellipsis_pos, "invalid use of ...".to_string());
                         }
                     }
-                    // use T instead of invalid ...T
-                    // (Go's TODO(gri) about the resolver is obsolete: there
-                    // is no identifier resolution in this port)
+                    // Use T instead of invalid ...T.
                     f.typ = Some(Expr::BadExpr(BadExpr { from, to }));
                 }
             }
@@ -1755,7 +1748,6 @@ impl<'src> Parser<'src> {
                             let sel = Ident {
                                 name_pos: pos,
                                 name: "_".to_string(),
-                                obj: None,
                             };
                             x = Expr::SelectorExpr(Box::new(SelectorExpr { x, sel }));
                         }
@@ -1931,9 +1923,7 @@ impl<'src> Parser<'src> {
         x
     }
 
-    /// If lhs is set, result list elements which are identifiers are not
-    /// resolved. (Go's comment; identifier resolution happens in the
-    /// resolver pass.)
+    /// Parses a comma-separated expression list.
     fn parse_expr_list(&mut self) -> Vec<Expr> {
         let mut list: Vec<Expr> = Vec::new();
         list.push(self.parse_expr());
@@ -2020,11 +2010,8 @@ fn expr_end(tok: Token) -> bool {
 ///
 /// (Go uses `1e5`, which is only reachable because goroutine stacks grow;
 /// Rust threads have fixed-size stacks, so the guard is lowered to 1e4.
-/// Deviation from Go: 1e5 -> 1e4. The value must stay well above the
-/// resolver's scope depth limit (`MAX_SCOPE_DEPTH`, 1e3): Go's tests nest
-/// ~1000 levels of `if` to trip the resolver, which parses fine only when
-/// the parser guard is at least an order of magnitude larger. Deep tests
-/// run on dedicated large-stack threads.)
+/// Deviation from Go: 1e5 -> 1e4. Deep tests run on dedicated large-stack
+/// threads.)
 const MAX_NEST_LEV: i32 = 10_000;
 
 /// A guard that decrements the parser's nesting depth counter when dropped,
@@ -3057,9 +3044,7 @@ impl<'src> Parser<'src> {
     /// the caller then fabricates an empty file like Go's ParseFile defer
     /// does.
     ///
-    /// (Go calls resolveFile at the end unless SkipObjectResolution is set;
-    /// see the resolution block below. FileStart/FileEnd are set by the
-    /// caller.)
+    /// FileStart/FileEnd are set by the caller.
     pub(crate) fn parse_file(&mut self) -> Option<AstFile> {
         // Don't bother parsing the rest if we had errors scanning the first token.
         // Likely not a Go source file at all.
@@ -3109,27 +3094,14 @@ impl<'src> Parser<'src> {
             }
         }
 
-        let mut f = AstFile {
+        let f = AstFile {
             package: pos,
             name: ident,
             decls,
             file_start: NO_POS, // set by the caller, like Go's ParseFile defer
             file_end: NO_POS,
-            scope: None,
             imports: std::mem::take(&mut self.imports),
-            unresolved: Vec::new(),
         };
-
-        // deprecated identifier resolution (Go's parser.go:2913-2919):
-        // declErr is the parser's error reporter only with DeclarationErrors.
-        if self.mode & SKIP_OBJECT_RESOLUTION == Mode::default() {
-            // (self.error takes &self, so the reporter can borrow the parser
-            // while `f` is being resolved.)
-            let report = |pos: Pos, msg: String| self.error(pos, msg);
-            let decl_err: Option<&dyn Fn(Pos, String)> =
-                (self.mode & DECLARATION_ERRORS != Mode::default()).then_some(&report);
-            super::resolver::resolve_file(&mut f, self.file.clone(), decl_err);
-        }
 
         Some(f)
     }
@@ -3147,7 +3119,6 @@ fn parse_import_spec(p: &mut Parser, _keyword: Token) -> Spec {
             ident = Some(Ident {
                 name_pos: p.pos,
                 name: ".".to_string(),
-                obj: None,
             });
             p.next();
         }

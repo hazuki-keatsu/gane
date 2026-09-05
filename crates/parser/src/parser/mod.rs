@@ -8,9 +8,6 @@
 //!   parser.go's comment collection (`ParseComments`, comment groups, `Doc`
 //!   and `Comment` fields, `expectSemi`'s line comment) plus the `//go:build`
 //!   minimum-version sniffing (`File.GoVersion`) are not ported;
-//! - deprecated identifier resolution (`go/parser/resolver.go`) is ported
-//!   and runs by default at the end of [`parser::parse_file`], exactly like
-//!   Go; the `SKIP_OBJECT_RESOLUTION` mode bit turns it off;
 //! - Go's panic-based parse bailout is implemented with `panic!` +
 //!   `std::panic::catch_unwind` at the entry points;
 //! - the tracing infrastructure (`Trace` mode) is not ported;
@@ -19,6 +16,5 @@
 
 mod interface;
 mod parser;
-mod resolver;
 
 pub use interface::*;

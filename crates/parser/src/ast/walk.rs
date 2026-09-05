@@ -619,7 +619,6 @@ mod tests {
         Ident {
             name_pos,
             name: name.into(),
-            obj: None,
         }
     }
 
@@ -677,9 +676,7 @@ mod tests {
             decls,
             file_start: NO_POS,
             file_end: NO_POS,
-            scope: None,
             imports: vec![],
-            unresolved: vec![],
         }
     }
 
@@ -870,9 +867,7 @@ mod tests {
             ],
             file_start: file.pos(0),
             file_end: file.pos(src.len() as i64),
-            scope: None,
             imports: vec![],
-            unresolved: vec![],
         };
 
         // Inspect the AST and print all identifiers and literals.
@@ -948,9 +943,7 @@ mod tests {
             })],
             file_start: file.pos(0),
             file_end: file.pos(src.len() as i64),
-            scope: None,
             imports: vec![],
-            unresolved: vec![],
         };
 
         // Print identifiers in order.

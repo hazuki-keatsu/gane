@@ -11,15 +11,6 @@
 //! - `<output-dir>/foo.go.err.txt` - the parse errors, one per line; only
 //!   created when the source had errors.
 //!
-//! By default the deprecated identifier resolution ([`SKIP_OBJECT_RESOLUTION`],
-//! the mode recommended by Go for new programs) is skipped: the AST
-//! back-pointers it sets (`Ident::obj`, `File::scope` objects) are printed by
-//! the derived `Debug` impls, and since `Object::decl` holds by-value copies
-//! of the declaration subtrees, printing them re-expands those subtrees for
-//! every referencing identifier - dumps grow quadratically with the file.
-//! `--resolve` turns the resolution on for inspecting its results on small
-//! files.
-//!
 //! Exit codes: 0 ok, 1 the source had parse errors (also reported on
 //! stderr), 2 usage or I/O error.
 
@@ -28,11 +19,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use gane_parser::parser::{Mode, SKIP_OBJECT_RESOLUTION, parse_file};
+use gane_parser::parser::{Mode, parse_file};
 use gane_parser::token::FileSet;
 
 const USAGE: &str = "\
-usage: gane-driver [--resolve] <file.go> [output-dir]
+usage: gane-driver <file.go> [output-dir]
 
 Parses the Go source file <file.go> with the ported go/parser and writes the
 AST as generated files named after the input (for an input \"foo.go\"):
@@ -41,17 +32,12 @@ AST as generated files named after the input (for an input \"foo.go\"):
     <output-dir>/foo.go.err.txt    the parse errors, one per line
                                    (created only when errors occur)
 
-    --resolve       also run the deprecated identifier resolution
-                    (resolver.go). Off by default: the Ident/Scope
-                    back-pointers it sets are debug-printed by value, which
-                    makes dumps grow quadratically with the file.
 output-dir defaults to \"out\". Exit codes: 0 ok, 1 parse errors, 2 usage or
 I/O error.
 ";
 
 fn main() -> ExitCode {
     // --- command line -----------------------------------------------------
-    let mut resolve = false;
     let mut positional: Vec<PathBuf> = Vec::new();
     for arg in env::args_os().skip(1) {
         let s = arg.to_string_lossy().into_owned();
@@ -60,7 +46,6 @@ fn main() -> ExitCode {
                 println!("{USAGE}");
                 return ExitCode::SUCCESS;
             }
-            "--resolve" => resolve = true,
             _ if s.starts_with('-') => {
                 eprintln!("gane-driver: unknown option `{s}`\n\n{USAGE}");
                 return ExitCode::from(2);
@@ -86,13 +71,8 @@ fn main() -> ExitCode {
         }
     };
     let filename = input.to_string_lossy().into_owned();
-    let mode = if resolve {
-        Mode::default()
-    } else {
-        SKIP_OBJECT_RESOLUTION
-    };
     let mut fset = FileSet::new();
-    let (ast, errors) = parse_file(&mut fset, &filename, &src, mode);
+    let (ast, errors) = parse_file(&mut fset, &filename, &src, Mode::default());
 
     // --- save the generated files ----------------------------------------
     let stem = match input.file_name() {
