@@ -145,7 +145,7 @@ fn compare_errors(
     found: &ErrorList,
     failures: &mut Vec<String>,
 ) {
-    for error in &found.0 {
+    for error in found.iter() {
         // error.pos is a token.Position, but we want
         // a token.Pos so we can do a map lookup
         let pos = get_pos(fset, &error.pos.file_name, error.pos.offset);
@@ -695,10 +695,11 @@ fn test_incomplete_selection() {
 
         const WANT_ERR: &str = "expected selector or type assertion";
         let err = err.unwrap();
+        let first_err = err.iter().next().expect("ErrorList is empty");
         assert!(
-            err.0[0].msg.contains(WANT_ERR),
+            first_err.msg.contains(WANT_ERR),
             "ParseFile returned wrong error {:?}, want {WANT_ERR:?}",
-            err.0[0].msg
+            first_err.msg
         );
 
         let mut sel_name: Option<String> = None;
@@ -984,7 +985,7 @@ fn test_parse_depth_limit() {
                         Mode::default() | SKIP_OBJECT_RESOLUTION,
                     );
                     let msg = err.map(|e| {
-                        e.0.last()
+                        e.iter().last()
                             .map(|er| er.msg.clone())
                             .unwrap_or_else(|| e.to_string())
                     });
@@ -1301,7 +1302,7 @@ fn smoke_error_message() {
     // operand is replaced by a bad expression).
     assert!(x.is_some());
     let err = err.expect("errors");
-    let msg = err.0[0].msg.clone();
+    let msg = err.iter().next().expect("ErrorList is empty").msg.clone();
     assert!(
         msg.contains("expected operand"),
         "unexpected error message: {msg}"
@@ -1599,7 +1600,7 @@ fn parse_on_big_stack(input: String, mode: Mode) -> Option<String> {
             let mut fset = FileSet::new();
             let (_f, err) = parse_file(&mut fset, "", input.as_bytes(), mode);
             err.map(|e| {
-                e.0.last()
+                e.iter().last()
                     .map(|er| er.msg.clone())
                     .unwrap_or_else(|| e.to_string())
             })

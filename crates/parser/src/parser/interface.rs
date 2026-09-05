@@ -30,10 +30,10 @@ use super::parser::{Bailout, Parser};
 pub struct Mode(u8);
 
 /// Stop parsing after the package clause.
-pub const PACKAGE_CLAUSE_ONLY: Mode = Mode(1);
+pub(crate) const PACKAGE_CLAUSE_ONLY: Mode = Mode(1);
 
 /// Stop parsing after the imports are parsed.
-pub const IMPORTS_ONLY: Mode = Mode(2);
+pub(crate) const IMPORTS_ONLY: Mode = Mode(2);
 
 // (Go's ParseComments and Trace mode bits are not ported; see the module
 // documentation. Their bit values 1<<2 and 1<<3 are unused.)

@@ -172,8 +172,15 @@ impl<'src> Parser<'src> {
             // would poison the RefCell and abort on the next borrow).
             let n = {
                 let errors = self.errors.borrow();
-                let n = errors.0.len();
-                if n > 0 && errors.0[n - 1].pos.line == epos.line {
+                let n = errors.len();
+                if n > 0
+                    && errors
+                        .iter()
+                        .nth(n - 1)
+                        .map(|err| err.pos.line)
+                        .unwrap_or(0)
+                        == epos.line
+                {
                     return; // discard - likely a spurious error
                 }
                 n

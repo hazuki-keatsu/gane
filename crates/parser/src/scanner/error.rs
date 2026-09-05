@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, vec};
 
 use crate::token::Position;
 
@@ -35,9 +35,58 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 /// ErrorList is a list of errors.
-/// The zero value for an ErrorList is an empty ErrorList ready to use.
+///
+/// Usage:
+/// ```
+/// list.iter() // to get immutable iterator
+/// list.iter_mut() // to get mutable iterator
+/// ```
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct ErrorList(pub Vec<Error>);
+pub struct ErrorList(Vec<Error>);
+
+impl IntoIterator for ErrorList {
+    type Item = Error;
+    type IntoIter = vec::IntoIter<Error>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a ErrorList {
+    type Item = &'a Error;
+    type IntoIter = std::slice::Iter<'a, Error>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut ErrorList {
+    type Item = &'a mut Error;
+    type IntoIter = std::slice::IterMut<'a, Error>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
+    }
+}
+
+impl FromIterator<Error> for ErrorList {
+    fn from_iter<T: IntoIterator<Item = Error>>(iter: T) -> Self {
+        ErrorList(iter.into_iter().collect())
+    }
+}
+
+// iter() and iter_mut()
+impl ErrorList {
+    pub fn iter(&self) -> std::slice::Iter<'_, Error> {
+        self.0.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, Error> {
+        self.0.iter_mut()
+    }
+}
 
 impl ErrorList {
     /// Add adds an error with given position and error message to an ErrorList.

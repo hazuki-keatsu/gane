@@ -125,7 +125,7 @@ fn main() -> ExitCode {
 
     if let Some(errors) = &errors {
         let mut text = String::new();
-        for e in &errors.0 {
+        for e in errors.iter() {
             text.push_str(&e.to_string());
             text.push('\n');
         }
@@ -134,7 +134,7 @@ fn main() -> ExitCode {
             eprintln!("gane-driver: cannot write `{}`: {e}", err_path.display());
             return ExitCode::from(2);
         }
-        for e in &errors.0 {
+        for e in errors.iter() {
             eprintln!("gane-driver: {}", e);
         }
         eprintln!(
