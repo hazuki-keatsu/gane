@@ -592,8 +592,8 @@ pub fn preorder_stack<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::token::{File as TokenFile, FileSet, NO_POS, Pos, Token};
     use std::rc::Rc;
-    use crate::token::{File as TokenFile, FileSet, NoPos, Pos, Token};
 
     // ------------------------------------------------------------------
     // Test helpers (substitute for go/parser.ParseFile: the parser is not
@@ -624,13 +624,13 @@ mod tests {
     }
 
     fn ident(name: &str) -> Ident {
-        ident_at(name, NoPos)
+        ident_at(name, NO_POS)
     }
 
     fn lit(value: &str) -> BasicLit {
         BasicLit {
-            value_pos: NoPos,
-            value_end: NoPos,
+            value_pos: NO_POS,
+            value_end: NO_POS,
             kind: Token::String,
             value: value.into(),
         }
@@ -641,19 +641,19 @@ mod tests {
             recv: None,
             name: ident(name),
             typ: FuncType {
-                func: NoPos,
+                func: NO_POS,
                 type_params: None,
                 params: Some(FieldList {
-                    opening: NoPos,
+                    opening: NO_POS,
                     list: vec![],
-                    closing: NoPos,
+                    closing: NO_POS,
                 }),
                 results: None,
             },
             body: Some(Box::new(BlockStmt {
-                lbrace: NoPos,
+                lbrace: NO_POS,
                 list: body,
-                rbrace: NoPos,
+                rbrace: NO_POS,
             })),
         }
     }
@@ -662,21 +662,21 @@ mod tests {
         Stmt::ExprStmt(ExprStmt {
             x: Expr::CallExpr(Box::new(CallExpr {
                 fun: Expr::Ident(ident(fun)),
-                lparen: NoPos,
+                lparen: NO_POS,
                 args,
-                ellipsis: NoPos,
-                rparen: NoPos,
+                ellipsis: NO_POS,
+                rparen: NO_POS,
             })),
         })
     }
 
     fn preorder_file<'a>(decls: Vec<Decl>) -> File {
         File {
-            package: NoPos,
+            package: NO_POS,
             name: ident("p"),
             decls,
-            file_start: NoPos,
-            file_end: NoPos,
+            file_start: NO_POS,
+            file_end: NO_POS,
             scope: None,
             imports: vec![],
             unresolved: vec![],
@@ -689,33 +689,33 @@ mod tests {
     #[test]
     fn test_preorder_break() {
         let f = preorder_file(vec![Decl::GenDecl(GenDecl {
-            tok_pos: NoPos,
+            tok_pos: NO_POS,
             tok: Token::Type,
-            lparen: NoPos,
+            lparen: NO_POS,
             specs: vec![Spec::TypeSpec(TypeSpec {
                 name: ident("T"),
                 type_params: None,
-                assign: NoPos,
+                assign: NO_POS,
                 typ: Expr::StructType(StructType {
-                    struct_: NoPos,
+                    struct_: NO_POS,
                     fields: Some(FieldList {
-                        opening: NoPos,
+                        opening: NO_POS,
                         list: vec![Field {
                             names: vec![ident("F")],
                             typ: Some(Expr::Ident(ident("int"))),
                             tag: Some(BasicLit {
-                                value_pos: NoPos,
-                                value_end: NoPos,
+                                value_pos: NO_POS,
+                                value_end: NO_POS,
                                 kind: Token::String,
                                 value: "`json:\"f\"`".into(),
                             }),
                         }],
-                        closing: NoPos,
+                        closing: NO_POS,
                     }),
                     incomplete: false,
                 }),
             })],
-            rparen: NoPos,
+            rparen: NO_POS,
         })]);
 
         let mut found_f = false;
@@ -769,17 +769,34 @@ mod tests {
 
         // Check sequence of events.
         let want_events: Vec<&str> = vec![
-            "File", "Ident", // package a
-            "FuncDecl",                                      // func f()  [pruned]
-            "FuncDecl", "Ident", "FuncType", "FieldList", "BlockStmt", // func g()
-            "ExprStmt", "CallExpr", "Ident", "BasicLit", // print...
-            "ExprStmt", "CallExpr", "Ident", "BasicLit", // panic...
+            "File",
+            "Ident",    // package a
+            "FuncDecl", // func f()  [pruned]
+            "FuncDecl",
+            "Ident",
+            "FuncType",
+            "FieldList",
+            "BlockStmt", // func g()
+            "ExprStmt",
+            "CallExpr",
+            "Ident",
+            "BasicLit", // print...
+            "ExprStmt",
+            "CallExpr",
+            "Ident",
+            "BasicLit", // panic...
         ];
-        assert_eq!(events, want_events, "PreorderStack events:\ngot:  {events:?}\nwant: {want_events:?}");
+        assert_eq!(
+            events, want_events,
+            "PreorderStack events:\ngot:  {events:?}\nwant: {want_events:?}"
+        );
 
         // Check captured stack.
         let want_stack: Vec<&str> = vec!["File", "FuncDecl", "BlockStmt", "ExprStmt", "CallExpr"];
-        assert_eq!(got_stack, want_stack, "PreorderStack stack:\ngot:  {got_stack:?}\nwant: {want_stack:?}");
+        assert_eq!(
+            got_stack, want_stack,
+            "PreorderStack stack:\ngot:  {got_stack:?}\nwant: {want_stack:?}"
+        );
     }
 
     // ExampleInspect: print all identifiers and literals with positions.
@@ -798,18 +815,18 @@ mod tests {
                     lparen: at("(3.14)"),
                     args: vec![Expr::BasicLit(BasicLit {
                         value_pos: at("3.14"),
-                        value_end: NoPos,
+                        value_end: NO_POS,
                         kind: Token::Float,
                         value: "3.14".into(),
                     })],
-                    ellipsis: NoPos,
+                    ellipsis: NO_POS,
                     rparen: at(")*2"),
                 })),
                 op_pos: at("*2"),
                 op: Token::Mul,
                 y: Expr::BasicLit(BasicLit {
                     value_pos: at("*2") + 1,
-                    value_end: NoPos,
+                    value_end: NO_POS,
                     kind: Token::Int,
                     value: "2".into(),
                 }),
@@ -826,29 +843,29 @@ mod tests {
                 Decl::GenDecl(GenDecl {
                     tok_pos: at("const"),
                     tok: Token::Const,
-                    lparen: NoPos,
+                    lparen: NO_POS,
                     specs: vec![Spec::ValueSpec(ValueSpec {
                         names: vec![ident_at("c", at("const c") + 6)],
                         typ: None,
                         values: vec![Expr::BasicLit(BasicLit {
                             value_pos: at("1.0"),
-                            value_end: NoPos,
+                            value_end: NO_POS,
                             kind: Token::Float,
                             value: "1.0".into(),
                         })],
                     })],
-                    rparen: NoPos,
+                    rparen: NO_POS,
                 }),
                 Decl::GenDecl(GenDecl {
                     tok_pos: at("var"),
                     tok: Token::Var,
-                    lparen: NoPos,
+                    lparen: NO_POS,
                     specs: vec![Spec::ValueSpec(ValueSpec {
                         names: vec![ident_at("X", at("var X") + 4)],
                         typ: None,
                         values: vec![var_value],
                     })],
-                    rparen: NoPos,
+                    rparen: NO_POS,
                 }),
             ],
             file_start: file.pos(0),
@@ -925,11 +942,7 @@ mod tests {
                 },
                 body: Some(Box::new(BlockStmt {
                     lbrace: at("{"),
-                    list: vec![call_stmt_binary(
-                        &fset,
-                        &file,
-                        src,
-                    )],
+                    list: vec![call_stmt_binary(&fset, &file, src)],
                     rbrace: at("}"),
                 })),
             })],
@@ -949,7 +962,10 @@ mod tests {
         }
 
         let want = ["p", "f", "x", "y", "int", "print", "x", "y"];
-        assert_eq!(names, want, "Preorder identifiers:\ngot:  {names:?}\nwant: {want:?}");
+        assert_eq!(
+            names, want,
+            "Preorder identifiers:\ngot:  {names:?}\nwant: {want:?}"
+        );
     }
 
     // Helper for example_preorder: the `print(x + y)` statement inside the
@@ -966,7 +982,7 @@ mod tests {
                     op: Token::Add,
                     y: Expr::Ident(ident_at("y", at("+ y)") + 2)),
                 }))],
-                ellipsis: NoPos,
+                ellipsis: NO_POS,
                 rparen: at("x + y)") + 6,
             })),
         })

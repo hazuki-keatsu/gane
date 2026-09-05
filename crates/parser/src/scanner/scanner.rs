@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use unicode_general_category::{GeneralCategory, get_general_category};
 
-use crate::token::{File, NoPos, Pos, Position, Token};
+use crate::token::{File, NO_POS, Pos, Position, Token};
 
 /// An error handler may be provided to [`Scanner::init`]. If a syntax error is
 /// encountered and a handler was installed, the handler is called with a
@@ -60,7 +60,7 @@ pub struct Scanner<'src> {
     mode: Mode,                // scanning mode
 
     // scanning state
-    ch: i32,            // current character; < 0 (eof) means end-of-file
+    ch: i32,            // current character; < 0 (EOF) means end-of-file
     offset: usize,      // character offset
     rd_offset: usize,   // reading offset (position after current character)
     line_offset: usize, // current line offset
@@ -74,8 +74,8 @@ pub struct Scanner<'src> {
     pub error_count: usize, // number of errors encountered
 }
 
-const bom: i32 = 0xFEFF; // byte order mark, only permitted as very first character
-const eof: i32 = -1; // end of file
+const BOM: i32 = 0xFEFF; // byte order mark, only permitted as very first character
+const EOF: i32 = -1; // end of file
 
 impl<'src> Scanner<'src> {
     /// Creates and initializes a scanner to tokenize the text `src`, setting
@@ -109,9 +109,9 @@ impl<'src> Scanner<'src> {
             rd_offset: 0,
             line_offset: 0,
             insert_semi: false,
-            nl_pos: NoPos,
+            nl_pos: NO_POS,
             end_pos_valid: false,
-            end_pos: NoPos,
+            end_pos: NO_POS,
             error_count: 0,
         };
         s.init(file, src, err, mode);
@@ -153,18 +153,18 @@ impl<'src> Scanner<'src> {
 
             ch: ' ' as i32,
             end_pos_valid: true,
-            end_pos: NoPos,
+            end_pos: NO_POS,
 
             offset: 0,
             rd_offset: 0,
             line_offset: 0,
             insert_semi: false,
-            nl_pos: NoPos,
+            nl_pos: NO_POS,
             error_count: 0,
         };
 
         self.next();
-        if self.ch == bom {
+        if self.ch == BOM {
             self.next() // ignore BOM at file beginning
         }
     }
@@ -206,7 +206,7 @@ impl<'src> Scanner<'src> {
                     } else {
                         self.error(self.offset, "illegal UTF-8 encoding");
                     }
-                } else if r == bom && self.offset > 0 {
+                } else if r == BOM && self.offset > 0 {
                     self.error(self.offset, "illegal byte order mark");
                 }
                 self.ch = r;
@@ -218,7 +218,7 @@ impl<'src> Scanner<'src> {
                 self.line_offset = self.offset;
                 self.file.add_line(self.offset as i64);
             }
-            self.ch = eof;
+            self.ch = EOF;
         }
     }
 
@@ -241,10 +241,10 @@ impl<'src> Scanner<'src> {
     }
 
     /// End returns the position immediately after the last scanned token.
-    /// If [`Scanner::scan`] has not been called yet, End returns [`NoPos`].
+    /// If [`Scanner::scan`] has not been called yet, End returns [`NO_POS`].
     pub fn end(&self) -> Pos {
         // Handles special case:
-        // - Makes sure we return [NoPos], even when [Scanner::init] has consumed a BOM.
+        // - Makes sure we return [NO_POS], even when [Scanner::init] has consumed a BOM.
         // - When the previous token was a synthetic [Semicolon] inside a multi-line
         //   comment, we make sure end returns its ending position (i.e. prev_pos+len("\n")).
         if self.end_pos_valid {
@@ -297,7 +297,7 @@ impl<'src> Scanner<'src> {
                 let pos = self.nl_pos;
                 self.end_pos = self.file.pos(self.file.offset(pos) + 1);
                 self.end_pos_valid = true;
-                self.nl_pos = NoPos;
+                self.nl_pos = NO_POS;
                 return (pos, Token::Semicolon, "\n".to_string());
             }
 
@@ -332,7 +332,7 @@ impl<'src> Scanner<'src> {
                 self.scan_number()
             } else {
                 self.next(); // always make progress
-                if ch == eof {
+                if ch == EOF {
                     if self.insert_semi {
                         self.insert_semi = false; // EOF consumed
                         return (pos, Token::Semicolon, "\n".to_string());
@@ -591,7 +591,7 @@ impl<'src> Scanner<'src> {
                         }
                         c => {
                             // next reports unexpected BOMs - don't repeat
-                            if ch != bom {
+                            if ch != BOM {
                                 self.error(
                                     self.file.offset(pos) as usize,
                                     format!("illegal character {}", fmt_unicode_char(c)),
@@ -687,7 +687,7 @@ impl<'src> Scanner<'src> {
         // (//line directives must start at the beginning of the current line)
         if let Some(next) = next
             && (lit[1] == b'*' || offs == self.line_offset)
-            && lit[2..].starts_with(line_prefix)
+            && lit[2..].starts_with(LINE_PREFIX)
         {
             self.update_line_info(next, offs, lit);
         }
@@ -734,7 +734,7 @@ impl<'src> Scanner<'src> {
         // Put a cap on the maximum size of line and column numbers.
         // 30 bits allows for some additional space before wrapping an int32.
         // Keep this consistent with cmd/compile/internal/syntax.PosMax.
-        const max_line_col: i64 = 1 << 30;
+        const MAX_LINE_COL: i64 = 1 << 30;
 
         // By default, the trailing number (at digit start i, value n) is the
         // line number.
@@ -749,7 +749,7 @@ impl<'src> Scanner<'src> {
             line_digit_start = i2;
             line = n2;
             col = n;
-            if col == 0 || col > max_line_col {
+            if col == 0 || col > MAX_LINE_COL {
                 self.error(
                     offs + i,
                     format!(
@@ -761,7 +761,7 @@ impl<'src> Scanner<'src> {
             }
         }
 
-        if line == 0 || line > max_line_col {
+        if line == 0 || line > MAX_LINE_COL {
             self.error(
                 offs + line_digit_start,
                 format!(
@@ -821,7 +821,7 @@ impl<'src> Scanner<'src> {
         if rd == self.src.len() {
             self.offset = rd;
             self.rd_offset = rd;
-            self.ch = eof;
+            self.ch = EOF;
             return String::from_utf8_lossy(&self.src[offs..rd]).into_owned();
         }
         let b = self.src[rd];
@@ -1156,7 +1156,7 @@ impl<'src> Scanner<'src> {
     }
 }
 
-const line_prefix: &[u8] = b"line ";
+const LINE_PREFIX: &[u8] = b"line ";
 
 /// digit_val returns the value of a digit for the given rune,
 /// or 16 (larger than any legal digit val) if it is not a digit.
@@ -1253,7 +1253,7 @@ fn fmt_quote(c: char) -> String {
     }
 }
 
-/// Converts an internal rune (i32) to a char. Never called with `eof`
+/// Converts an internal rune (i32) to a char. Never called with `EOF`
 /// (all call sites guard for `ch < 0` first, or the value came from a
 /// decoded rune).
 fn char_from_rune(ch: i32) -> char {
@@ -3822,7 +3822,7 @@ mod tests {
 
             assert_eq!(
                 s.end(),
-                NoPos,
+                NO_POS,
                 "after init in {}: s.end() = {:?}; want NoPos",
                 tt.name,
                 s.end()
@@ -3871,7 +3871,7 @@ mod tests {
         let file = fset.add_file("test.go", -1, src.len() as i64);
         s.init(file, src, Some(fatal_error_handler()), SCAN_COMMENTS);
 
-        assert_eq!(s.end(), NoPos, "s.end() = {:?}; want NoPos", s.end());
+        assert_eq!(s.end(), NO_POS, "s.end() = {:?}; want NoPos", s.end());
     }
 
     // ----- ExampleScanner_Scan (example_test.go) -----

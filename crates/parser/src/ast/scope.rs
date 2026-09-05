@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
 
-use crate::token::{NoPos, Pos};
+use crate::token::{NO_POS, Pos};
 
 use super::ast::{
     AssignStmt, Expr, Field, FuncDecl, Ident, ImportSpec, LabeledStmt, TypeSpec, ValueSpec,
@@ -216,7 +216,7 @@ impl Object {
             }
             None => {}
         }
-        NoPos
+        NO_POS
     }
 }
 
@@ -306,9 +306,9 @@ mod tests {
 
     #[test]
     fn object_pos_with_decls() {
-        // Pos is NoPos when decl is nil.
+        // Pos is NO_POS when decl is nil.
         let o = Object::new_obj(ObjKind::Var, "x");
-        assert_eq!(o.pos(), NoPos);
+        assert_eq!(o.pos(), NO_POS);
 
         // AssignStmt decl: position of the matching Ident on the lhs.
         let id = crate::ast::Ident {
@@ -319,7 +319,7 @@ mod tests {
         let mut o = Object::new_obj(ObjKind::Var, "x");
         o.decl = Some(ObjectDecl::AssignStmt(AssignStmt {
             lhs: vec![Expr::Ident(id.clone())],
-            tok_pos: NoPos,
+            tok_pos: NO_POS,
             tok: crate::token::Token::Assign,
             rhs: vec![],
         }));
@@ -331,7 +331,7 @@ mod tests {
             name: None,
             path: crate::ast::BasicLit {
                 value_pos: Pos::from_int(30),
-                value_end: NoPos,
+                value_end: NO_POS,
                 kind: crate::token::Token::String,
                 value: "\"x\"".into(),
             },

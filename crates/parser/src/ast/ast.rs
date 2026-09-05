@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
 
-use crate::token::{NoPos, Pos, Token};
+use crate::token::{NO_POS, Pos, Token};
 
 use super::scope::{Object, Scope};
 
@@ -65,8 +65,8 @@ impl std::ops::BitOr for ChanDir {
 /// (Go's `Doc`/`Comment` documentation fields are not ported.)
 #[derive(Clone, Debug)]
 pub struct Field {
-    pub names: Vec<Ident>, // field/method/(type) parameter names; or empty
-    pub typ: Option<Expr>, // field/method/parameter type; or nil
+    pub names: Vec<Ident>,     // field/method/(type) parameter names; or empty
+    pub typ: Option<Expr>,     // field/method/parameter type; or nil
     pub tag: Option<BasicLit>, // field tag; or nil
 }
 
@@ -78,7 +78,7 @@ impl Field {
         if let Some(typ) = &self.typ {
             return typ.pos();
         }
-        NoPos
+        NO_POS
     }
 
     pub fn end(&self) -> Pos {
@@ -91,7 +91,7 @@ impl Field {
         if let Some(name) = self.names.last() {
             return name.end();
         }
-        NoPos
+        NO_POS
     }
 }
 
@@ -99,9 +99,9 @@ impl Field {
 /// curly braces, or square brackets.
 #[derive(Clone, Debug)]
 pub struct FieldList {
-    pub opening: Pos, // position of opening parenthesis/brace/bracket, if any
+    pub opening: Pos,     // position of opening parenthesis/brace/bracket, if any
     pub list: Vec<Field>, // field list
-    pub closing: Pos, // position of closing parenthesis/brace/bracket, if any
+    pub closing: Pos,     // position of closing parenthesis/brace/bracket, if any
 }
 
 impl FieldList {
@@ -114,7 +114,7 @@ impl FieldList {
         if let Some(first) = self.list.first() {
             return first.pos();
         }
-        NoPos
+        NO_POS
     }
 
     pub fn end(&self) -> Pos {
@@ -126,7 +126,7 @@ impl FieldList {
         if let Some(last) = self.list.last() {
             return last.end();
         }
-        NoPos
+        NO_POS
     }
 
     /// Returns the number of parameters or struct fields represented by a [`FieldList`].
@@ -157,8 +157,8 @@ pub struct BadExpr {
 /// An Ident node represents an identifier.
 #[derive(Clone, Debug)]
 pub struct Ident {
-    pub name_pos: Pos, // identifier position
-    pub name: String,  // identifier name
+    pub name_pos: Pos,           // identifier position
+    pub name: String,            // identifier name
     pub obj: Option<Rc<Object>>, // denoted object, or nil. Deprecated: see Object.
 }
 
@@ -166,7 +166,7 @@ pub struct Ident {
 /// parameter list or the "..." length in an array type.
 #[derive(Clone, Debug)]
 pub struct Ellipsis {
-    pub ellipsis: Pos, // position of "..."
+    pub ellipsis: Pos,     // position of "..."
     pub elt: Option<Expr>, // ellipsis element type (parameter lists only); or nil
 }
 
@@ -180,16 +180,16 @@ pub struct Ellipsis {
 /// present in the source.
 #[derive(Clone, Debug)]
 pub struct BasicLit {
-    pub value_pos: Pos,   // literal position
-    pub value_end: Pos,   // position immediately after the literal
-    pub kind: Token,      // token.INT, token.FLOAT, token.IMAG, token.CHAR, or token.STRING
-    pub value: String,    // literal string; e.g. 42, 0x7f, 3.14, 1e-9, 2.4i, 'a', '\x7f', "foo" or `\m\n\o`
+    pub value_pos: Pos, // literal position
+    pub value_end: Pos, // position immediately after the literal
+    pub kind: Token,    // token.INT, token.FLOAT, token.IMAG, token.CHAR, or token.STRING
+    pub value: String, // literal string; e.g. 42, 0x7f, 3.14, 1e-9, 2.4i, 'a', '\x7f', "foo" or `\m\n\o`
 }
 
 /// A FuncLit node represents a function literal.
 #[derive(Clone, Debug)]
 pub struct FuncLit {
-    pub typ: Box<FuncType>,  // function type
+    pub typ: Box<FuncType>,   // function type
     pub body: Box<BlockStmt>, // function body
 }
 
@@ -214,7 +214,7 @@ pub struct ParenExpr {
 /// A SelectorExpr node represents an expression followed by a selector.
 #[derive(Clone, Debug)]
 pub struct SelectorExpr {
-    pub x: Expr,   // expression
+    pub x: Expr,    // expression
     pub sel: Ident, // field selector
 }
 
@@ -230,41 +230,41 @@ pub struct IndexExpr {
 /// An IndexListExpr node represents an expression followed by multiple indices.
 #[derive(Clone, Debug)]
 pub struct IndexListExpr {
-    pub x: Expr,      // expression
-    pub lbrack: Pos,  // position of "["
+    pub x: Expr,            // expression
+    pub lbrack: Pos,        // position of "["
     pub indices: Vec<Expr>, // index expressions
-    pub rbrack: Pos,  // position of "]"
+    pub rbrack: Pos,        // position of "]"
 }
 
 /// A SliceExpr node represents an expression followed by slice indices.
 #[derive(Clone, Debug)]
 pub struct SliceExpr {
-    pub x: Expr,      // expression
-    pub lbrack: Pos,  // position of "["
+    pub x: Expr,            // expression
+    pub lbrack: Pos,        // position of "["
     pub low: Option<Expr>,  // begin of slice range; or nil
     pub high: Option<Expr>, // end of slice range; or nil
     pub max: Option<Expr>,  // maximum capacity of slice; or nil
-    pub slice3: bool, // true if 3-index slice (2 colons present)
-    pub rbrack: Pos,  // position of "]"
+    pub slice3: bool,       // true if 3-index slice (2 colons present)
+    pub rbrack: Pos,        // position of "]"
 }
 
 /// A TypeAssertExpr node represents an expression followed by a type assertion.
 #[derive(Clone, Debug)]
 pub struct TypeAssertExpr {
-    pub x: Expr,        // expression
-    pub lparen: Pos,    // position of "("
+    pub x: Expr,           // expression
+    pub lparen: Pos,       // position of "("
     pub typ: Option<Expr>, // asserted type; nil means type switch X.(type)
-    pub rparen: Pos,    // position of ")"
+    pub rparen: Pos,       // position of ")"
 }
 
 /// A CallExpr node represents an expression followed by an argument list.
 #[derive(Clone, Debug)]
 pub struct CallExpr {
-    pub fun: Expr,      // function expression
-    pub lparen: Pos,    // position of "("
+    pub fun: Expr,       // function expression
+    pub lparen: Pos,     // position of "("
     pub args: Vec<Expr>, // function arguments
-    pub ellipsis: Pos,  // position of "..." (NoPos if there is no "...")
-    pub rparen: Pos,    // position of ")"
+    pub ellipsis: Pos,   // position of "..." (NO_POS if there is no "...")
+    pub rparen: Pos,     // position of ")"
 }
 
 /// A StarExpr node represents an expression of the form "*" Expression.
@@ -307,17 +307,17 @@ pub struct KeyValueExpr {
 /// An ArrayType node represents an array or slice type.
 #[derive(Clone, Debug)]
 pub struct ArrayType {
-    pub lbrack: Pos, // position of "["
+    pub lbrack: Pos,       // position of "["
     pub len: Option<Expr>, // Ellipsis node for [...]T array types, nil for slice types
-    pub elt: Expr,    // element type
+    pub elt: Expr,         // element type
 }
 
 /// A StructType node represents a struct type.
 #[derive(Clone, Debug)]
 pub struct StructType {
-    pub struct_: Pos,     // position of "struct" keyword
+    pub struct_: Pos,              // position of "struct" keyword
     pub fields: Option<FieldList>, // list of field declarations
-    pub incomplete: bool, // true if (source) fields are missing in the Fields list
+    pub incomplete: bool,          // true if (source) fields are missing in the Fields list
 }
 
 // Pointer types are represented via StarExpr nodes.
@@ -325,7 +325,7 @@ pub struct StructType {
 /// A FuncType node represents a function type.
 #[derive(Clone, Debug)]
 pub struct FuncType {
-    pub func: Pos,       // position of "func" keyword (NoPos if there is no "func")
+    pub func: Pos, // position of "func" keyword (NO_POS if there is no "func")
     pub type_params: Option<FieldList>, // type parameters; or nil
     pub params: Option<FieldList>, // (incoming) parameters; non-nil
     pub results: Option<FieldList>, // (outgoing) results; or nil
@@ -334,7 +334,7 @@ pub struct FuncType {
 /// An InterfaceType node represents an interface type.
 #[derive(Clone, Debug)]
 pub struct InterfaceType {
-    pub interface: Pos,  // position of "interface" keyword
+    pub interface: Pos,             // position of "interface" keyword
     pub methods: Option<FieldList>, // list of embedded interfaces, methods, or types
     pub incomplete: bool, // true if (source) methods or types are missing in the Methods list
 }
@@ -350,8 +350,8 @@ pub struct MapType {
 /// A ChanType node represents a channel type.
 #[derive(Clone, Debug)]
 pub struct ChanType {
-    pub begin: Pos, // position of "chan" keyword or "<-" (whichever comes first)
-    pub arrow: Pos, // position of "<-" (NoPos if there is no "<-")
+    pub begin: Pos,   // position of "chan" keyword or "<-" (whichever comes first)
+    pub arrow: Pos,   // position of "<-" (NO_POS if there is no "<-")
     pub dir: ChanDir, // channel direction
     pub value: Expr,  // value type
 }
@@ -359,17 +359,27 @@ pub struct ChanType {
 // Pos and End implementations for expression/type nodes.
 
 impl BadExpr {
-    pub fn pos(&self) -> Pos { self.from }
-    pub fn end(&self) -> Pos { self.to }
+    pub fn pos(&self) -> Pos {
+        self.from
+    }
+    pub fn end(&self) -> Pos {
+        self.to
+    }
 }
 
 impl Ident {
-    pub fn pos(&self) -> Pos { self.name_pos }
-    pub fn end(&self) -> Pos { self.name_pos + self.name.len() as i64 }
+    pub fn pos(&self) -> Pos {
+        self.name_pos
+    }
+    pub fn end(&self) -> Pos {
+        self.name_pos + self.name.len() as i64
+    }
 }
 
 impl Ellipsis {
-    pub fn pos(&self) -> Pos { self.ellipsis }
+    pub fn pos(&self) -> Pos {
+        self.ellipsis
+    }
 
     pub fn end(&self) -> Pos {
         if let Some(elt) = &self.elt {
@@ -380,7 +390,9 @@ impl Ellipsis {
 }
 
 impl BasicLit {
-    pub fn pos(&self) -> Pos { self.value_pos }
+    pub fn pos(&self) -> Pos {
+        self.value_pos
+    }
 
     pub fn end(&self) -> Pos {
         if !self.value_end.is_valid() {
@@ -392,8 +404,12 @@ impl BasicLit {
 }
 
 impl FuncLit {
-    pub fn pos(&self) -> Pos { self.typ.pos() }
-    pub fn end(&self) -> Pos { self.body.end() }
+    pub fn pos(&self) -> Pos {
+        self.typ.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.body.end()
+    }
 }
 
 impl CompositeLit {
@@ -404,74 +420,129 @@ impl CompositeLit {
         self.lbrace
     }
 
-    pub fn end(&self) -> Pos { self.rbrace + 1 }
+    pub fn end(&self) -> Pos {
+        self.rbrace + 1
+    }
 }
 
 impl ParenExpr {
-    pub fn pos(&self) -> Pos { self.lparen }
-    pub fn end(&self) -> Pos { self.rparen + 1 }
+    pub fn pos(&self) -> Pos {
+        self.lparen
+    }
+    pub fn end(&self) -> Pos {
+        self.rparen + 1
+    }
 }
 
 impl SelectorExpr {
-    pub fn pos(&self) -> Pos { self.x.pos() }
-    pub fn end(&self) -> Pos { self.sel.end() }
+    pub fn pos(&self) -> Pos {
+        self.x.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.sel.end()
+    }
 }
 
 impl IndexExpr {
-    pub fn pos(&self) -> Pos { self.x.pos() }
-    pub fn end(&self) -> Pos { self.rbrack + 1 }
+    pub fn pos(&self) -> Pos {
+        self.x.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.rbrack + 1
+    }
 }
 
 impl IndexListExpr {
-    pub fn pos(&self) -> Pos { self.x.pos() }
-    pub fn end(&self) -> Pos { self.rbrack + 1 }
+    pub fn pos(&self) -> Pos {
+        self.x.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.rbrack + 1
+    }
 }
 
 impl SliceExpr {
-    pub fn pos(&self) -> Pos { self.x.pos() }
-    pub fn end(&self) -> Pos { self.rbrack + 1 }
+    pub fn pos(&self) -> Pos {
+        self.x.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.rbrack + 1
+    }
 }
 
 impl TypeAssertExpr {
-    pub fn pos(&self) -> Pos { self.x.pos() }
-    pub fn end(&self) -> Pos { self.rparen + 1 }
+    pub fn pos(&self) -> Pos {
+        self.x.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.rparen + 1
+    }
 }
 
 impl CallExpr {
-    pub fn pos(&self) -> Pos { self.fun.pos() }
-    pub fn end(&self) -> Pos { self.rparen + 1 }
+    pub fn pos(&self) -> Pos {
+        self.fun.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.rparen + 1
+    }
 }
 
 impl StarExpr {
-    pub fn pos(&self) -> Pos { self.star }
-    pub fn end(&self) -> Pos { self.x.end() }
+    pub fn pos(&self) -> Pos {
+        self.star
+    }
+    pub fn end(&self) -> Pos {
+        self.x.end()
+    }
 }
 
 impl UnaryExpr {
-    pub fn pos(&self) -> Pos { self.op_pos }
-    pub fn end(&self) -> Pos { self.x.end() }
+    pub fn pos(&self) -> Pos {
+        self.op_pos
+    }
+    pub fn end(&self) -> Pos {
+        self.x.end()
+    }
 }
 
 impl BinaryExpr {
-    pub fn pos(&self) -> Pos { self.x.pos() }
-    pub fn end(&self) -> Pos { self.y.end() }
+    pub fn pos(&self) -> Pos {
+        self.x.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.y.end()
+    }
 }
 
 impl KeyValueExpr {
-    pub fn pos(&self) -> Pos { self.key.pos() }
-    pub fn end(&self) -> Pos { self.value.end() }
+    pub fn pos(&self) -> Pos {
+        self.key.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.value.end()
+    }
 }
 
 impl ArrayType {
-    pub fn pos(&self) -> Pos { self.lbrack }
-    pub fn end(&self) -> Pos { self.elt.end() }
+    pub fn pos(&self) -> Pos {
+        self.lbrack
+    }
+    pub fn end(&self) -> Pos {
+        self.elt.end()
+    }
 }
 
 impl StructType {
-    pub fn pos(&self) -> Pos { self.struct_ }
+    pub fn pos(&self) -> Pos {
+        self.struct_
+    }
     pub fn end(&self) -> Pos {
         // Go dereferences the Fields pointer here and would panic on nil.
-        self.fields.as_ref().expect("ast.StructType.End: nil Fields").end()
+        self.fields
+            .as_ref()
+            .expect("ast.StructType.End: nil Fields")
+            .end()
     }
 }
 
@@ -482,32 +553,51 @@ impl FuncType {
             return self.func;
         }
         // interface method declarations have no "func" keyword
-        self.params.as_ref().expect("ast.FuncType.Pos: nil Params").pos()
+        self.params
+            .as_ref()
+            .expect("ast.FuncType.Pos: nil Params")
+            .pos()
     }
 
     pub fn end(&self) -> Pos {
         if let Some(results) = &self.results {
             return results.end();
         }
-        self.params.as_ref().expect("ast.FuncType.End: nil Params").end()
+        self.params
+            .as_ref()
+            .expect("ast.FuncType.End: nil Params")
+            .end()
     }
 }
 
 impl InterfaceType {
-    pub fn pos(&self) -> Pos { self.interface }
+    pub fn pos(&self) -> Pos {
+        self.interface
+    }
     pub fn end(&self) -> Pos {
-        self.methods.as_ref().expect("ast.InterfaceType.End: nil Methods").end()
+        self.methods
+            .as_ref()
+            .expect("ast.InterfaceType.End: nil Methods")
+            .end()
     }
 }
 
 impl MapType {
-    pub fn pos(&self) -> Pos { self.map }
-    pub fn end(&self) -> Pos { self.value.end() }
+    pub fn pos(&self) -> Pos {
+        self.map
+    }
+    pub fn end(&self) -> Pos {
+        self.value.end()
+    }
 }
 
 impl ChanType {
-    pub fn pos(&self) -> Pos { self.begin }
-    pub fn end(&self) -> Pos { self.value.end() }
+    pub fn pos(&self) -> Pos {
+        self.begin
+    }
+    pub fn end(&self) -> Pos {
+        self.value.end()
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -515,7 +605,9 @@ impl ChanType {
 
 impl Ident {
     /// Reports whether id starts with an upper-case letter.
-    pub fn is_exported(&self) -> bool { crate::token::is_exported(&self.name) }
+    pub fn is_exported(&self) -> bool {
+        crate::token::is_exported(&self.name)
+    }
 }
 
 impl fmt::Display for Ident {
@@ -530,14 +622,16 @@ impl fmt::Display for Ident {
 /// Useful for ASTs generated by code other than the Go parser.
 pub fn new_ident(name: impl Into<String>) -> Ident {
     Ident {
-        name_pos: NoPos,
+        name_pos: NO_POS,
         name: name.into(),
         obj: None,
     }
 }
 
 /// Reports whether name starts with an upper-case letter.
-pub fn is_exported(name: &str) -> bool { crate::token::is_exported(name) }
+pub fn is_exported(name: &str) -> bool {
+    crate::token::is_exported(name)
+}
 
 // ----------------------------------------------------------------------------
 // Statements
@@ -624,7 +718,7 @@ pub struct DeferStmt {
 /// A ReturnStmt node represents a return statement.
 #[derive(Clone, Debug)]
 pub struct ReturnStmt {
-    pub return_: Pos, // position of "return" keyword
+    pub return_: Pos,       // position of "return" keyword
     pub results: Vec<Expr>, // result expressions
 }
 
@@ -632,8 +726,8 @@ pub struct ReturnStmt {
 /// or fallthrough statement.
 #[derive(Clone, Debug)]
 pub struct BranchStmt {
-    pub tok_pos: Pos, // position of Tok
-    pub tok: Token,   // keyword token (BREAK, CONTINUE, GOTO, FALLTHROUGH)
+    pub tok_pos: Pos,         // position of Tok
+    pub tok: Token,           // keyword token (BREAK, CONTINUE, GOTO, FALLTHROUGH)
     pub label: Option<Ident>, // label name; or nil
 }
 
@@ -648,9 +742,9 @@ pub struct BlockStmt {
 /// An IfStmt node represents an if statement.
 #[derive(Clone, Debug)]
 pub struct IfStmt {
-    pub if_: Pos, // position of "if" keyword
+    pub if_: Pos,           // position of "if" keyword
     pub init: Option<Stmt>, // initialization statement; or nil
-    pub cond: Expr,   // condition
+    pub cond: Expr,         // condition
     pub body: Box<BlockStmt>,
     pub else_: Option<Stmt>, // else branch; or nil
 }
@@ -658,50 +752,50 @@ pub struct IfStmt {
 /// A CaseClause represents a case of an expression or type switch statement.
 #[derive(Clone, Debug)]
 pub struct CaseClause {
-    pub case: Pos, // position of "case" or "default" keyword
+    pub case: Pos,       // position of "case" or "default" keyword
     pub list: Vec<Expr>, // list of expressions or types; empty means default case
-    pub colon: Pos, // position of ":"
+    pub colon: Pos,      // position of ":"
     pub body: Vec<Stmt>, // statement list
 }
 
 /// A SwitchStmt node represents an expression switch statement.
 #[derive(Clone, Debug)]
 pub struct SwitchStmt {
-    pub switch: Pos, // position of "switch" keyword
-    pub init: Option<Stmt>, // initialization statement; or nil
-    pub tag: Option<Expr>, // tag expression; or nil
+    pub switch: Pos,          // position of "switch" keyword
+    pub init: Option<Stmt>,   // initialization statement; or nil
+    pub tag: Option<Expr>,    // tag expression; or nil
     pub body: Box<BlockStmt>, // CaseClauses only
 }
 
 /// A TypeSwitchStmt node represents a type switch statement.
 #[derive(Clone, Debug)]
 pub struct TypeSwitchStmt {
-    pub switch: Pos, // position of "switch" keyword
-    pub init: Option<Stmt>, // initialization statement; or nil
-    pub assign: Stmt, // x := y.(type) or y.(type)
+    pub switch: Pos,          // position of "switch" keyword
+    pub init: Option<Stmt>,   // initialization statement; or nil
+    pub assign: Stmt,         // x := y.(type) or y.(type)
     pub body: Box<BlockStmt>, // CaseClauses only
 }
 
 /// A CommClause node represents a case of a select statement.
 #[derive(Clone, Debug)]
 pub struct CommClause {
-    pub case: Pos, // position of "case" or "default" keyword
+    pub case: Pos,          // position of "case" or "default" keyword
     pub comm: Option<Stmt>, // send or receive statement; nil means default case
-    pub colon: Pos, // position of ":"
-    pub body: Vec<Stmt>, // statement list
+    pub colon: Pos,         // position of ":"
+    pub body: Vec<Stmt>,    // statement list
 }
 
 /// A SelectStmt node represents a select statement.
 #[derive(Clone, Debug)]
 pub struct SelectStmt {
-    pub select: Pos, // position of "select" keyword
+    pub select: Pos,          // position of "select" keyword
     pub body: Box<BlockStmt>, // CommClauses only
 }
 
 /// A ForStmt represents a for statement.
 #[derive(Clone, Debug)]
 pub struct ForStmt {
-    pub for_: Pos, // position of "for" keyword
+    pub for_: Pos,          // position of "for" keyword
     pub init: Option<Stmt>, // initialization statement; or nil
     pub cond: Option<Expr>, // condition; or nil
     pub post: Option<Stmt>, // post iteration statement; or nil
@@ -711,30 +805,40 @@ pub struct ForStmt {
 /// A RangeStmt represents a for statement with a range clause.
 #[derive(Clone, Debug)]
 pub struct RangeStmt {
-    pub for_: Pos, // position of "for" keyword
-    pub key: Option<Expr>, // Key may be nil
+    pub for_: Pos,           // position of "for" keyword
+    pub key: Option<Expr>,   // Key may be nil
     pub value: Option<Expr>, // Value may be nil
-    pub tok_pos: Pos, // position of Tok; invalid if Key == nil
-    pub tok: Token,   // ILLEGAL if Key == nil, ASSIGN, DEFINE
-    pub range: Pos,   // position of "range" keyword
-    pub x: Expr,      // value to range over
+    pub tok_pos: Pos,        // position of Tok; invalid if Key == nil
+    pub tok: Token,          // ILLEGAL if Key == nil, ASSIGN, DEFINE
+    pub range: Pos,          // position of "range" keyword
+    pub x: Expr,             // value to range over
     pub body: Box<BlockStmt>,
 }
 
 // Pos and End implementations for statement nodes.
 
 impl BadStmt {
-    pub fn pos(&self) -> Pos { self.from }
-    pub fn end(&self) -> Pos { self.to }
+    pub fn pos(&self) -> Pos {
+        self.from
+    }
+    pub fn end(&self) -> Pos {
+        self.to
+    }
 }
 
 impl DeclStmt {
-    pub fn pos(&self) -> Pos { self.decl.pos() }
-    pub fn end(&self) -> Pos { self.decl.end() }
+    pub fn pos(&self) -> Pos {
+        self.decl.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.decl.end()
+    }
 }
 
 impl EmptyStmt {
-    pub fn pos(&self) -> Pos { self.semicolon }
+    pub fn pos(&self) -> Pos {
+        self.semicolon
+    }
 
     pub fn end(&self) -> Pos {
         if self.implicit {
@@ -745,22 +849,36 @@ impl EmptyStmt {
 }
 
 impl LabeledStmt {
-    pub fn pos(&self) -> Pos { self.label.pos() }
-    pub fn end(&self) -> Pos { self.stmt.end() }
+    pub fn pos(&self) -> Pos {
+        self.label.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.stmt.end()
+    }
 }
 
 impl ExprStmt {
-    pub fn pos(&self) -> Pos { self.x.pos() }
-    pub fn end(&self) -> Pos { self.x.end() }
+    pub fn pos(&self) -> Pos {
+        self.x.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.x.end()
+    }
 }
 
 impl SendStmt {
-    pub fn pos(&self) -> Pos { self.chan_.pos() }
-    pub fn end(&self) -> Pos { self.value.end() }
+    pub fn pos(&self) -> Pos {
+        self.chan_.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.value.end()
+    }
 }
 
 impl IncDecStmt {
-    pub fn pos(&self) -> Pos { self.x.pos() }
+    pub fn pos(&self) -> Pos {
+        self.x.pos()
+    }
 
     pub fn end(&self) -> Pos {
         self.tok_pos + 2 // len("++")
@@ -769,27 +887,43 @@ impl IncDecStmt {
 
 impl AssignStmt {
     pub fn pos(&self) -> Pos {
-        self.lhs.first().expect("ast.AssignStmt.Pos: empty Lhs").pos()
+        self.lhs
+            .first()
+            .expect("ast.AssignStmt.Pos: empty Lhs")
+            .pos()
     }
 
     pub fn end(&self) -> Pos {
         // Go indexes the last element and would panic on an empty list.
-        self.rhs.last().expect("ast.AssignStmt.End: empty Rhs").end()
+        self.rhs
+            .last()
+            .expect("ast.AssignStmt.End: empty Rhs")
+            .end()
     }
 }
 
 impl GoStmt {
-    pub fn pos(&self) -> Pos { self.go_ }
-    pub fn end(&self) -> Pos { self.call.end() }
+    pub fn pos(&self) -> Pos {
+        self.go_
+    }
+    pub fn end(&self) -> Pos {
+        self.call.end()
+    }
 }
 
 impl DeferStmt {
-    pub fn pos(&self) -> Pos { self.defer_ }
-    pub fn end(&self) -> Pos { self.call.end() }
+    pub fn pos(&self) -> Pos {
+        self.defer_
+    }
+    pub fn end(&self) -> Pos {
+        self.call.end()
+    }
 }
 
 impl ReturnStmt {
-    pub fn pos(&self) -> Pos { self.return_ }
+    pub fn pos(&self) -> Pos {
+        self.return_
+    }
 
     pub fn end(&self) -> Pos {
         if let Some(last) = self.results.last() {
@@ -800,7 +934,9 @@ impl ReturnStmt {
 }
 
 impl BranchStmt {
-    pub fn pos(&self) -> Pos { self.tok_pos }
+    pub fn pos(&self) -> Pos {
+        self.tok_pos
+    }
 
     pub fn end(&self) -> Pos {
         if let Some(label) = &self.label {
@@ -811,7 +947,9 @@ impl BranchStmt {
 }
 
 impl BlockStmt {
-    pub fn pos(&self) -> Pos { self.lbrace }
+    pub fn pos(&self) -> Pos {
+        self.lbrace
+    }
 
     pub fn end(&self) -> Pos {
         if self.rbrace.is_valid() {
@@ -825,7 +963,9 @@ impl BlockStmt {
 }
 
 impl IfStmt {
-    pub fn pos(&self) -> Pos { self.if_ }
+    pub fn pos(&self) -> Pos {
+        self.if_
+    }
 
     pub fn end(&self) -> Pos {
         if let Some(else_) = &self.else_ {
@@ -836,7 +976,9 @@ impl IfStmt {
 }
 
 impl CaseClause {
-    pub fn pos(&self) -> Pos { self.case }
+    pub fn pos(&self) -> Pos {
+        self.case
+    }
 
     pub fn end(&self) -> Pos {
         if let Some(last) = self.body.last() {
@@ -847,17 +989,27 @@ impl CaseClause {
 }
 
 impl SwitchStmt {
-    pub fn pos(&self) -> Pos { self.switch }
-    pub fn end(&self) -> Pos { self.body.end() }
+    pub fn pos(&self) -> Pos {
+        self.switch
+    }
+    pub fn end(&self) -> Pos {
+        self.body.end()
+    }
 }
 
 impl TypeSwitchStmt {
-    pub fn pos(&self) -> Pos { self.switch }
-    pub fn end(&self) -> Pos { self.body.end() }
+    pub fn pos(&self) -> Pos {
+        self.switch
+    }
+    pub fn end(&self) -> Pos {
+        self.body.end()
+    }
 }
 
 impl CommClause {
-    pub fn pos(&self) -> Pos { self.case }
+    pub fn pos(&self) -> Pos {
+        self.case
+    }
 
     pub fn end(&self) -> Pos {
         if let Some(last) = self.body.last() {
@@ -868,18 +1020,30 @@ impl CommClause {
 }
 
 impl SelectStmt {
-    pub fn pos(&self) -> Pos { self.select }
-    pub fn end(&self) -> Pos { self.body.end() }
+    pub fn pos(&self) -> Pos {
+        self.select
+    }
+    pub fn end(&self) -> Pos {
+        self.body.end()
+    }
 }
 
 impl ForStmt {
-    pub fn pos(&self) -> Pos { self.for_ }
-    pub fn end(&self) -> Pos { self.body.end() }
+    pub fn pos(&self) -> Pos {
+        self.for_
+    }
+    pub fn end(&self) -> Pos {
+        self.body.end()
+    }
 }
 
 impl RangeStmt {
-    pub fn pos(&self) -> Pos { self.for_ }
-    pub fn end(&self) -> Pos { self.body.end() }
+    pub fn pos(&self) -> Pos {
+        self.for_
+    }
+    pub fn end(&self) -> Pos {
+        self.body.end()
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -910,10 +1074,10 @@ pub struct ValueSpec {
 /// A TypeSpec node represents a type declaration (TypeSpec production).
 #[derive(Clone, Debug)]
 pub struct TypeSpec {
-    pub name: Ident, // type name
+    pub name: Ident,                    // type name
     pub type_params: Option<FieldList>, // type parameters; or nil
-    pub assign: Pos, // position of '=', if any
-    pub typ: Expr,   // *Ident, *ParenExpr, *SelectorExpr, *StarExpr, or any of the *XxxTypes
+    pub assign: Pos,                    // position of '=', if any
+    pub typ: Expr, // *Ident, *ParenExpr, *SelectorExpr, *StarExpr, or any of the *XxxTypes
 }
 
 // Pos and End implementations for spec nodes.
@@ -926,12 +1090,17 @@ impl ImportSpec {
         self.path.pos()
     }
 
-    pub fn end(&self) -> Pos { self.path.end() }
+    pub fn end(&self) -> Pos {
+        self.path.end()
+    }
 }
 
 impl ValueSpec {
     pub fn pos(&self) -> Pos {
-        self.names.first().expect("ast.ValueSpec.Pos: empty Names").pos()
+        self.names
+            .first()
+            .expect("ast.ValueSpec.Pos: empty Names")
+            .pos()
     }
 
     pub fn end(&self) -> Pos {
@@ -941,13 +1110,20 @@ impl ValueSpec {
         if let Some(typ) = &self.typ {
             return typ.end();
         }
-        self.names.last().expect("ast.ValueSpec.End: empty Names").end()
+        self.names
+            .last()
+            .expect("ast.ValueSpec.End: empty Names")
+            .end()
     }
 }
 
 impl TypeSpec {
-    pub fn pos(&self) -> Pos { self.name.pos() }
-    pub fn end(&self) -> Pos { self.typ.end() }
+    pub fn pos(&self) -> Pos {
+        self.name.pos()
+    }
+    pub fn end(&self) -> Pos {
+        self.typ.end()
+    }
 }
 
 /// A declaration is represented by one of the following declaration nodes.
@@ -984,7 +1160,7 @@ pub struct GenDecl {
 #[derive(Clone, Debug)]
 pub struct FuncDecl {
     pub recv: Option<FieldList>, // receiver (methods); or nil (functions)
-    pub name: Ident,  // function/method name
+    pub name: Ident,             // function/method name
     pub typ: FuncType, // function signature: type and value parameters, results, and position of "func" keyword
     pub body: Option<Box<BlockStmt>>, // function body; or nil for external (non-Go) function
 }
@@ -992,23 +1168,34 @@ pub struct FuncDecl {
 // Pos and End implementations for declaration nodes.
 
 impl BadDecl {
-    pub fn pos(&self) -> Pos { self.from }
-    pub fn end(&self) -> Pos { self.to }
+    pub fn pos(&self) -> Pos {
+        self.from
+    }
+    pub fn end(&self) -> Pos {
+        self.to
+    }
 }
 
 impl GenDecl {
-    pub fn pos(&self) -> Pos { self.tok_pos }
+    pub fn pos(&self) -> Pos {
+        self.tok_pos
+    }
 
     pub fn end(&self) -> Pos {
         if self.rparen.is_valid() {
             return self.rparen + 1;
         }
-        self.specs.first().expect("ast.GenDecl.End: empty Specs").end()
+        self.specs
+            .first()
+            .expect("ast.GenDecl.End: empty Specs")
+            .end()
     }
 }
 
 impl FuncDecl {
-    pub fn pos(&self) -> Pos { self.typ.pos() }
+    pub fn pos(&self) -> Pos {
+        self.typ.pos()
+    }
 
     pub fn end(&self) -> Pos {
         if let Some(body) = &self.body {
@@ -1027,15 +1214,15 @@ impl FuncDecl {
 /// comments carry no meaning for the compiler.)
 #[derive(Clone, Debug)]
 pub struct File {
-    pub package: Pos, // position of "package" keyword
-    pub name: Ident,  // package name
+    pub package: Pos,     // position of "package" keyword
+    pub name: Ident,      // package name
     pub decls: Vec<Decl>, // top-level declarations
 
     pub file_start: Pos, // start and end of entire file
     pub file_end: Pos,
     pub scope: Option<Rc<Scope>>, // package scope (this file only). Deprecated: see Object
     pub imports: Vec<ImportSpec>, // imports in this file
-    pub unresolved: Vec<Ident>, // unresolved identifiers in this file. Deprecated: see Object
+    pub unresolved: Vec<Ident>,   // unresolved identifiers in this file. Deprecated: see Object
 }
 
 impl File {
@@ -1043,7 +1230,9 @@ impl File {
     /// It may be invalid, for example in an empty file.
     ///
     /// (Use `file_start` for the start of the entire file. It is always valid.)
-    pub fn pos(&self) -> Pos { self.package }
+    pub fn pos(&self) -> Pos {
+        self.package
+    }
 
     /// Returns the end of the last declaration in the file.
     /// It may be invalid, for example in an empty file.
@@ -1062,15 +1251,19 @@ impl File {
 /// Deprecated: use the type checker instead; see [`Object`].
 #[derive(Clone, Debug)]
 pub struct Package {
-    pub name: String, // package name
-    pub scope: Option<Rc<Scope>>, // package scope across all files
+    pub name: String,                          // package name
+    pub scope: Option<Rc<Scope>>,              // package scope across all files
     pub imports: BTreeMap<String, Rc<Object>>, // map of package id -> package object
-    pub files: BTreeMap<String, File>, // Go source files by filename
+    pub files: BTreeMap<String, File>,         // Go source files by filename
 }
 
 impl Package {
-    pub fn pos(&self) -> Pos { NoPos }
-    pub fn end(&self) -> Pos { NoPos }
+    pub fn pos(&self) -> Pos {
+        NO_POS
+    }
+    pub fn end(&self) -> Pos {
+        NO_POS
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -1253,7 +1446,7 @@ mod tests {
         // Heuristic fallback: value_pos + len(value).
         let lit = BasicLit {
             value_pos: Pos::from_int(20),
-            value_end: NoPos,
+            value_end: NO_POS,
             kind: Token::String,
             value: "\"abc\"".into(),
         };
@@ -1313,7 +1506,7 @@ mod tests {
             unresolved: vec![],
         };
         assert_eq!(f.pos(), Pos::from_int(30));
-        // empty decls: falls back to name.end() = NoPos + len("p") = Pos(1)
+        // empty decls: falls back to name.end() = NO_POS + len("p") = Pos(1)
         assert_eq!(f.end(), Pos::from_int(1));
     }
 }

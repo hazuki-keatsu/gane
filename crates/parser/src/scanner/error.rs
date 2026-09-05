@@ -115,15 +115,15 @@ impl fmt::Display for ErrorList {
 
 impl std::error::Error for ErrorList {}
 
-/// PrintError is a utility function that prints a list of errors to `w`,
-/// one error per line, if the `err` parameter is an [ErrorList]. Otherwise
-/// it prints the err string.
-pub fn print_error<W: fmt::Write>(w: &mut W, err: &(dyn std::error::Error + 'static)) {
-    if let Some(list) = err.downcast_ref::<ErrorList>() {
-        for e in &list.0 {
-            let _ = writeln!(w, "{}", e);
-        }
-    } else {
-        let _ = writeln!(w, "{}", err);
-    }
-}
+// /// PrintError is a utility function that prints a list of errors to `w`,
+// /// one error per line, if the `err` parameter is an [ErrorList]. Otherwise
+// /// it prints the err string.
+// pub fn print_error<W: fmt::Write>(w: &mut W, err: &(dyn std::error::Error + 'static)) {
+//     if let Some(list) = err.downcast_ref::<ErrorList>() {
+//         for e in &list.0 {
+//             let _ = writeln!(w, "{}", e);
+//         }
+//     } else {
+//         let _ = writeln!(w, "{}", err);
+//     }
+// }

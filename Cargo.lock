@@ -24,6 +24,9 @@ version = "0.1.0"
 [[package]]
 name = "gane_driver"
 version = "0.1.0"
+dependencies = [
+ "gane_parser",
+]
 
 [[package]]
 name = "gane_hir"

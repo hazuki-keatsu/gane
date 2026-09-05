@@ -21,35 +21,35 @@ use std::rc::Rc;
 
 use crate::ast::{Expr, File, Package, Scope, new_ident};
 use crate::scanner::ErrorList;
-use crate::token::{FileSet, NoPos, Pos};
+use crate::token::{FileSet, NO_POS, Pos};
 
 use super::parser::{Bailout, Parser};
 
 /// A Mode value is a set of flags (or 0). They control parser behavior.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Mode(u8);
+pub struct Mode(u8);
 
 /// Stop parsing after the package clause.
-pub(crate) const PACKAGE_CLAUSE_ONLY: Mode = Mode(1);
+pub const PACKAGE_CLAUSE_ONLY: Mode = Mode(1);
 
 /// Stop parsing after the imports are parsed.
-pub(crate) const IMPORTS_ONLY: Mode = Mode(2);
+pub const IMPORTS_ONLY: Mode = Mode(2);
 
 // (Go's ParseComments and Trace mode bits are not ported; see the module
 // documentation. Their bit values 1<<2 and 1<<3 are unused.)
 
 /// Report declaration errors.
-pub(crate) const DECLARATION_ERRORS: Mode = Mode(1 << 4);
+pub const DECLARATION_ERRORS: Mode = Mode(1 << 4);
 
 /// Same as AllErrors, for backward-compatibility.
-pub(crate) const SPURIOUS_ERRORS: Mode = Mode(1 << 5);
+pub const SPURIOUS_ERRORS: Mode = Mode(1 << 5);
 
 /// Skip the deprecated identifier resolution (resolver.go); see
 /// [`parse_file`]. Recommended by Go for new programs.
-pub(crate) const SKIP_OBJECT_RESOLUTION: Mode = Mode(1 << 6);
+pub const SKIP_OBJECT_RESOLUTION: Mode = Mode(1 << 6);
 
 /// AllErrors is a legacy alias for SpuriousErrors.
-pub(crate) const ALL_ERRORS: Mode = SPURIOUS_ERRORS;
+pub const ALL_ERRORS: Mode = SPURIOUS_ERRORS;
 
 impl BitAnd for Mode {
     type Output = Mode;
@@ -109,7 +109,7 @@ fn add_bailout_msg(
 /// (Go's nil-fset panic and source-reading paths are dropped: `fset` cannot
 /// be nil in this port, and the source is always provided via `src`. Object
 /// resolution runs unless `SKIP_OBJECT_RESOLUTION` is set, like Go.)
-pub(crate) fn parse_file(
+pub fn parse_file(
     fset: &mut FileSet,
     filename: &str,
     src: &[u8],
@@ -136,11 +136,11 @@ pub(crate) fn parse_file(
             // file carries an empty scope like Go's, which is what every
             // successfully parsed file carries too.)
             File {
-                package: NoPos,
+                package: NO_POS,
                 name: new_ident(""),
                 decls: Vec::new(),
-                file_start: NoPos,
-                file_end: NoPos,
+                file_start: NO_POS,
+                file_end: NO_POS,
                 scope: Some(Rc::new(Scope::new_scope(None))),
                 imports: Vec::new(),
                 unresolved: Vec::new(),
@@ -174,7 +174,7 @@ pub(crate) fn parse_file(
 ///
 /// Deprecated: ParseDir does not consider build tags when associating files
 /// with packages. (Go's deprecation note, kept verbatim.)
-pub(crate) fn parse_dir(
+pub fn parse_dir(
     fset: &mut FileSet,
     path: &str,
     filter: Option<&dyn Fn(&str) -> bool>,
@@ -258,7 +258,7 @@ pub(crate) fn parse_dir(
 /// If the source was read but syntax errors were found, the result is a
 /// partial AST (with `Bad*` nodes representing the fragments of erroneous
 /// source code); the second result is the (sorted) error list.
-pub(crate) fn parse_expr_from(
+pub fn parse_expr_from(
     fset: &mut FileSet,
     filename: &str,
     src: &[u8],
@@ -300,7 +300,7 @@ pub(crate) fn parse_expr_from(
 /// If syntax errors were found, the result is a partial AST (with `Bad*`
 /// nodes representing the fragments of erroneous source code); the second
 /// result is the (sorted) error list.
-pub(crate) fn parse_expr(x: &str) -> (Option<Expr>, Option<ErrorList>) {
+pub fn parse_expr(x: &str) -> (Option<Expr>, Option<ErrorList>) {
     let mut fset = FileSet::new();
     parse_expr_from(&mut fset, "", x.as_bytes(), Mode::default())
 }

@@ -24,7 +24,7 @@ use std::rc::Rc;
 use crate::ast::File as AstFile;
 use crate::ast::*;
 use crate::scanner::{ErrorHandler, ErrorList, Mode as ScannerMode, Scanner};
-use crate::token::{File, NoPos, Pos, Token};
+use crate::token::{File, NO_POS, Pos, Token};
 
 use super::interface::{
     ALL_ERRORS, DECLARATION_ERRORS, IMPORTS_ONLY, Mode, PACKAGE_CLAUSE_ONLY, SKIP_OBJECT_RESOLUTION,
@@ -95,10 +95,10 @@ impl<'src> Parser<'src> {
             errors,
             scanner,
             mode,
-            pos: NoPos,
+            pos: NO_POS,
             tok: Token::Illegal,
             lit: String::new(),
-            sync_pos: NoPos,
+            sync_pos: NO_POS,
             sync_cnt: 0,
             expr_lev: 0,
             in_rhs: false,
@@ -121,10 +121,10 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Returns the file being parsed.
-    pub(crate) fn file_rc(&self) -> Rc<File> {
-        self.file.clone()
-    }
+    // /// Returns the file being parsed.
+    // pub(crate) fn file_rc(&self) -> Rc<File> {
+    //     self.file.clone()
+    // }
 
     /// Returns a clone of the shared error list handle.
     pub(crate) fn errors_rc(&self) -> Rc<RefCell<ErrorList>> {
@@ -180,7 +180,7 @@ impl<'src> Parser<'src> {
             };
             if n > 10 {
                 std::panic::panic_any(Bailout {
-                    pos: NoPos,
+                    pos: NO_POS,
                     msg: String::new(),
                 });
             }
@@ -229,7 +229,7 @@ impl<'src> Parser<'src> {
         } else {
             let msg = format!("'{}'", tok);
             self.error_expected(self.pos, &msg);
-            pos = NoPos;
+            pos = NO_POS;
         }
         self.next(); // make progress
         pos
@@ -441,7 +441,7 @@ impl<'src> Parser<'src> {
 
     fn parse_array_field_or_type_instance(&mut self, x: Ident) -> (Option<Ident>, Expr) {
         let lbrack = self.expect(Token::LBrack);
-        let mut trailing_comma = NoPos; // if valid, the position of a trailing comma preceding the ']'
+        let mut trailing_comma = NO_POS; // if valid, the position of a trailing comma preceding the ']'
         let mut args: Vec<Expr> = Vec::new();
         if self.tok != Token::RBrack {
             self.expr_lev += 1;
@@ -1042,9 +1042,9 @@ impl<'src> Parser<'src> {
                 tag: None,
             });
             return Some(FieldList {
-                opening: NoPos,
+                opening: NO_POS,
                 list,
-                closing: NoPos,
+                closing: NO_POS,
             });
         }
 
@@ -1109,7 +1109,7 @@ impl<'src> Parser<'src> {
                             let results = self.parse_parameters(true);
                             idents = vec![ident];
                             Expr::FuncType(FuncType {
-                                func: NoPos,
+                                func: NO_POS,
                                 type_params: None,
                                 params,
                                 results,
@@ -1128,7 +1128,7 @@ impl<'src> Parser<'src> {
                     let results = self.parse_parameters(true);
                     idents = vec![ident];
                     Expr::FuncType(FuncType {
-                        func: NoPos,
+                        func: NO_POS,
                         type_params: None,
                         params,
                         results,
@@ -1295,7 +1295,7 @@ impl<'src> Parser<'src> {
     fn parse_chan_type(&mut self) -> Expr {
         let pos = self.pos;
         let mut dir = ChanDir::SEND | ChanDir::RECV;
-        let mut arrow = NoPos;
+        let mut arrow = NO_POS;
         if self.tok == Token::Chan {
             self.next();
             if self.tok == Token::Arrow {
@@ -1550,7 +1550,7 @@ impl<'src> Parser<'src> {
         const N: usize = 3; // change the 3 to 2 to disable 3-index slices
         let mut args: Vec<Expr> = Vec::new();
         let mut index: [Option<Expr>; N] = [None, None, None];
-        let mut colons = [NoPos; N - 1];
+        let mut colons = [NO_POS; N - 1];
         if self.tok != Token::Colon {
             // We can't know if we have an index expression or a type instantiation;
             // so even if we see a (named) type we are not going to be in type context.
@@ -1642,7 +1642,7 @@ impl<'src> Parser<'src> {
         let lparen = self.expect(Token::LParen);
         self.expr_lev += 1;
         let mut list: Vec<Expr> = Vec::new();
-        let mut ellipsis = NoPos;
+        let mut ellipsis = NO_POS;
         while self.tok != Token::RParen && self.tok != Token::EOF && !ellipsis.is_valid() {
             list.push(self.parse_rhs()); // builtins may expect a type: make(some type, ...)
             if self.tok == Token::Ellipsis {
@@ -1955,7 +1955,7 @@ fn inc_nest_lev(p: &mut Parser) -> NestGuard {
     if p.nest_lev.get() > MAX_NEST_LEV {
         p.error(p.pos, "exceeded max nesting depth".to_string());
         std::panic::panic_any(Bailout {
-            pos: NoPos,
+            pos: NO_POS,
             msg: String::new(),
         });
     }
@@ -2076,7 +2076,7 @@ impl NestAccum {
         if self.nest_lev.get() > MAX_NEST_LEV {
             p.error(p.pos, "exceeded max nesting depth".to_string());
             std::panic::panic_any(Bailout {
-                pos: NoPos,
+                pos: NO_POS,
                 msg: String::new(),
             });
         }
@@ -2704,7 +2704,7 @@ impl<'src> Parser<'src> {
                     }))];
                     s2 = Some(Stmt::AssignStmt(AssignStmt {
                         lhs: Vec::new(),
-                        tok_pos: NoPos,
+                        tok_pos: NO_POS,
                         tok: Token::Illegal,
                         rhs: y,
                     }));
@@ -2989,8 +2989,8 @@ impl<'src> Parser<'src> {
 
     fn parse_gen_decl(&mut self, keyword: Token, f: SpecFunction) -> Decl {
         let pos = self.expect(keyword);
-        let mut lparen = NoPos;
-        let mut rparen = NoPos;
+        let mut lparen = NO_POS;
+        let mut rparen = NO_POS;
         let mut list: Vec<Spec> = Vec::new();
         if self.tok == Token::LParen {
             lparen = self.pos;
@@ -3106,8 +3106,8 @@ impl<'src> Parser<'src> {
             package: pos,
             name: ident,
             decls,
-            file_start: NoPos, // set by the caller, like Go's ParseFile defer
-            file_end: NoPos,
+            file_start: NO_POS, // set by the caller, like Go's ParseFile defer
+            file_end: NO_POS,
             scope: None,
             imports: std::mem::take(&mut self.imports),
             unresolved: Vec::new(),
@@ -3220,11 +3220,11 @@ fn parse_type_spec(p: &mut Parser, _keyword: Token) -> Spec {
     let mut spec = TypeSpec {
         name,
         type_params: None,
-        assign: NoPos,
+        assign: NO_POS,
         // placeholder; overwritten in every branch below before returning
         typ: Expr::BadExpr(BadExpr {
-            from: NoPos,
-            to: NoPos,
+            from: NO_POS,
+            to: NO_POS,
         }),
     };
 

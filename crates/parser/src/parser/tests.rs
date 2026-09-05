@@ -22,7 +22,7 @@ use super::*;
 use crate::ast::{NodeRef, inspect};
 use crate::parser::interface::*;
 use crate::scanner::{ErrorList, SCAN_COMMENTS, Scanner};
-use crate::token::{File, FileSet, NoPos, Pos};
+use crate::token::{File, FileSet, NO_POS, Pos};
 
 /// Silences the default panic hook for parser bailouts only: a `Bailout`
 /// panic is an internal control-flow device (like Go's recover in ParseFile)
@@ -75,7 +75,7 @@ fn get_pos(fset: &FileSet, filename: &str, offset: i64) -> Pos {
     if let Some(f) = get_file(fset, filename) {
         return f.pos(offset);
     }
-    NoPos
+    NO_POS
 }
 
 // ERROR comments must be of the form /* ERROR "rx" */ and rx is
@@ -95,8 +95,8 @@ fn expected_errors(fset: &FileSet, filename: &str, src: &[u8]) -> BTreeMap<Pos, 
 
     let file = get_file(fset, filename).expect("file not found");
     let mut s = Scanner::new(file, src, None, SCAN_COMMENTS);
-    let mut prev = NoPos; // position of last non-comment, non-semicolon token
-    let mut here = NoPos; // position immediately after the token at position prev
+    let mut prev = NO_POS; // position of last non-comment, non-semicolon token
+    let mut here = NO_POS; // position immediately after the token at position prev
 
     let rx = err_rx();
     loop {
@@ -614,8 +614,8 @@ fn test_issue9979() {
         let (f, err) = parse_file(&mut fset, "", src.as_bytes(), Mode::default());
         assert!(err.is_none(), "{src}: {err:?}");
 
-        let mut pos = NoPos;
-        let mut end = NoPos;
+        let mut pos = NO_POS;
+        let mut end = NO_POS;
         let mut failures = Vec::new();
         inspect(NodeRef::File(&f), &mut |n| {
             match n {
@@ -1695,7 +1695,7 @@ fn position_markers(
     let mut s = Scanner::new(handle.clone(), src, None, SCAN_COMMENTS);
     let mut decls: BTreeMap<String, Pos> = BTreeMap::new();
     let mut uses: BTreeMap<String, Vec<Pos>> = BTreeMap::new();
-    let mut prev = NoPos; // position of last non-comment, non-semicolon token
+    let mut prev = NO_POS; // position of last non-comment, non-semicolon token
 
     loop {
         let (pos, tok, lit) = s.scan();

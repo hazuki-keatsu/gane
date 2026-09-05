@@ -87,16 +87,16 @@ impl fmt::Display for Position {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pos(i64);
 
-/// The zero value for [`Pos`] is `NoPos`; there is no file and line information
-/// associated with it, and `NoPos.is_valid()` is false. `NoPos` is always
+/// The zero value for [`Pos`] is `NO_POS`; there is no file and line information
+/// associated with it, and `NO_POS.is_valid()` is false. `NO_POS` is always
 /// smaller than any other `Pos` value. The corresponding [`Position`] value
-/// for `NoPos` is the zero value for [`Position`].
-pub const NoPos: Pos = Pos(0);
+/// for `NO_POS` is the zero value for [`Position`].
+pub const NO_POS: Pos = Pos(0);
 
 impl Pos {
     /// Reports whether the position is valid.
     pub fn is_valid(self) -> bool {
-        self != NoPos
+        self != NO_POS
     }
 
     /// Constructs a `Pos` from a raw integer.
@@ -348,7 +348,7 @@ impl File {
 
     /// Returns the offset for the given file position p.
     ///
-    /// If p is before the file's start position (or if p is `NoPos`),
+    /// If p is before the file's start position (or if p is `NO_POS`),
     /// the result is 0; if p is past the file's end position, the result is
     /// the file size (see also go.dev/issue/57490).
     ///
@@ -359,7 +359,7 @@ impl File {
     }
 
     /// Returns the line number for the given file position p;
-    /// p must be a [`Pos`] value in that file or `NoPos`.
+    /// p must be a [`Pos`] value in that file or `NO_POS`.
     pub fn line(&self, p: Pos) -> i64 {
         self.position(p).line
     }
@@ -418,9 +418,9 @@ impl File {
     /// If p is out of bounds, it is adjusted to match the [`File::offset`]
     /// behavior. If adjusted is set, the position may be adjusted by
     /// position-altering `//line` comments; otherwise those comments are ignored.
-    /// p must be a [`Pos`] value in this file or `NoPos`.
+    /// p must be a [`Pos`] value in this file or `NO_POS`.
     pub fn position_for(&self, p: Pos, adjusted: bool) -> Position {
-        if p != NoPos {
+        if p != NO_POS {
             self.position_adj(p, adjusted)
         } else {
             Position::default()
@@ -472,7 +472,7 @@ impl FileSet {
     /// Creates a new file set.
     pub fn new() -> FileSet {
         FileSet {
-            base: 1, // 0 == NoPos
+            base: 1, // 0 == NO_POS
             ..FileSet::default()
         }
     }
@@ -604,17 +604,17 @@ impl FileSet {
     }
 
     /// Returns the file that contains the position p.
-    /// If no such file is found (for instance for p == `NoPos`), the result is `None`.
+    /// If no such file is found (for instance for p == `NO_POS`), the result is `None`.
     pub fn file(&self, p: Pos) -> Option<Rc<File>> {
-        if p != NoPos { self.lookup(p) } else { None }
+        if p != NO_POS { self.lookup(p) } else { None }
     }
 
     /// Converts a [`Pos`] p in the file set into a [`Position`] value.
     /// If adjusted is set, the position may be adjusted by position-altering
     /// `//line` comments; otherwise those comments are ignored.
-    /// p must be a [`Pos`] value in this file set or `NoPos`.
+    /// p must be a [`Pos`] value in this file set or `NO_POS`.
     pub fn position_for(&self, p: Pos, adjusted: bool) -> Position {
-        if p != NoPos {
+        if p != NO_POS {
             if let Some(f) = self.lookup(p) {
                 return f.position_adj(p, adjusted);
             }
@@ -654,12 +654,12 @@ mod tests {
 
     #[test]
     fn no_pos() {
-        assert!(!NoPos.is_valid());
+        assert!(!NO_POS.is_valid());
         assert!(Pos(1).is_valid());
         let fset = FileSet::new();
         let want = Position::default();
-        assert_pos_eq("fset NoPos", &fset.position(NoPos), &want);
-        assert_eq!(fset.position(NoPos).to_string(), "-");
+        assert_pos_eq("fset NoPos", &fset.position(NO_POS), &want);
+        assert_eq!(fset.position(NO_POS).to_string(), "-");
     }
 
     struct TestCase {
@@ -1134,7 +1134,7 @@ mod tests {
         let f = fset.add_file("f", base, FSIZE);
 
         // out-of-bounds positions must not lead to a panic when calling f.offset
-        assert_eq!(f.offset(NoPos), 0, "offset of NoPos");
+        assert_eq!(f.offset(NO_POS), 0, "offset of NoPos");
         assert_eq!(f.offset(Pos(-1)), 0, "offset of -1");
         assert_eq!(f.offset(Pos(base + FSIZE + 1)), FSIZE, "offset past end");
 

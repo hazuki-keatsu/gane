@@ -78,10 +78,7 @@ fn scan_quoted(s: &str) -> Result<(usize, String), ()> {
                 }
                 // Non-ASCII byte: copy the whole UTF-8 sequence.
                 let rest = &s[i..];
-                let ch = rest
-                    .chars()
-                    .next()
-                    .ok_or(())?;
+                let ch = rest.chars().next().ok_or(())?;
                 value.push(ch);
                 i += ch.len_utf8();
             }
@@ -169,7 +166,10 @@ mod tests {
         let cases = [
             ("\"abc\"", "abc"),
             ("\"foo\\U0001F60Abar\"", "foo\u{1F60A}bar"),
-            ("\"\\a\\b\\f\\n\\r\\t\\v\\\\\\'\\\"\"", "\x07\x08\x0c\n\r\t\x0b\\'\""),
+            (
+                "\"\\a\\b\\f\\n\\r\\t\\v\\\\\\'\\\"\"",
+                "\x07\x08\x0c\n\r\t\x0b\\'\"",
+            ),
             ("\"\\x41\\101\"", "AA"),
             ("\"\\u4e2d\"", "中"),
             ("\"\\xFF\"", "\u{FF}"),
@@ -191,15 +191,15 @@ mod tests {
     #[test]
     fn unquote_errors() {
         let cases = [
-            "",       // empty
-            "abc",    // not quoted
-            "`foo",   // unterminated raw
-            "\"foo",  // unterminated quoted
-            "\"foo\\q\"", // unknown escape
-            "\"\\x4\"",   // short hex
+            "",                // empty
+            "abc",             // not quoted
+            "`foo",            // unterminated raw
+            "\"foo",           // unterminated quoted
+            "\"foo\\q\"",      // unknown escape
+            "\"\\x4\"",        // short hex
             "\"\\U00110000\"", // invalid scalar value
-            "\"\\777\"",  // octal value > 255
-            "\"abc\"x",   // trailing garbage
+            "\"\\777\"",       // octal value > 255
+            "\"abc\"x",        // trailing garbage
         ];
         for inp in cases {
             assert!(unquote(inp).is_err(), "unquote({inp:?}) should fail");

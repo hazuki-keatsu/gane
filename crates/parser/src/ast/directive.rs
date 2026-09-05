@@ -80,8 +80,8 @@ impl Directive {
 
             match args.s.as_bytes()[0] {
                 b'`' | b'"' => {
-                    let q = strconv::quoted_prefix(args.s)
-                        .map_err(|_| invalid_quoted(self, args.s))?;
+                    let q =
+                        strconv::quoted_prefix(args.s).map_err(|_| invalid_quoted(self, args.s))?;
                     // Any errors will have been returned by quoted_prefix.
                     let prefix = args.take(q.len());
                     arg = strconv::unquote(prefix).map_err(|_| invalid_quoted(self, args.s))?;
@@ -106,7 +106,10 @@ impl Directive {
 }
 
 fn invalid_quoted(d: &Directive, rest: &str) -> DirectiveArgsError {
-    DirectiveArgsError(format!("invalid quoted string in //{}:{}: {}", d.tool, d.name, rest))
+    DirectiveArgsError(format!(
+        "invalid quoted string in //{}:{}: {}",
+        d.tool, d.name, rest
+    ))
 }
 
 /// An error returned by [`Directive::parse_args`]; mirrors Go's
@@ -216,10 +219,7 @@ impl<'a> DirectiveScanner<'a> {
     }
 
     fn take_non_space(&mut self) -> String {
-        let i = self
-            .s
-            .find(char::is_whitespace)
-            .unwrap_or(self.s.len());
+        let i = self.s.find(char::is_whitespace).unwrap_or(self.s.len());
         self.take(i).to_string()
     }
 
@@ -391,32 +391,56 @@ mod tests {
                 "simple",
                 d("go", "generate", "stringer -type Op", 0, 10),
                 Some(vec![
-                    DirectiveArg { arg: "stringer".into(), pos: p(10) },
-                    DirectiveArg { arg: "-type".into(), pos: p(10 + "stringer ".len() as i64) },
-                    DirectiveArg { arg: "Op".into(), pos: p(10 + "stringer -type ".len() as i64) },
+                    DirectiveArg {
+                        arg: "stringer".into(),
+                        pos: p(10),
+                    },
+                    DirectiveArg {
+                        arg: "-type".into(),
+                        pos: p(10 + "stringer ".len() as i64),
+                    },
+                    DirectiveArg {
+                        arg: "Op".into(),
+                        pos: p(10 + "stringer -type ".len() as i64),
+                    },
                 ]),
             ),
             (
                 "quoted",
                 d("go", "generate", "\"foo bar\" baz", 0, 10),
                 Some(vec![
-                    DirectiveArg { arg: "foo bar".into(), pos: p(10) },
-                    DirectiveArg { arg: "baz".into(), pos: p(10 + "\"foo bar\" ".len() as i64) },
+                    DirectiveArg {
+                        arg: "foo bar".into(),
+                        pos: p(10),
+                    },
+                    DirectiveArg {
+                        arg: "baz".into(),
+                        pos: p(10 + "\"foo bar\" ".len() as i64),
+                    },
                 ]),
             ),
             (
                 "raw quoted",
                 d("go", "generate", "`foo bar` baz", 0, 10),
                 Some(vec![
-                    DirectiveArg { arg: "foo bar".into(), pos: p(10) },
-                    DirectiveArg { arg: "baz".into(), pos: p(10 + "`foo bar` ".len() as i64) },
+                    DirectiveArg {
+                        arg: "foo bar".into(),
+                        pos: p(10),
+                    },
+                    DirectiveArg {
+                        arg: "baz".into(),
+                        pos: p(10 + "`foo bar` ".len() as i64),
+                    },
                 ]),
             ),
             (
                 "escapes",
                 d("go", "generate", "\"foo\\U0001F60Abar\" `a\\tb`", 0, 10),
                 Some(vec![
-                    DirectiveArg { arg: "foo\u{1F60A}bar".into(), pos: p(10) },
+                    DirectiveArg {
+                        arg: "foo\u{1F60A}bar".into(),
+                        pos: p(10),
+                    },
                     DirectiveArg {
                         arg: "a\\tb".into(),
                         pos: p(10 + "\"foo\\U0001F60Abar\" ".len() as i64),
@@ -428,12 +452,26 @@ mod tests {
                 "spaces",
                 d("go", "build", "  foo   bar  ", 0, 10),
                 Some(vec![
-                    DirectiveArg { arg: "foo".into(), pos: p(10 + 2) },
-                    DirectiveArg { arg: "bar".into(), pos: p(10 + "  foo   ".len() as i64) },
+                    DirectiveArg {
+                        arg: "foo".into(),
+                        pos: p(10 + 2),
+                    },
+                    DirectiveArg {
+                        arg: "bar".into(),
+                        pos: p(10 + "  foo   ".len() as i64),
+                    },
                 ]),
             ),
-            ("unterminated quote", d("go", "generate", "`foo", 0, 0), None),
-            ("no space after quote", d("go", "generate", "\"foo\"bar", 0, 0), None),
+            (
+                "unterminated quote",
+                d("go", "generate", "`foo", 0, 0),
+                None,
+            ),
+            (
+                "no space after quote",
+                d("go", "generate", "\"foo\"bar", 0, 0),
+                None,
+            ),
         ];
 
         for (name, inp, want) in cases {

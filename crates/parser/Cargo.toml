@@ -5,11 +5,9 @@ version.workspace = true
 authors.workspace = true
 
 [dependencies]
-anyhow = "1"
-thiserror = "2"
-unicode-general-category = "1.1.0"
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+unicode-general-category = { workspace = true }
 
 [dev-dependencies]
-# Used by the error-test harness (go/parser/error_test.go) to match
-# expected error messages.
-regex = "1"
+regex = { workspace = true }

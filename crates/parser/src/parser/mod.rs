@@ -20,3 +20,5 @@
 mod interface;
 mod parser;
 mod resolver;
+
+pub use interface::*;
