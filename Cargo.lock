@@ -45,6 +45,9 @@ dependencies = [
 [[package]]
 name = "gane_sema"
 version = "0.1.0"
+dependencies = [
+ "gane_parser",
+]
 
 [[package]]
 name = "memchr"
