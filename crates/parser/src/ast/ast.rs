@@ -6,9 +6,8 @@
 //!   (`[Expr]`, `[Stmt]`, `[Decl]`, `[Spec]`) whose variants carry the
 //!   corresponding Go node structs; exhaustive `match` replaces Go's type
 //!   switches;
-//! - the comment system (`Comment`, `CommentGroup`, `Doc`/`Comment` fields,
-//!   `File.Comments`) is intentionally not ported: comments are discarded by
-//!   the scanner and carry no meaning for the compiler;
+//! - ordinary comments are discarded; supported compiler command comments
+//!   are retained on the AST object they immediately precede;
 //! - Go pointer fields become `Box<T>` (singly-owned subtrees) or `Option<T>`
 //!   (nil-able).
 //!
@@ -51,6 +50,24 @@ impl std::ops::BitOr for ChanDir {
 // ----------------------------------------------------------------------------
 // Fields
 
+/// The namespace of a compiler command comment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommentCommandKind {
+    Go,
+    Gane,
+}
+
+/// A compiler command written in a single-line source comment.
+///
+/// Only `//go:` and `//gane:` comments are represented. `text` is the
+/// complete, unparsed suffix after the prefix.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommentCommand {
+    pub slash: Pos,
+    pub kind: CommentCommandKind,
+    pub text: String,
+}
+
 /// A Field represents a Field declaration list in a struct type,
 /// a method list in an interface type, or a parameter/result declaration
 /// in a signature.
@@ -59,9 +76,11 @@ impl std::ops::BitOr for ChanDir {
 /// only contain types) and embedded struct fields. In the latter case, the
 /// field name is the type name.
 ///
-/// (Go's `Doc`/`Comment` documentation fields are not ported.)
+/// Ordinary documentation comments are not ported; compiler commands are in
+/// [`Field::commands`].
 #[derive(Clone, Debug)]
 pub struct Field {
+    pub commands: Vec<CommentCommand>,
     pub names: Vec<Ident>,     // field/method/(type) parameter names; or empty
     pub typ: Option<Expr>,     // field/method/parameter type; or nil
     pub tag: Option<BasicLit>, // field tag; or nil
@@ -1049,10 +1068,11 @@ impl RangeStmt {
 
 /// An ImportSpec node represents a single package import.
 ///
-/// (Go's `Doc`/`Comment` fields and the printer-oriented `EndPos` field are
-/// not ported; the parser always provides a path.)
+/// Ordinary Go comment fields and the printer-oriented `EndPos` field are not
+/// ported; compiler commands are in [`ImportSpec::commands`].
 #[derive(Clone, Debug)]
 pub struct ImportSpec {
+    pub commands: Vec<CommentCommand>,
     pub name: Option<Ident>, // local package name (including "."); or nil
     pub path: BasicLit,      // import path
 }
@@ -1061,6 +1081,7 @@ pub struct ImportSpec {
 /// (ConstSpec or VarSpec production).
 #[derive(Clone, Debug)]
 pub struct ValueSpec {
+    pub commands: Vec<CommentCommand>,
     pub names: Vec<Ident>, // value names (len(Names) > 0)
     pub typ: Option<Expr>, // value type; or nil
     pub values: Vec<Expr>, // initial values
@@ -1069,6 +1090,7 @@ pub struct ValueSpec {
 /// A TypeSpec node represents a type declaration (TypeSpec production).
 #[derive(Clone, Debug)]
 pub struct TypeSpec {
+    pub commands: Vec<CommentCommand>,
     pub name: Ident,                    // type name
     pub type_params: Option<FieldList>, // type parameters; or nil
     pub assign: Pos,                    // position of '=', if any
@@ -1144,6 +1166,7 @@ pub struct BadDecl {
 /// | token.VAR    | [Spec::ValueSpec]   |
 #[derive(Clone, Debug)]
 pub struct GenDecl {
+    pub commands: Vec<CommentCommand>,
     pub tok_pos: Pos, // position of Tok
     pub tok: Token,   // IMPORT, CONST, TYPE, or VAR
     pub lparen: Pos,  // position of '(', if any
@@ -1154,6 +1177,7 @@ pub struct GenDecl {
 /// A FuncDecl node represents a function declaration.
 #[derive(Clone, Debug)]
 pub struct FuncDecl {
+    pub commands: Vec<CommentCommand>,
     pub recv: Option<FieldList>, // receiver (methods); or nil (functions)
     pub name: Ident,             // function/method name
     pub typ: FuncType, // function signature: type and value parameters, results, and position of "func" keyword
@@ -1205,10 +1229,11 @@ impl FuncDecl {
 
 /// A File node represents a Go source file.
 ///
-/// (Go's comment lists, documentation comment and `GoVersion` are not ported;
-/// comments carry no meaning for the compiler.)
+/// Ordinary comments are discarded; compiler command comments preceding the
+/// package clause are stored in [`File::commands`].
 #[derive(Clone, Debug)]
 pub struct File {
+    pub commands: Vec<CommentCommand>,
     pub package: Pos,     // position of "package" keyword
     pub name: Ident,      // package name
     pub decls: Vec<Decl>, // top-level declarations
@@ -1482,6 +1507,7 @@ mod tests {
     #[test]
     fn file_pos_end_falls_back_to_package_name() {
         let f = File {
+            commands: vec![],
             package: Pos::from_int(30),
             name: new_ident("p"),
             decls: vec![],

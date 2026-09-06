@@ -3,8 +3,9 @@
 //! This module is ported from Go's standard `go/parser/interface.go`,
 //! providing the exported parser entry points. The Rust port deviates from
 //! Go in the ways described in the [`super`] module documentation; in
-//! particular, `Mode` drops the `ParseComments` and `Trace` bits (comments
-//! are not collected and tracing is not ported).
+//! particular, `Mode` drops the `ParseComments` and `Trace` bits: ordinary
+//! comments are ignored, while supported compiler command comments are always
+//! collected and tracing is not ported.
 //!
 //! Go's `readSource` is dropped: the entry points always take `&[u8]` source
 //! (file reading happens at the call site, and the Go test files read their
@@ -122,6 +123,7 @@ pub fn parse_file(
             // source is not a valid Go source file - satisfy the ParseFile
             // API and return a valid (but) empty *ast.File
             File {
+                commands: Vec::new(),
                 package: NO_POS,
                 name: new_ident(""),
                 decls: Vec::new(),

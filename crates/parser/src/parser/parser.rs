@@ -4,10 +4,8 @@
 //! Go's private function order is preserved. Adaptations (besides those
 //! listed in the [`super`] module documentation):
 //!
-//! - the comment system is dropped: `consumeComment`, `consumeCommentGroup`,
-//!   the `comments`/`leadComment`/`lineComment`/`top`/`goVersion` fields and
-//!   `lineFor` are not ported; `next0` is a single `Scanner::scan`, and
-//!   `next` collapses into it (the scanner never returns comment tokens);
+//! - ordinary comments are dropped. Single-line `//go:` and `//gane:` command
+//!   comments are retained and attached to the immediately following AST node;
 //! - `expectSemi` no longer returns the line comment, so it returns `()`;
 //! - Go's `bailout` panic is a private marker used for early termination
 //!   after too many parse errors;
@@ -22,7 +20,7 @@ use std::rc::Rc;
 
 use crate::ast::File as AstFile;
 use crate::ast::*;
-use crate::scanner::{ErrorHandler, ErrorList, Mode as ScannerMode, Scanner};
+use crate::scanner::{ErrorHandler, ErrorList, SCAN_COMMENTS, Scanner};
 use crate::token::{File, NO_POS, Pos, Token};
 
 use super::interface::{ALL_ERRORS, DECLARATION_ERRORS, IMPORTS_ONLY, Mode, PACKAGE_CLAUSE_ONLY};
@@ -33,9 +31,7 @@ pub(crate) struct Parser<'src> {
     errors: Rc<RefCell<ErrorList>>,
     scanner: Scanner<'src>,
 
-    // (Go's tracing state `trace`/`indent` and comment state
-    // `comments`/`leadComment`/`lineComment`/`top`/`goVersion` are not
-    // ported.)
+    // Go's tracing state and general comment/doc-comment state are not ported.
     mode: Mode, // parsing mode
 
     // Next token
@@ -57,6 +53,7 @@ pub(crate) struct Parser<'src> {
     in_rhs: bool,  // if set, the parser is parsing a rhs expression
 
     imports: Vec<ImportSpec>, // list of imports
+    pending_commands: Vec<CommentCommand>,
 
     // nest_lev is used to track and limit the recursion depth
     // during parsing. It is `Rc<Cell<i32>>` so that a NestGuard can
@@ -77,16 +74,15 @@ pub(crate) struct Bailout {
 impl<'src> Parser<'src> {
     /// Creates and initializes a parser for `src`, scanning the first token.
     /// Scanner errors are reported into the parser's shared error list
-    /// (Go's `parser.init`; the scanner is initialized with `ScanComments` in
-    /// Go, but comments are dropped in this port, so the scanner runs in its
-    /// default mode).
+    /// The scanner returns comments so supported compiler commands can be
+    /// collected; all other comments are skipped by [`Parser::next`].
     pub(crate) fn new(file: Rc<File>, src: &'src [u8], mode: Mode) -> Parser<'src> {
         let errors = Rc::new(RefCell::new(ErrorList::default()));
         let eh: ErrorHandler = {
             let errors = errors.clone();
             Box::new(move |pos, msg| errors.borrow_mut().add(pos, msg))
         };
-        let scanner = Scanner::new(file.clone(), src, Some(eh), ScannerMode::default());
+        let scanner = Scanner::new(file.clone(), src, Some(eh), SCAN_COMMENTS);
         let mut p = Parser {
             file,
             errors,
@@ -100,6 +96,7 @@ impl<'src> Parser<'src> {
             expr_lev: 0,
             in_rhs: false,
             imports: Vec::new(),
+            pending_commands: Vec::new(),
             nest_lev: Rc::new(Cell::new(0)),
         };
         p.next();
@@ -138,9 +135,7 @@ impl<'src> Parser<'src> {
 
     /// Advance to the next token.
     ///
-    /// (Go's `next0` skips COMMENT tokens when ParseComments is off and
-    /// sniffs `//go:build` comments for the minimum Go version; neither
-    /// applies here - the scanner never returns comment tokens.)
+    /// Comments are handled by [`Parser::next`].
     fn next0(&mut self) {
         let (pos, tok, lit) = self.scanner.scan();
         self.pos = pos;
@@ -148,13 +143,63 @@ impl<'src> Parser<'src> {
         self.lit = lit;
     }
 
-    /// Advance to the next non-comment token.
-    ///
-    /// (Go's `next` classifies lead and line comments for documentation
-    /// purposes; comments are not collected in this port, so this is just an
-    /// alias for `next0`.)
+    /// Returns the physical source line for a position, ignoring `//line`.
+    fn line_for(&self, pos: Pos) -> i64 {
+        self.file.position_for(pos, false).line
+    }
+
+    fn consume_command(&mut self, pos: Pos, lit: &str, previous_line: i64) {
+        let (kind, text) = if let Some(text) = lit.strip_prefix("//go:") {
+            (CommentCommandKind::Go, text)
+        } else if let Some(text) = lit.strip_prefix("//gane:") {
+            (CommentCommandKind::Gane, text)
+        } else {
+            return;
+        };
+
+        // A command following source text on the same line is trailing, not leading.
+        if self.line_for(pos) == previous_line {
+            return;
+        }
+        self.pending_commands.push(CommentCommand {
+            slash: pos,
+            kind,
+            text: text.to_string(),
+        });
+    }
+
+    /// Takes only the consecutive command lines immediately preceding `target`.
+    fn take_leading_commands(&mut self, target: Pos) -> Vec<CommentCommand> {
+        let mut next_line = self.line_for(target);
+        let mut start = self.pending_commands.len();
+        while start > 0 {
+            let line = self.line_for(self.pending_commands[start - 1].slash);
+            if line + 1 != next_line {
+                break;
+            }
+            start -= 1;
+            next_line = line;
+        }
+        let commands = self.pending_commands.split_off(start);
+        self.pending_commands.clear();
+        commands
+    }
+
+    /// Advance to the next non-comment token, retaining supported compiler
+    /// commands until their following AST node is constructed.
     pub(crate) fn next(&mut self) {
+        let previous_line = if self.pos.is_valid() && self.tok != Token::Comment {
+            self.line_for(self.pos)
+        } else {
+            0
+        };
         self.next0();
+        while self.tok == Token::Comment {
+            let pos = self.pos;
+            let lit = self.lit.clone();
+            self.consume_command(pos, &lit, previous_line);
+            self.next0();
+        }
     }
 
     fn error(&self, pos: Pos, msg: String) {
@@ -499,6 +544,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_field_decl(&mut self) -> Field {
+        let commands = self.take_leading_commands(self.pos);
         let mut names: Vec<Ident> = Vec::new();
         let mut typ: Option<Expr>;
         match self.tok {
@@ -600,7 +646,12 @@ impl<'src> Parser<'src> {
 
         self.expect_semi();
 
-        Field { names, typ, tag }
+        Field {
+            commands,
+            names,
+            typ,
+            tag,
+        }
     }
 
     fn parse_struct_type(&mut self) -> Expr {
@@ -655,12 +706,14 @@ impl<'src> Parser<'src> {
         } else if type_sets_ok && self.tok == Token::Tilde {
             // "~" ...
             return ParamField {
+                commands: self.take_leading_commands(self.pos),
                 name: None,
                 typ: Some(self.embedded_elem(None)),
             };
         }
 
         let mut f = ParamField {
+            commands: self.take_leading_commands(self.pos),
             name: None,
             typ: None,
         };
@@ -794,6 +847,7 @@ impl<'src> Parser<'src> {
                     typ0 = Some(self.embedded_elem(typ0));
                 }
                 par = ParamField {
+                    commands: self.take_leading_commands(self.pos),
                     name: name0,
                     typ: typ0,
                 };
@@ -952,6 +1006,7 @@ impl<'src> Parser<'src> {
             for par in &list {
                 assert(par.typ.is_some(), "nil type in unnamed parameter list");
                 params.push(Field {
+                    commands: par.commands.clone(),
                     names: Vec::new(),
                     typ: par.typ.clone(),
                     tag: None,
@@ -976,6 +1031,7 @@ impl<'src> Parser<'src> {
                     let typ = list[k].typ.clone();
                     assert(typ.is_some(), "nil type in named parameter list");
                     params.push(Field {
+                        commands: list[k].commands.clone(),
                         names: std::mem::take(&mut names),
                         typ,
                         tag: None,
@@ -991,6 +1047,7 @@ impl<'src> Parser<'src> {
             let typ = list[k].typ.clone();
             assert(typ.is_some(), "nil type in named parameter list");
             params.push(Field {
+                commands: list[k].commands.clone(),
                 names,
                 typ,
                 tag: None,
@@ -1034,9 +1091,11 @@ impl<'src> Parser<'src> {
             });
         }
 
+        let commands = self.take_leading_commands(self.pos);
         if let Some(typ) = self.try_ident_or_type() {
             let mut list = Vec::with_capacity(1);
             list.push(Field {
+                commands,
                 names: Vec::new(),
                 typ: Some(typ),
                 tag: None,
@@ -1075,6 +1134,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_method_spec(&mut self) -> Field {
+        let commands = self.take_leading_commands(self.pos);
         let mut idents: Vec<Ident> = Vec::new();
         let typ: Expr = match self.parse_type_name(None) {
             Expr::Ident(ident) => match self.tok {
@@ -1154,6 +1214,7 @@ impl<'src> Parser<'src> {
         // joined with additional type specs using '|'. The TODO(rfindley)
         // comments about comment handling are obsolete in this port.)
         Field {
+            commands,
             names: idents,
             typ: Some(typ),
             tag: None,
@@ -1237,9 +1298,11 @@ impl<'src> Parser<'src> {
                     list.push(f);
                 }
                 Token::Tilde => {
+                    let commands = self.take_leading_commands(self.pos);
                     let typ = self.embedded_elem(None);
                     self.expect_semi();
                     list.push(Field {
+                        commands,
                         names: Vec::new(),
                         typ: Some(typ),
                         tag: None,
@@ -1249,9 +1312,11 @@ impl<'src> Parser<'src> {
                     let t = self.try_ident_or_type();
                     match t {
                         Some(t) => {
+                            let commands = self.take_leading_commands(t.pos());
                             let typ = self.embedded_elem(Some(t));
                             self.expect_semi();
                             list.push(Field {
+                                commands,
                                 names: Vec::new(),
                                 typ: Some(typ),
                                 tag: None,
@@ -1389,6 +1454,7 @@ impl<'src> Parser<'src> {
 /// Go's local `field` struct (name, typ), used while parsing parameter
 /// lists; Go's `doc`/`comment` fields are not ported.
 struct ParamField {
+    commands: Vec<CommentCommand>,
     name: Option<Ident>,
     typ: Option<Expr>,
 }
@@ -2929,6 +2995,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_func_decl(&mut self) -> Decl {
+        let commands = self.take_leading_commands(self.pos);
         let pos = self.expect(Token::Func);
 
         let mut recv = None;
@@ -2969,6 +3036,7 @@ impl<'src> Parser<'src> {
         }
 
         Decl::FuncDecl(FuncDecl {
+            commands,
             recv,
             name: ident,
             typ: FuncType {
@@ -2982,6 +3050,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_gen_decl(&mut self, keyword: Token, f: SpecFunction) -> Decl {
+        let commands = self.take_leading_commands(self.pos);
         let pos = self.expect(keyword);
         let mut lparen = NO_POS;
         let mut rparen = NO_POS;
@@ -3001,6 +3070,7 @@ impl<'src> Parser<'src> {
         }
 
         Decl::GenDecl(GenDecl {
+            commands,
             tok_pos: pos,
             tok: keyword,
             lparen,
@@ -3053,6 +3123,7 @@ impl<'src> Parser<'src> {
         }
 
         // package clause
+        let commands = self.take_leading_commands(self.pos);
         let pos = self.expect(Token::Package);
         // Go spec: The package clause is not a declaration;
         // the package name does not appear in any scope.
@@ -3095,6 +3166,7 @@ impl<'src> Parser<'src> {
         }
 
         let f = AstFile {
+            commands,
             package: pos,
             name: ident,
             decls,
@@ -3112,6 +3184,7 @@ impl<'src> Parser<'src> {
 type SpecFunction = for<'a, 'b> fn(&'a mut Parser<'b>, Token) -> Spec;
 
 fn parse_import_spec(p: &mut Parser, _keyword: Token) -> Spec {
+    let commands = p.take_leading_commands(p.pos);
     let mut ident: Option<Ident> = None;
     match p.tok {
         Token::Ident => ident = Some(p.parse_ident()),
@@ -3143,6 +3216,7 @@ fn parse_import_spec(p: &mut Parser, _keyword: Token) -> Spec {
 
     // collect imports
     let spec = ImportSpec {
+        commands,
         name: ident,
         path: BasicLit {
             value_pos: pos,
@@ -3159,6 +3233,7 @@ fn parse_import_spec(p: &mut Parser, _keyword: Token) -> Spec {
 }
 
 fn parse_value_spec(p: &mut Parser, keyword: Token) -> Spec {
+    let commands = p.take_leading_commands(p.pos);
     let idents = p.parse_ident_list();
     let mut typ: Option<Expr> = None;
     let mut values: Vec<Expr> = Vec::new();
@@ -3187,6 +3262,7 @@ fn parse_value_spec(p: &mut Parser, keyword: Token) -> Spec {
     p.expect_semi();
 
     Spec::ValueSpec(ValueSpec {
+        commands,
         names: idents,
         typ,
         values,
@@ -3194,8 +3270,10 @@ fn parse_value_spec(p: &mut Parser, keyword: Token) -> Spec {
 }
 
 fn parse_type_spec(p: &mut Parser, _keyword: Token) -> Spec {
+    let commands = p.take_leading_commands(p.pos);
     let name = p.parse_ident();
     let mut spec = TypeSpec {
+        commands,
         name,
         type_params: None,
         assign: NO_POS,

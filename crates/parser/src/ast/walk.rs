@@ -637,6 +637,7 @@ mod tests {
 
     fn func_decl(name: &str, body: Vec<Stmt>) -> FuncDecl {
         FuncDecl {
+            commands: vec![],
             recv: None,
             name: ident(name),
             typ: FuncType {
@@ -671,6 +672,7 @@ mod tests {
 
     fn preorder_file<'a>(decls: Vec<Decl>) -> File {
         File {
+            commands: vec![],
             package: NO_POS,
             name: ident("p"),
             decls,
@@ -686,10 +688,12 @@ mod tests {
     #[test]
     fn test_preorder_break() {
         let f = preorder_file(vec![Decl::GenDecl(GenDecl {
+            commands: vec![],
             tok_pos: NO_POS,
             tok: Token::Type,
             lparen: NO_POS,
             specs: vec![Spec::TypeSpec(TypeSpec {
+                commands: vec![],
                 name: ident("T"),
                 type_params: None,
                 assign: NO_POS,
@@ -698,6 +702,7 @@ mod tests {
                     fields: Some(FieldList {
                         opening: NO_POS,
                         list: vec![Field {
+                            commands: vec![],
                             names: vec![ident("F")],
                             typ: Some(Expr::Ident(ident("int"))),
                             tag: Some(BasicLit {
@@ -834,14 +839,17 @@ mod tests {
         }));
 
         let f = File {
+            commands: vec![],
             package: at("package"),
             name: ident_at("p", at("package p") + 8),
             decls: vec![
                 Decl::GenDecl(GenDecl {
+                    commands: vec![],
                     tok_pos: at("const"),
                     tok: Token::Const,
                     lparen: NO_POS,
                     specs: vec![Spec::ValueSpec(ValueSpec {
+                        commands: vec![],
                         names: vec![ident_at("c", at("const c") + 6)],
                         typ: None,
                         values: vec![Expr::BasicLit(BasicLit {
@@ -854,10 +862,12 @@ mod tests {
                     rparen: NO_POS,
                 }),
                 Decl::GenDecl(GenDecl {
+                    commands: vec![],
                     tok_pos: at("var"),
                     tok: Token::Var,
                     lparen: NO_POS,
                     specs: vec![Spec::ValueSpec(ValueSpec {
+                        commands: vec![],
                         names: vec![ident_at("X", at("var X") + 4)],
                         typ: None,
                         values: vec![var_value],
@@ -913,9 +923,11 @@ mod tests {
         let at = |pat: &str| file.pos(idx(src, pat));
 
         let f = File {
+            commands: vec![],
             package: at("package"),
             name: ident_at("p", at("package p") + 8),
             decls: vec![Decl::FuncDecl(FuncDecl {
+                commands: vec![],
                 recv: None,
                 name: ident_at("f", at("f(x, y")),
                 typ: FuncType {
@@ -924,6 +936,7 @@ mod tests {
                     params: Some(FieldList {
                         opening: at("(x"),
                         list: vec![Field {
+                            commands: vec![],
                             names: vec![
                                 ident_at("x", at("f(x") + 2),
                                 ident_at("y", at(", y int") + 2),

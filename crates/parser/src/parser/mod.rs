@@ -4,10 +4,8 @@
 //! (`parser.go` and `interface.go`), adapted to Rust conventions and to the
 //! trimming decisions of this port:
 //!
-//! - comments are discarded: the scanner is run without `SCAN_COMMENTS`, and
-//!   parser.go's comment collection (`ParseComments`, comment groups, `Doc`
-//!   and `Comment` fields, `expectSemi`'s line comment) plus the `//go:build`
-//!   minimum-version sniffing (`File.GoVersion`) are not ported;
+//! - ordinary comments are discarded. The parser retains only leading
+//!   `//go:` and `//gane:` compiler command comments on their target AST node;
 //! - Go's panic-based parse bailout is implemented with `panic!` +
 //!   `std::panic::catch_unwind` at the entry points;
 //! - the tracing infrastructure (`Trace` mode) is not ported;

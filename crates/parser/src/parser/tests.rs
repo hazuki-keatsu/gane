@@ -16,7 +16,7 @@ use std::sync::Once;
 use regex::Regex;
 
 use super::*;
-use crate::ast::{NodeRef, inspect};
+use crate::ast::{CommentCommandKind, NodeRef, inspect};
 use crate::parser::interface::*;
 use crate::scanner::{ErrorList, SCAN_COMMENTS, Scanner};
 use crate::token::{File, FileSet, NO_POS, Pos};
@@ -1261,6 +1261,197 @@ fn smoke_block_comment_newline_semi() {
         }
         other => panic!("expected FuncDecl, got {other:?}"),
     }
+}
+
+#[test]
+fn compiler_commands_bind_to_their_immediately_following_nodes() {
+    let src = r#"//go:build linux && amd64
+//gane:package enabled
+package p
+
+//gane:decl type declaration
+type T struct {
+	//go:field retained exactly
+	Value int
+}
+
+var (
+	//go:linkname local remote
+	local int
+)
+"#;
+    let (f, err) = parse_src(src);
+    assert!(err.is_none(), "unexpected errors: {err:?}");
+
+    assert_eq!(f.commands.len(), 2);
+    assert_eq!(f.commands[0].kind, CommentCommandKind::Go);
+    assert_eq!(f.commands[0].text, "build linux && amd64");
+    assert_eq!(f.commands[1].kind, CommentCommandKind::Gane);
+    assert_eq!(f.commands[1].text, "package enabled");
+
+    let Decl::GenDecl(type_decl) = &f.decls[0] else {
+        panic!("expected type declaration")
+    };
+    assert_eq!(type_decl.commands.len(), 1);
+    assert_eq!(type_decl.commands[0].text, "decl type declaration");
+    let Spec::TypeSpec(type_spec) = &type_decl.specs[0] else {
+        panic!("expected type spec")
+    };
+    let Expr::StructType(struct_type) = &type_spec.typ else {
+        panic!("expected struct type")
+    };
+    let field = &struct_type.fields.as_ref().expect("fields").list[0];
+    assert_eq!(field.commands.len(), 1);
+    assert_eq!(field.commands[0].text, "field retained exactly");
+
+    let Decl::GenDecl(var_decl) = &f.decls[1] else {
+        panic!("expected var declaration")
+    };
+    assert!(var_decl.commands.is_empty());
+    let Spec::ValueSpec(value_spec) = &var_decl.specs[0] else {
+        panic!("expected value spec")
+    };
+    assert_eq!(value_spec.commands.len(), 1);
+    assert_eq!(value_spec.commands[0].text, "linkname local remote");
+}
+
+#[test]
+fn compiler_commands_require_a_leading_adjacent_line() {
+    let src = r#"package p
+
+//go:noescape
+
+func skipped() {}
+
+var trailing int //gane:ignored trailing
+
+// Go:ignored case
+//foo:ignored prefix
+func clean() {}
+"#;
+    let (f, err) = parse_src(src);
+    assert!(err.is_none(), "unexpected errors: {err:?}");
+    assert!(f.commands.is_empty());
+
+    let Decl::FuncDecl(skipped) = &f.decls[0] else {
+        panic!("expected first function")
+    };
+    assert!(skipped.commands.is_empty(), "empty line must break binding");
+    let Decl::GenDecl(var_decl) = &f.decls[1] else {
+        panic!("expected variable declaration")
+    };
+    assert!(
+        var_decl.commands.is_empty(),
+        "trailing command must be ignored"
+    );
+    let Decl::FuncDecl(clean) = &f.decls[2] else {
+        panic!("expected second function")
+    };
+    assert!(
+        clean.commands.is_empty(),
+        "unsupported prefixes must be ignored"
+    );
+}
+
+#[test]
+fn compiler_commands_bind_to_grouped_specs_and_signature_fields() {
+    let src = r#"package p
+
+import (
+	//gane:import fmt package
+	"fmt"
+)
+
+type (
+	//go:type grouped type
+	T int
+)
+
+func f(
+	//gane:param first input
+	x int,
+	//go:param second input
+	y string,
+) (
+	//gane:result output value
+	out error,
+) {}
+
+type I interface {
+	//gane:method interface member
+	M()
+}
+"#;
+    let (f, err) = parse_src(src);
+    assert!(err.is_none(), "unexpected errors: {err:?}");
+
+    let Decl::GenDecl(import_decl) = &f.decls[0] else {
+        panic!("expected import declaration")
+    };
+    let Spec::ImportSpec(import_spec) = &import_decl.specs[0] else {
+        panic!("expected import spec")
+    };
+    assert_eq!(import_spec.commands[0].text, "import fmt package");
+
+    let Decl::GenDecl(type_decl) = &f.decls[1] else {
+        panic!("expected type declaration")
+    };
+    let Spec::TypeSpec(type_spec) = &type_decl.specs[0] else {
+        panic!("expected type spec")
+    };
+    assert_eq!(type_spec.commands[0].text, "type grouped type");
+
+    let Decl::FuncDecl(func_decl) = &f.decls[2] else {
+        panic!("expected function declaration")
+    };
+    let params = &func_decl.typ.params.as_ref().expect("parameters").list;
+    assert_eq!(params.len(), 2);
+    assert_eq!(params[0].commands[0].text, "param first input");
+    assert_eq!(params[1].commands[0].text, "param second input");
+    let results = &func_decl.typ.results.as_ref().expect("results").list;
+    assert_eq!(results[0].commands[0].text, "result output value");
+
+    let Decl::GenDecl(interface_decl) = &f.decls[3] else {
+        panic!("expected interface declaration")
+    };
+    let Spec::TypeSpec(interface_spec) = &interface_decl.specs[0] else {
+        panic!("expected interface type spec")
+    };
+    let Expr::InterfaceType(interface_type) = &interface_spec.typ else {
+        panic!("expected interface type")
+    };
+    let method = &interface_type.methods.as_ref().expect("methods").list[0];
+    assert_eq!(method.commands[0].text, "method interface member");
+}
+
+#[test]
+fn compiler_commands_keep_order_and_use_physical_lines() {
+    let src = concat!(
+        "package p\n\n",
+        "//line generated.go:100\n",
+        "//go:one first\n",
+        "//gane:two\\tsecond  \n",
+        "func f() {}\n\n",
+        "//go:\n",
+        "func empty() {}\n",
+    );
+    let (f, err) = parse_src(src);
+    assert!(err.is_none(), "unexpected errors: {err:?}");
+
+    let Decl::FuncDecl(f_decl) = &f.decls[0] else {
+        panic!("expected first function")
+    };
+    assert_eq!(f_decl.commands.len(), 2);
+    assert_eq!(f_decl.commands[0].kind, CommentCommandKind::Go);
+    assert_eq!(f_decl.commands[0].text, "one first");
+    assert_eq!(f_decl.commands[1].kind, CommentCommandKind::Gane);
+    assert_eq!(f_decl.commands[1].text, "two\\tsecond  ");
+
+    let Decl::FuncDecl(empty_decl) = &f.decls[1] else {
+        panic!("expected second function")
+    };
+    assert_eq!(empty_decl.commands.len(), 1);
+    assert_eq!(empty_decl.commands[0].text, "");
 }
 
 #[test]
