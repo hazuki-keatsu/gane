@@ -1,9 +1,8 @@
 [package]
-name = "gane_sema"
+name = "gane_diagnostics"
 edition = "2024"
 version.workspace = true
 authors.workspace = true
 
 [dependencies]
-gane_diagnostics = { path = "../diagnostics" }
 gane_parser = { path = "../parser" }
