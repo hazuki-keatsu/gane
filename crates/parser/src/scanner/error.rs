@@ -37,7 +37,7 @@ impl std::error::Error for Error {}
 /// ErrorList is a list of errors.
 ///
 /// Usage:
-/// ```
+/// ```rust
 /// list.iter() // to get immutable iterator
 /// list.iter_mut() // to get mutable iterator
 /// ```

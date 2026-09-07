@@ -114,7 +114,13 @@ impl Diagnostic {
 
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}[{}]: {}", severity_name(self.severity), self.code, self.message)
+        write!(
+            f,
+            "{}[{}]: {}",
+            severity_name(self.severity),
+            self.code,
+            self.message
+        )
     }
 }
 
@@ -277,9 +283,11 @@ mod tests {
     #[test]
     fn invalid_position_is_safe() {
         let files = FileSet::new();
-        assert!(!Span::point(Pos::default())
-            .start_position(&files)
-            .is_valid());
+        assert!(
+            !Span::point(Pos::default())
+                .start_position(&files)
+                .is_valid()
+        );
     }
 
     #[test]
