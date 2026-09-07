@@ -1316,6 +1316,20 @@ var (
 }
 
 #[test]
+fn file_commands_allow_a_blank_line_before_the_package_clause() {
+    let src = r#"//go:build x86
+
+package p
+"#;
+    let (f, err) = parse_src(src);
+    assert!(err.is_none(), "unexpected errors: {err:?}");
+
+    assert_eq!(f.commands.len(), 1);
+    assert_eq!(f.commands[0].kind, CommentCommandKind::Go);
+    assert_eq!(f.commands[0].text, "build x86");
+}
+
+#[test]
 fn compiler_commands_require_a_leading_adjacent_line() {
     let src = r#"package p
 

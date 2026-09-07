@@ -185,6 +185,16 @@ impl<'src> Parser<'src> {
         commands
     }
 
+    /// Takes commands from the file header.
+    ///
+    /// Unlike commands attached to declarations and fields, file-level
+    /// commands (notably `//go:build`) conventionally have a blank line
+    /// between the directive block and the package clause. They therefore
+    /// must not use [`Self::take_leading_commands`]' adjacency rule.
+    fn take_file_commands(&mut self) -> Vec<CommentCommand> {
+        std::mem::take(&mut self.pending_commands)
+    }
+
     /// Advance to the next non-comment token, retaining supported compiler
     /// commands until their following AST node is constructed.
     pub(crate) fn next(&mut self) {
@@ -3123,7 +3133,7 @@ impl<'src> Parser<'src> {
         }
 
         // package clause
-        let commands = self.take_leading_commands(self.pos);
+        let commands = self.take_file_commands();
         let pos = self.expect(Token::Package);
         // Go spec: The package clause is not a declaration;
         // the package name does not appear in any scope.
