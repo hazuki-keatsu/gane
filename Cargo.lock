@@ -33,6 +33,7 @@ name = "gane_driver"
 version = "0.1.0"
 dependencies = [
  "gane_parser",
+ "gane_sema",
 ]
 
 [[package]]

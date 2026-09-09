@@ -1,39 +1,46 @@
-//! `gane-driver`: turn a Go source file into an AST and save it as a debug
-//! dump - the porting-workbench entry point for the `go/parser` port.
+//! `gane-driver`: parse and semantically check one Go source file.
 //!
-//! Reads one Go source file, parses it with the ported parser and writes
+//! Reads one Go source file, parses it, semantically checks it, and writes
 //! generated files named after the input (for an input `foo.go`):
 //!
 //! - `<output-dir>/foo.go.ast.txt` - the parsed AST, debug-printed
 //!   (`format!("{:#?}")` of the [`gane_parser::ast::File`]). It is written even when the
 //!   source has syntax errors: like Go, the result is then a partial AST
 //!   with `Bad*` nodes (or an empty file when parsing bailed out).
+//! - `<output-dir>/foo.go.sema.txt` - the semantic analysis result,
+//!   debug-printed after a successful parse.
 //! - `<output-dir>/foo.go.err.txt` - the parse errors, one per line; only
 //!   created when the source had errors.
+//! - `<output-dir>/foo.go.sema.err.txt` - semantic diagnostics; only created
+//!   when semantic analysis reports an error.
 //!
-//! Exit codes: 0 ok, 1 the source had parse errors (also reported on
-//! stderr), 2 usage or I/O error.
+//! Exit codes: 0 ok, 1 the source had parse or semantic errors (also reported
+//! on stderr), 2 usage or I/O error.
 
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use gane_parser::parser::{Mode, parse_file};
+use gane_parser::parser::{parse_file, Mode};
 use gane_parser::token::FileSet;
+use gane_sema::{analyze_package, FileId, PackageInput};
 
 const USAGE: &str = "\
 usage: gane-driver <file.go> [output-dir]
 
-Parses the Go source file <file.go> with the ported go/parser and writes the
-AST as generated files named after the input (for an input \"foo.go\"):
+Parses and semantically checks the Go source file <file.go>, writing generated
+files named after the input (for an input \"foo.go\"):
 
     <output-dir>/foo.go.ast.txt    the parsed AST, debug-printed ({:#?})
+    <output-dir>/foo.go.sema.txt   the semantic analysis result, debug-printed
     <output-dir>/foo.go.err.txt    the parse errors, one per line
                                    (created only when errors occur)
+    <output-dir>/foo.go.sema.err.txt semantic diagnostics with source locations
+                                     (created only when errors occur)
 
-output-dir defaults to \"out\". Exit codes: 0 ok, 1 parse errors, 2 usage or
-I/O error.
+output-dir defaults to \"out\". Exit codes: 0 ok, 1 parse or semantic errors,
+2 usage or I/O error.
 ";
 
 fn main() -> ExitCode {
@@ -122,8 +129,55 @@ fn main() -> ExitCode {
             errors.len(),
             err_path.display()
         );
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
+        return ExitCode::FAILURE;
     }
+
+    // Only a syntax-clean AST reaches sema; semantic diagnostics then share
+    // the parser's FileSet for source-aware rendering.
+    let analysis = analyze_package(PackageInput::single("main", FileId::from_raw(1), &ast));
+    let sema_dump_path = out_dir.join(format!("{stem}.sema.txt"));
+    let sema_dump = format!("{analysis:#?}");
+    if let Err(e) = fs::write(&sema_dump_path, &sema_dump) {
+        eprintln!(
+            "gane-driver: cannot write `{}`: {e}",
+            sema_dump_path.display()
+        );
+        return ExitCode::from(2);
+    }
+    println!(
+        "gane-driver: wrote {} ({} bytes, {} semantic diagnostic(s))",
+        sema_dump_path.display(),
+        sema_dump.len(),
+        analysis.diagnostics.len()
+    );
+
+    if !analysis.has_errors() {
+        return ExitCode::SUCCESS;
+    }
+
+    let mut text = String::new();
+    for diagnostic in &analysis.diagnostics {
+        text.push_str(&diagnostic.display_with(&fset).to_string());
+    }
+    let sema_err_path = out_dir.join(format!("{stem}.sema.err.txt"));
+    if let Err(e) = fs::write(&sema_err_path, &text) {
+        eprintln!(
+            "gane-driver: cannot write `{}`: {e}",
+            sema_err_path.display()
+        );
+        return ExitCode::from(2);
+    }
+    for diagnostic in &analysis.diagnostics {
+        eprint!("gane-driver: {}", diagnostic.display_with(&fset));
+    }
+    eprintln!(
+        "gane-driver: source has {} semantic error(s), see `{}`",
+        analysis
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == gane_sema::Severity::Error)
+            .count(),
+        sema_err_path.display()
+    );
+    ExitCode::FAILURE
 }

@@ -6,3 +6,4 @@ authors.workspace = true
 
 [dependencies]
 gane_parser = { path= "../parser" }
+gane_sema = { path = "../sema" }
