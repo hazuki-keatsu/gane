@@ -38,8 +38,11 @@ impl std::error::Error for Error {}
 ///
 /// Usage:
 /// ```rust
-/// list.iter() // to get immutable iterator
-/// list.iter_mut() // to get mutable iterator
+/// use gane_parser::ErrorList;
+///
+/// let mut list = ErrorList::default();
+/// let _ = list.iter(); // get an immutable iterator
+/// let _ = list.iter_mut(); // get a mutable iterator
 /// ```
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ErrorList(Vec<Error>);
