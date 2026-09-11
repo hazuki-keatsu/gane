@@ -430,7 +430,15 @@ impl<'ast> Checker<'ast> {
                 typ
             }
             (Some(typ), None) if !initializer.is_const => typ,
-            (None, Some(value)) => value.typ,
+            (None, Some(value)) if value.mode != ValueMode::Nil => value.typ,
+            (None, Some(_)) => {
+                self.diagnostics.error(
+                    MISSING_VARIABLE_TYPE,
+                    initializer.span,
+                    "cannot infer a variable type from nil",
+                );
+                TypeId::INVALID
+            }
             _ => {
                 self.diagnostics.error(
                     TYPE_MISMATCH,
@@ -447,6 +455,7 @@ impl<'ast> Checker<'ast> {
                 "constant declaration requires an initializer",
             );
         }
+        self.validate_v0_global_initializer(&initializer, typ, value.as_ref());
         let constant = value.and_then(|value| value.constant);
         if let Some(global) = self.symbols.object_mut(initializer.object) {
             global.typ = typ;
@@ -455,6 +464,37 @@ impl<'ast> Checker<'ast> {
             }
         }
         self.global_states.insert(object, InitState::Done);
+    }
+
+    fn validate_v0_global_initializer(
+        &mut self,
+        initializer: &GlobalInitializer,
+        typ: TypeId,
+        value: Option<&TypeAndValue>,
+    ) {
+        let Some(value) = value else {
+            return;
+        };
+        if typ == TypeId::INVALID || value.mode == ValueMode::Invalid {
+            return;
+        }
+        let allowed = match self.types.get(self.types.underlying(typ)).kind {
+            TypeKind::Basic(BasicType::Bool) => {
+                matches!(value.constant, Some(ConstValue::Bool(_)))
+            }
+            TypeKind::Basic(BasicType::Int | BasicType::Byte) => {
+                matches!(value.constant, Some(ConstValue::Int(_)))
+            }
+            TypeKind::Pointer { .. } => value.mode == ValueMode::Nil,
+            TypeKind::Array { .. } | TypeKind::Struct { .. } => false,
+            _ => false,
+        };
+        if !allowed {
+            self.unsupported(
+                initializer.span,
+                "global initializer requiring runtime evaluation",
+            );
+        }
     }
 
     fn check_extern_abi(&mut self, signature: TypeId) {
@@ -489,18 +529,36 @@ impl<'ast> Checker<'ast> {
                 self.diagnostics.error(
                     UNSUPPORTED_FEATURE,
                     self.symbols.object(object).span,
-                    "extern function ABI only supports bool, int, byte, and pointers",
+                    "extern function ABI only supports int, byte, and pointers whose pointee types do not contain bool",
                 );
             }
         }
     }
 
     fn is_abi_type(&self, typ: TypeId) -> bool {
-        matches!(
-            self.types.get(self.types.underlying(typ)).kind,
-            TypeKind::Basic(BasicType::Bool | BasicType::Int | BasicType::Byte)
-                | TypeKind::Pointer { .. }
-        )
+        match self.types.get(self.types.underlying(typ)).kind {
+            TypeKind::Basic(BasicType::Int | BasicType::Byte) => true,
+            TypeKind::Pointer { base } => {
+                !self.reachable_type_contains_bool(base, &mut HashSet::new())
+            }
+            _ => false,
+        }
+    }
+
+    fn reachable_type_contains_bool(&self, typ: TypeId, seen: &mut HashSet<TypeId>) -> bool {
+        let typ = self.types.underlying(typ);
+        if !seen.insert(typ) {
+            return false;
+        }
+        match &self.types.get(typ).kind {
+            TypeKind::Basic(BasicType::Bool) => true,
+            TypeKind::Pointer { base } => self.reachable_type_contains_bool(*base, seen),
+            TypeKind::Array { elem, .. } => self.reachable_type_contains_bool(*elem, seen),
+            TypeKind::Struct { fields } => fields.iter().any(|field| {
+                self.reachable_type_contains_bool(self.symbols.object(*field).typ, seen)
+            }),
+            _ => false,
+        }
     }
 
     /// Resolves a named type's underlying type. `indirect` records whether the
@@ -570,6 +628,14 @@ impl<'ast> Checker<'ast> {
                     );
                     return TypeId::INVALID;
                 };
+                if matches!(&length, ConstValue::Int(value) if value.is_zero()) {
+                    self.diagnostics.error(
+                        UNSUPPORTED_TYPE,
+                        Span::new(expr.pos(), expr.end()),
+                        "zero-length arrays are not supported by HIR V0",
+                    );
+                    return TypeId::INVALID;
+                }
                 let element = self.resolve_type_expr(&expr.elt, indirect);
                 if element == TypeId::INVALID {
                     TypeId::INVALID
@@ -623,7 +689,12 @@ impl<'ast> Checker<'ast> {
         let mut seen = HashSet::new();
         let mut invalid = false;
         let Some(field_list) = &struct_type.fields else {
-            return self.types.alloc(TypeKind::Struct { fields });
+            self.diagnostics.error(
+                UNSUPPORTED_TYPE,
+                Span::new(struct_type.pos(), struct_type.end()),
+                "empty structs are not supported by HIR V0",
+            );
+            return TypeId::INVALID;
         };
 
         for field in &field_list.list {
@@ -658,6 +729,14 @@ impl<'ast> Checker<'ast> {
                 let object = self.declare_field(ident, name, index, typ);
                 fields.push(object);
             }
+        }
+        if fields.is_empty() && !invalid {
+            self.diagnostics.error(
+                UNSUPPORTED_TYPE,
+                Span::new(struct_type.pos(), struct_type.end()),
+                "empty structs are not supported by HIR V0",
+            );
+            return TypeId::INVALID;
         }
         if invalid {
             TypeId::INVALID
@@ -701,6 +780,29 @@ impl<'ast> Checker<'ast> {
         self.function_scopes.insert(signature, function_scope);
         let params = self.resolve_tuple(decl.typ.params.as_ref(), function_scope);
         let results = self.resolve_tuple(decl.typ.results.as_ref(), function_scope);
+        let result_types = self
+            .types
+            .tuple(results)
+            .map(|tuple| {
+                tuple
+                    .vars
+                    .iter()
+                    .map(|object| self.symbols.object(*object).typ)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if result_types.len() > 1 {
+            self.unsupported(
+                Span::new(decl.pos(), decl.end()),
+                "multiple function results",
+            );
+        }
+        if result_types.iter().any(|typ| self.is_aggregate_type(*typ)) {
+            self.unsupported(
+                Span::new(decl.pos(), decl.end()),
+                "aggregate function result",
+            );
+        }
         if let TypeKind::Signature {
             params: params_slot,
             results: results_slot,
@@ -846,6 +948,12 @@ impl<'ast> Checker<'ast> {
                 guaranteed_return = self.check_block(block, scope, control);
             }
             ast::Stmt::ExprStmt(statement) => {
+                if !is_call_expression(&statement.x) {
+                    self.unsupported(
+                        Span::new(statement.pos(), statement.end()),
+                        "non-call expression statement",
+                    );
+                }
                 self.check_expr(&statement.x, scope);
             }
             ast::Stmt::AssignStmt(statement) => {
@@ -854,11 +962,24 @@ impl<'ast> Checker<'ast> {
                         Span::new(statement.pos(), statement.end()),
                         "short variable declaration",
                     );
+                } else if statement.tok != Token::Assign {
+                    self.unsupported(
+                        Span::new(statement.pos(), statement.end()),
+                        "compound assignment",
+                    );
                 }
                 self.check_assignment(&statement.lhs, &statement.rhs, scope);
             }
             ast::Stmt::IncDecStmt(statement) => {
-                self.check_expr(&statement.x, scope);
+                let value = self.check_expr(&statement.x, scope);
+                if value.mode != ValueMode::Variable {
+                    self.diagnostics.error(
+                        EXPECTED_VARIABLE,
+                        Span::new(statement.x.pos(), statement.x.end()),
+                        "increment or decrement target is not assignable",
+                    );
+                }
+                self.require_integer(&value, Span::new(statement.x.pos(), statement.x.end()));
             }
             ast::Stmt::ReturnStmt(statement) => {
                 self.check_return(statement, scope, control);
@@ -920,9 +1041,17 @@ impl<'ast> Checker<'ast> {
                 guaranteed_return = statement.cond.is_none() && body_returns;
             }
             ast::Stmt::LabeledStmt(statement) => {
+                self.unsupported(
+                    Span::new(statement.pos(), statement.end()),
+                    "labeled statement",
+                );
                 guaranteed_return = self.check_stmt(&statement.stmt, scope, control);
             }
             ast::Stmt::SendStmt(statement) => {
+                self.unsupported(
+                    Span::new(statement.pos(), statement.end()),
+                    "send statement",
+                );
                 self.check_expr(&statement.chan_, scope);
                 self.check_expr(&statement.value, scope);
             }
@@ -1020,6 +1149,13 @@ impl<'ast> Checker<'ast> {
     }
 
     fn check_branch(&mut self, statement: &ast::BranchStmt, control: &ControlContext) {
+        if statement.label.is_some() {
+            self.unsupported(
+                Span::new(statement.pos(), statement.end()),
+                "labeled branch statement",
+            );
+            return;
+        }
         match statement.tok {
             Token::Break | Token::Continue if control.loop_depth > 0 => {}
             Token::Break | Token::Continue => self.diagnostics.error(
@@ -1122,7 +1258,15 @@ impl<'ast> Checker<'ast> {
             .map(|expr| self.resolve_type_expr(expr, false));
         let typ = match (explicit_type, values.first()) {
             (Some(typ), _) => typ,
-            (None, Some(value)) => value.typ,
+            (None, Some(value)) if value.mode != ValueMode::Nil => value.typ,
+            (None, Some(_)) => {
+                self.diagnostics.error(
+                    MISSING_VARIABLE_TYPE,
+                    Span::new(spec.pos(), spec.end()),
+                    "cannot infer a variable type from nil",
+                );
+                TypeId::INVALID
+            }
             (None, None) => {
                 self.diagnostics.error(
                     MISSING_VARIABLE_TYPE,
@@ -1172,7 +1316,10 @@ impl<'ast> Checker<'ast> {
                 mode: ValueMode::Value,
                 constant: parse_array_length(expr),
             },
-            ast::Expr::BasicLit(_) | ast::Expr::BadExpr(_) => self.invalid_value(),
+            ast::Expr::BasicLit(_) => {
+                self.unsupported_value(Span::new(expr.pos(), expr.end()), "non-integer literal")
+            }
+            ast::Expr::BadExpr(_) => self.invalid_value(),
             ast::Expr::ParenExpr(expr) => self.check_expr(&expr.x, scope),
             ast::Expr::StarExpr(expr) => {
                 let operand = self.check_expr(&expr.x, scope);
@@ -1209,6 +1356,7 @@ impl<'ast> Checker<'ast> {
             ast::Expr::SelectorExpr(expr) => self.check_selector(expr, scope),
             ast::Expr::CallExpr(expr) => self.check_call(expr, scope),
             ast::Expr::SliceExpr(expr) => {
+                self.unsupported(Span::new(expr.pos(), expr.end()), "slice expression");
                 self.check_expr(&expr.x, scope);
                 if let Some(low) = &expr.low {
                     self.check_expr(low, scope);
@@ -1222,6 +1370,7 @@ impl<'ast> Checker<'ast> {
                 self.invalid_value()
             }
             ast::Expr::IndexListExpr(expr) => {
+                self.unsupported(Span::new(expr.pos(), expr.end()), "generic index list");
                 self.check_expr(&expr.x, scope);
                 for index in &expr.indices {
                     self.check_expr(index, scope);
@@ -1229,18 +1378,23 @@ impl<'ast> Checker<'ast> {
                 self.invalid_value()
             }
             ast::Expr::KeyValueExpr(expr) => {
+                self.unsupported(Span::new(expr.pos(), expr.end()), "key-value expression");
                 self.check_expr(&expr.key, scope);
                 self.check_expr(&expr.value, scope);
                 self.invalid_value()
             }
             ast::Expr::CompositeLit(expr) => {
+                self.unsupported(Span::new(expr.pos(), expr.end()), "composite literal");
                 for element in &expr.elts {
                     self.check_expr(element, scope);
                 }
                 self.invalid_value()
             }
-            ast::Expr::FuncLit(_) => self.invalid_value(),
+            ast::Expr::FuncLit(_) => {
+                self.unsupported_value(Span::new(expr.pos(), expr.end()), "function literal")
+            }
             ast::Expr::TypeAssertExpr(expr) => {
+                self.unsupported(Span::new(expr.pos(), expr.end()), "type assertion");
                 self.check_expr(&expr.x, scope);
                 self.invalid_value()
             }
@@ -1250,7 +1404,10 @@ impl<'ast> Checker<'ast> {
             | ast::Expr::FuncType(_)
             | ast::Expr::InterfaceType(_)
             | ast::Expr::MapType(_)
-            | ast::Expr::ChanType(_) => self.invalid_value(),
+            | ast::Expr::ChanType(_) => self.unsupported_value(
+                Span::new(expr.pos(), expr.end()),
+                "type syntax in value expression",
+            ),
         };
         self.info.types.insert(
             self.nodes.id_for(Span::new(expr.pos(), expr.end())),
@@ -1317,7 +1474,7 @@ impl<'ast> Checker<'ast> {
     fn check_unary(&mut self, expr: &ast::UnaryExpr, scope: ScopeId) -> TypeAndValue {
         let operand = self.check_expr(&expr.x, scope);
         match expr.op {
-            Token::Add | Token::Sub if self.types.is_basic(operand.typ, BasicType::Int) => {
+            Token::Add | Token::Sub if self.is_integer_type(operand.typ) => {
                 let constant = match (&operand.constant, expr.op) {
                     (Some(ConstValue::Int(value)), Token::Add) => {
                         Some(ConstValue::Int(value.clone()))
@@ -1356,8 +1513,9 @@ impl<'ast> Checker<'ast> {
             Token::Add | Token::Sub | Token::Mul | Token::Quo | Token::Rem => {
                 self.require_integer(&left, Span::new(expr.x.pos(), expr.x.end()));
                 self.require_integer(&right, Span::new(expr.y.pos(), expr.y.end()));
+                self.require_assignable(right.typ, left.typ, Span::new(expr.pos(), expr.end()));
                 TypeAndValue {
-                    typ: self.predeclared.expect("universe must be initialized").int,
+                    typ: left.typ,
                     mode: ValueMode::Value,
                     constant: self.fold_integer_binary(expr.op, &left.constant, &right.constant),
                 }
@@ -1365,6 +1523,7 @@ impl<'ast> Checker<'ast> {
             Token::Less | Token::Leq | Token::Greater | Token::Geq => {
                 self.require_integer(&left, Span::new(expr.x.pos(), expr.x.end()));
                 self.require_integer(&right, Span::new(expr.y.pos(), expr.y.end()));
+                self.require_assignable(right.typ, left.typ, Span::new(expr.pos(), expr.end()));
                 TypeAndValue {
                     typ: self
                         .predeclared
@@ -1462,9 +1621,20 @@ impl<'ast> Checker<'ast> {
                 "assignment has a different number of left and right values",
             );
         }
-        for (left, right) in lhs.iter().zip(rhs) {
-            let left = self.check_expr(left, scope);
-            let right = self.check_expr(right, scope);
+        for (left_expr, right_expr) in lhs.iter().zip(rhs) {
+            if is_blank_identifier(left_expr) {
+                let right = self.check_expr(right_expr, scope);
+                if right.mode == ValueMode::NoValue {
+                    self.diagnostics.error(
+                        INVALID_OPERATION,
+                        Span::new(right_expr.pos(), right_expr.end()),
+                        "blank assignment requires a value",
+                    );
+                }
+                continue;
+            }
+            let left = self.check_expr(left_expr, scope);
+            let right = self.check_expr(right_expr, scope);
             if left.mode != ValueMode::Variable {
                 self.diagnostics.error(
                     EXPECTED_VARIABLE,
@@ -1478,7 +1648,10 @@ impl<'ast> Checker<'ast> {
 
     fn bind_value_name(&mut self, ident: &ast::Ident, scope: ScopeId) -> TypeAndValue {
         if ident.name == "_" {
-            return self.invalid_value();
+            return self.invalid_operation(
+                ident_span(ident),
+                "blank identifier cannot be used as a value",
+            );
         }
         let name = self.symbols.intern(&ident.name);
         let Some(resolved) = self.scopes.lookup(scope, name) else {
@@ -1533,6 +1706,18 @@ impl<'ast> Checker<'ast> {
         self.invalid_value()
     }
 
+    fn unsupported_value(&mut self, span: Span, feature: &str) -> TypeAndValue {
+        self.unsupported(span, feature);
+        self.invalid_value()
+    }
+
+    fn is_aggregate_type(&self, typ: TypeId) -> bool {
+        matches!(
+            self.types.get(self.types.underlying(typ)).kind,
+            TypeKind::Array { .. } | TypeKind::Struct { .. }
+        )
+    }
+
     fn require_assignable(&mut self, source: TypeId, target: TypeId, span: Span) {
         if !self.types.assignable_to(source, target) {
             self.diagnostics.error(
@@ -1544,10 +1729,17 @@ impl<'ast> Checker<'ast> {
     }
 
     fn require_integer(&mut self, value: &TypeAndValue, span: Span) {
-        if value.typ != TypeId::INVALID && !self.types.is_basic(value.typ, BasicType::Int) {
-            self.diagnostics
-                .error(INVALID_OPERATION, span, "operation requires an int operand");
+        if value.typ != TypeId::INVALID && !self.is_integer_type(value.typ) {
+            self.diagnostics.error(
+                INVALID_OPERATION,
+                span,
+                "operation requires an integer operand",
+            );
         }
+    }
+
+    fn is_integer_type(&self, typ: TypeId) -> bool {
+        self.types.is_basic(typ, BasicType::Int) || self.types.is_basic(typ, BasicType::Byte)
     }
 
     fn require_boolean(&mut self, value: &TypeAndValue, span: Span) {
@@ -1773,6 +1965,17 @@ fn parse_array_length(expr: &ast::Expr) -> Option<ConstValue> {
     u64::from_str_radix(digits, radix)
         .ok()
         .map(|value| ConstValue::Int(IntegerValue::from_u64(value)))
+}
+
+fn is_blank_identifier(expr: &ast::Expr) -> bool {
+    matches!(expr, ast::Expr::Ident(ident) if ident.name == "_")
+}
+
+fn is_call_expression(mut expr: &ast::Expr) -> bool {
+    while let ast::Expr::ParenExpr(paren) = expr {
+        expr = &paren.x;
+    }
+    matches!(expr, ast::Expr::CallExpr(_))
 }
 
 #[cfg(test)]
@@ -2017,6 +2220,150 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE));
+    }
+
+    #[test]
+    fn accepts_blank_assignment_and_still_checks_its_value() {
+        let valid = analyze(
+            "package main\n\
+             func sideEffect() int { return 1 }\n\
+             func main() { _ = sideEffect() }\n",
+        );
+        assert!(valid.diagnostics.is_empty(), "{:?}", valid.diagnostics);
+
+        let invalid = analyze(
+            "package main\n\
+             func noValue() {}\n\
+             func main() { _ = noValue() }\n",
+        );
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == INVALID_OPERATION)
+        );
+    }
+
+    #[test]
+    fn rejects_sends_labels_compound_assignments_and_non_call_statements() {
+        let result = analyze(
+            "package main\n\
+             func main() {\n\
+                 var value int\n\
+                 value <- value\n\
+                 outer: for { value += 1; break outer }\n\
+                 1\n\
+             }\n",
+        );
+        let unsupported = result
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE)
+            .count();
+        assert!(unsupported >= 5, "{:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn rejects_unsupported_value_expressions_with_a_diagnostic() {
+        let result = analyze(
+            "package main\n\
+             func main() {\n\
+                 \"text\"\n\
+                 func() {}\n\
+             }\n",
+        );
+        assert!(result.has_errors());
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE)
+        );
+    }
+
+    #[test]
+    fn rejects_zero_sized_aggregates_and_non_scalar_results() {
+        let result = analyze(
+            "package main\n\
+             type Empty struct {}\n\
+             type Zero [0]int\n\
+             type Pair struct { value int }\n\
+             func many() (int, int) { return 1, 2 }\n\
+             func aggregate() Pair { var value Pair; return value }\n",
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == UNSUPPORTED_TYPE)
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE)
+                .count()
+                >= 2
+        );
+    }
+
+    #[test]
+    fn enforces_the_v0_extern_abi() {
+        let result = analyze(
+            "package main\n\
+             type Flags struct { ready bool }\n\
+             func boolValue(value bool)\n\
+             func flags(value *Flags)\n",
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE)
+                .count()
+                >= 2
+        );
+    }
+
+    #[test]
+    fn rejects_runtime_global_initializers() {
+        let result = analyze(
+            "package main\n\
+             var value int\n\
+             var pointer = &value\n\
+             var computed = getValue()\n\
+             func getValue() int { return 1 }\n",
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE)
+                .count()
+                >= 2
+        );
+    }
+
+    #[test]
+    fn supports_byte_operations_and_rejects_nil_type_inference() {
+        let byte = analyze(
+            "package main\n\
+             func bump(value byte) byte { value++; return value + value }\n",
+        );
+        assert!(byte.diagnostics.is_empty(), "{:?}", byte.diagnostics);
+
+        let nil = analyze(
+            "package main\n\
+             var global = nil\n\
+             func main() { var local = nil }\n",
+        );
+        assert!(
+            nil.diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == MISSING_VARIABLE_TYPE)
+                .count()
+                >= 2
+        );
     }
 
     #[test]
