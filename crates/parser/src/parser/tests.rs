@@ -470,14 +470,6 @@ fn test_parse() {
     }
 }
 
-fn name_filter(filename: &str) -> bool {
-    match filename {
-        "parser.go" | "interface.go" | "parser_test.go" => true,
-        "parser.go.orig" => true, // permit but should be ignored by ParseDir
-        _ => false,
-    }
-}
-
 #[test]
 fn test_parse_file() {
     init();
@@ -494,39 +486,6 @@ fn test_parse_expr_from() {
     let mut fset = FileSet::new();
     let (_x, err) = parse_expr_from(&mut fset, "", src.as_bytes(), Mode::default());
     assert!(err.is_some(), "ParseExprFrom({src}) succeeded unexpectedly");
-}
-
-#[test]
-fn test_parse_dir() {
-    let path = format!("{TESTDATA}/go");
-    let mut fset = FileSet::new();
-    let (pkgs, err) = parse_dir(&mut fset, &path, Some(&name_filter), Mode::default());
-    assert!(err.is_none(), "ParseDir({path}): {err:?}");
-    assert_eq!(pkgs.len(), 1, "got {} packages; want 1", pkgs.len());
-    let pkg = pkgs.get("parser").expect("package \"parser\" not found");
-    assert_eq!(
-        pkg.files.len(),
-        3,
-        "got {} package files; want 3",
-        pkg.files.len()
-    );
-    for filename in pkg.files.keys() {
-        // (Go runs ParseDir with path ".", so its file keys are plain names
-        // like "parser.go"; here the fixture path prefix is stripped.)
-        let name = std::path::Path::new(filename)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| filename.clone());
-        assert!(name_filter(&name), "unexpected package file: {filename}");
-    }
-}
-
-#[test]
-fn test_issue42951() {
-    let path = format!("{TESTDATA}/issue42951");
-    let mut fset = FileSet::new();
-    let (_pkgs, err) = parse_dir(&mut fset, &path, None, Mode::default());
-    assert!(err.is_none(), "ParseDir({path}): {err:?}");
 }
 
 #[test]

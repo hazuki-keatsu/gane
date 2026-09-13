@@ -11,12 +11,10 @@
 //! (file reading happens at the call site, and the Go test files read their
 //! fixtures with `os.ReadFile`).
 
-use std::collections::BTreeMap;
-use std::fs;
 use std::ops::{BitAnd, BitOr};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 
-use crate::ast::{Expr, File, Package, new_ident};
+use crate::ast::{Expr, File, new_ident};
 use crate::scanner::ErrorList;
 use crate::token::{FileSet, NO_POS, Pos};
 
@@ -141,98 +139,6 @@ pub fn parse_file(
 
     let err = p.sorted_errors();
     (f, err)
-}
-
-/// ParseDir calls [`parse_file`] for all files with names ending in ".go" in
-/// the directory specified by `path` and returns a map of package name ->
-/// package AST with all the packages found.
-///
-/// If `filter` is not None, only the files whose names pass through the
-/// filter (and ending in ".go") are considered. The mode bits are passed to
-/// [`parse_file`] unchanged. Position information is recorded in `fset`.
-///
-/// If the directory couldn't be read, an empty map and the respective error
-/// are returned. If a parse error occurred, a non-nil but incomplete map and
-/// the first error encountered are returned.
-///
-/// (Go's `filter func(fs.FileInfo) bool` is adapted to filter on the file
-/// name, which is all the Go tests use.)
-///
-/// Deprecated: ParseDir does not consider build tags when associating files
-/// with packages. (Go's deprecation note, kept verbatim.)
-pub fn parse_dir(
-    fset: &mut FileSet,
-    path: &str,
-    filter: Option<&dyn Fn(&str) -> bool>,
-    mode: Mode,
-) -> (BTreeMap<String, Package>, Option<ErrorList>) {
-    let mut first: Option<ErrorList> = None;
-    let mut pkgs: BTreeMap<String, Package> = BTreeMap::new();
-
-    let entries = match fs::read_dir(path) {
-        Ok(entries) => entries,
-        Err(e) => {
-            let mut errs = ErrorList::default();
-            errs.add(
-                crate::token::Position {
-                    file_name: String::new(),
-                    offset: 0,
-                    line: 0,
-                    column: 0,
-                },
-                format!("open {path}: {e}"),
-            );
-            return (pkgs, Some(errs));
-        }
-    };
-
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(e) => {
-                if first.is_none() {
-                    let mut errs = ErrorList::default();
-                    errs.add(crate::token::Position::default(), e.to_string());
-                    first = Some(errs);
-                }
-                continue;
-            }
-        };
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if entry.file_type().map_or(true, |t| t.is_dir()) || !name.ends_with(".go") {
-            continue;
-        }
-        if let Some(filter) = filter {
-            if !filter(&name) {
-                continue;
-            }
-        }
-        let filename = format!("{path}/{name}");
-        let src = match fs::read(&filename) {
-            Ok(src) => src,
-            Err(e) => {
-                if first.is_none() {
-                    let mut errs = ErrorList::default();
-                    errs.add(crate::token::Position::default(), e.to_string());
-                    first = Some(errs);
-                }
-                continue;
-            }
-        };
-        let (src, err) = parse_file(fset, &filename, &src, mode);
-        if err.is_none() {
-            let name = src.name.name.clone();
-            let pkg = pkgs.entry(name.clone()).or_insert_with(|| Package {
-                name,
-                files: BTreeMap::new(),
-            });
-            pkg.files.insert(filename, src);
-        } else if first.is_none() {
-            first = err;
-        }
-    }
-
-    (pkgs, first)
 }
 
 /// ParseExprFrom is a convenience function for parsing an expression.

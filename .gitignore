@@ -2,3 +2,4 @@
 /go
 # default output dir of the gane-driver AST dumps
 /out
+.DS_STORE
