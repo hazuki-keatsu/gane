@@ -118,8 +118,8 @@
 - [x] result list；命名和未命名 result。
 - [x] 无结果或单一非 aggregate 结果。
 - [x] declaration 与 call 的前向引用。
-- [x] 无 body declaration 的临时 extern 处理。
-  - 这是由 `FuncDecl.body == None` 推导的 V0 过渡机制，不是稳定 FFI 语法。
+- [x] 拒绝无 body declaration。
+  - `FuncDecl.body == None` 不再隐式表示 extern；V0 的所有函数都必须有函数体。
 - [ ] receiver / method declaration。
 - [ ] variadic parameter：`...T`。
 - [ ] 多结果函数与多值表达式传播。
@@ -322,11 +322,11 @@
 - [x] `SemanticInfo` 记录 declaration、use、expression type/value mode、block/function scope、field selection。
 - [x] `AnalysisResult` 提供 object/type/tuple/package member/file scope/node 查询。
 - [x] V0 global initializer 限制：bool/int/byte 常量或 nil pointer。
-- [x] V0 extern ABI 限制：int/byte 与满足 pointee 限制的 pointer。
+- [x] V0 拒绝无函数体声明；不包含 extern ABI。
 - [ ] 新语法的完整 source span、definition/use/type/selection facts。
 - [ ] 任何新可执行语法的 HIR lowering 支持。
 - [ ] 任何新可执行语法的 HIR verifier、interpreter、LLVM backend 定义与测试。
-- [ ] escape/alias/ownership 规则与 extern ABI metadata。
+- [ ] escape/alias/ownership 规则，以及未来 FFI 的 ABI metadata。
 - [ ] Go runtime、GC、goroutine、channel、panic/recover、reflection 的完整运行时模型。
 
 ## 6. 勾选流程
@@ -349,4 +349,3 @@
 - `crates/sema/src/interface.rs`：外部可依赖的查询 API。
 - `crates/parser/src/ast/ast.rs`：parser 能产出的 expression、statement、declaration AST 分类。
 - `docs/sema-overview.md`：数据流与源码阅读路线图。
-

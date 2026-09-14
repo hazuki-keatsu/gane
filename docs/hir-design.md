@@ -68,7 +68,7 @@ V0 明确拒绝 `:=`、复合赋值、三子句 `for`、if initializer、带标�
 “进入 verified HIR 前拒绝”是测试契约，而不是文字约定。sema/V0 validation 和 raw HIR escape check 必须为下列输入建立 negative tests：
 
 - 多返回值、aggregate 返回值和 aggregate 整体比较；
-- 返回 stack-derived pointer、把它存入 global、传给非 `noescape` extern；
+- 返回 stack-derived pointer 或把它存入 global；
 - 非零 aggregate 全局初始化、非 null 全局 pointer 初始化及其他运行期全局初始化；
 - send、range、switch、type switch、select、defer、go statement；
 - short declaration、复合赋值、三子句 for、if initializer、带标签 branch；
@@ -135,7 +135,7 @@ pub type Symbol = String;
 
 pub enum Endianness { Little, Big }
 
-// TypeId、GlobalId、ExternId、FunctionId、BlockId、ValueId、StackSlotId
+// TypeId、GlobalId、FunctionId、BlockId、ValueId、StackSlotId
 // 均为独立的 newtype(u32)，不能互相隐式转换。
 
 pub struct HirType {
@@ -148,7 +148,6 @@ pub struct HirPackage {
     pub target: TargetSpec,
     pub types: Vec<HirType>,
     pub globals: Vec<HirGlobal>,
-    pub externs: Vec<HirExtern>,
     pub functions: Vec<HirFunction>,
     pub entry: FunctionId,
 }
@@ -205,7 +204,7 @@ pub enum HirTypeKind {
 
 - `I1` 表示 bool 和条件；`CondBranch` 只接受 `I1`。
 - `I8`～`I64` 只表示位宽。signedness 由 operation opcode 决定，与 LLVM integer type 一致。
-- LLVM 为可寻址的 `I1` 分配目标规定的存储空间；Gane V0 不另设 `I8` bool。C ABI extern 禁止使用 `I1`，避免平台 `_Bool` ABI 歧义。
+- LLVM 为可寻址的 `I1` 分配目标规定的存储空间；Gane V0 不另设 `I8` bool。
 - `Ptr` 保留 address space；V0 只生成 address space `0`。
 - Array/struct 采用源码字段顺序，其物理布局由 `LayoutProvider` 查询。
 - V0 不包含浮点类型。加入浮点时必须同时定义常量、运算、比较、NaN 和 ABI 语义。
@@ -246,7 +245,7 @@ pub enum PassingMode {
     IndirectByValue,
 }
 
-pub enum CallingConvention { Gane, C }
+pub enum CallingConvention { Gane }
 pub enum Linkage { Internal, Exported }
 
 pub struct FunctionAttributes {
@@ -260,9 +259,9 @@ pub enum MemoryEffect { Unknown, ReadOnly, ReadNone }
 
 每个 `StackSlot` 在函数入口处按 `slot.typ` 具有 Gane 零值；这属于 HIR 语义，不是 lowering 的可选约定。LLVM backend 必须生成相应初始化，不能把 alloca 的未初始化内容暴露为 LLVM `undef`。backend 可以在保持该语义的前提下依赖后续优化删除被首次赋值完全覆盖的初始化。`IndirectByValue` 参数所指的 callee-private 副本由调用语义初始化，不属于 `stack_slots` 的隐式输入。
 
-V0 不支持 variadic。extern attributes 只能使用上述白名单，并且只能来自编译器内置的可信 ABI 表；用户源码 annotation 不能直接产生 `noescape`、`ReadOnly`、`ReadNone` 等会影响优化正确性的属性。
+V0 不支持 variadic，且所有函数都使用 Gane calling convention。用户源码 annotation 不能直接产生会影响优化正确性的 attributes。
 
-全局和外部声明：
+全局声明：
 
 ```rust
 pub struct HirGlobal {
@@ -277,14 +276,6 @@ pub enum GlobalInitializer {
     Zero,
     Scalar(Constant),
 }
-
-pub struct HirExtern {
-    pub symbol: Symbol,
-    pub signature: HirSignature,
-    pub attributes: FunctionAttributes,
-    pub parameter_noescape: Vec<bool>,
-}
-```
 
 V0 全局初始化必须能在编译期完成；不支持隐式运行期初始化函数。具体只允许：
 
@@ -418,7 +409,6 @@ pub enum InstructionKind {
 
 pub enum Callee {
     Function(FunctionId),
-    Extern(ExternId),
 }
 
 pub enum IntCastKind { Truncate, SignExtend, ZeroExtend }
@@ -461,7 +451,7 @@ pub enum ComparePredicate {
 - 调用 `no_return` callee 不产生 result，必须是 block 的最后一条 instruction，且该 block 以 `Unreachable` 终结；`no_return` function signature 不能声明 result。
 - 对可能为 null 的 pointer 执行 `Load`、`Store` 或 GEP 前，canonical lowering 必须生成 `pointer != null` 的显式分支，失败分支以 `Trap(NullDereference)` 终结。只有能够由来源证明非 null 的 `StackAddr`、`GlobalAddr` 等地址可以省略检查。
 
-所有指令自身具有完整、无 LLVM poison/UB 的 HIR 语义，backend 不能把 canonical guard 当成正确性的唯一来源：null `Load/Store/GEP` 必须得到 `Trap(NullDereference)`，越界 `GepIndex` 必须得到 `Trap(BoundsError)`，整数危险操作遵循第 10 节。backend 可以利用支配它的显式 guard 消除重复检查；无法证明时必须生成本地防御检查。非 null 但来自错误 extern/unsafe host 的无效地址不在 V0 内存安全保证内。
+所有指令自身具有完整、无 LLVM poison/UB 的 HIR 语义，backend 不能把 canonical guard 当成正确性的唯一来源：null `Load/Store/GEP` 必须得到 `Trap(NullDereference)`，越界 `GepIndex` 必须得到 `Trap(BoundsError)`，整数危险操作遵循第 10 节。backend 可以利用支配它的显式 guard 消除重复检查；无法证明时必须生成本地防御检查。
 
 ## 10. 整数语义与显式检查
 
@@ -533,7 +523,7 @@ join(%result: i64):
 
 循环变量同样通过 header block parameter 和回边 argument 传递。
 
-## 12. no-std、extern 与 entry ABI
+## 12. no-std、entry ABI 与未来 FFI
 
 无标准库不代表没有 ABI。V0 规定：
 
@@ -542,23 +532,20 @@ join(%result: i64):
 - freestanding `_start`、初始化栈和退出/停机方式属于未来 target-specific 设计；
 - 没有隐式 heap allocation；`new`、`make` 和发生逃逸的局部地址由 sema 拒绝；
 - panic、越界、除零等失败在 V0 进入对应 `Trap`；
-- I/O 只能通过 extern 或用户提供的静态库。
+- V0 没有 I/O，也不接受无函数体的函数声明。
 
-C ABI extern V0 只允许 `void`、`I8/I16/I32/I64` 和 pointer；禁止 `I1`、aggregate、variadic 和 aggregate return。任何跨 C ABI 的 pointer，其可达 pointee 类型也不得包含 `I1`；需要与 C `_Bool` 互操作时必须等到以后定义显式的 ABI 转换。
+所有 V0 调用都指向同一 package 内带函数体的 Gane ABI function。FFI 以后必须以独立的 binding 设计引入，明确链接 symbol、calling convention、平台 target、可传递类型、ownership/escape 规则和可信 ABI metadata；不能以“缺少函数体”隐式表示 extern。
 
 栈地址的 V0 生命周期规则：
 
 - 禁止从函数返回 stack-derived pointer；
 - 禁止把 stack-derived pointer 存入 global；
 - 可以在当前函数内读写和传给内部调用；内部函数同样必须满足不逃逸规则；
-- 只有对应参数标记 `noescape` 时才能传给 extern；
 - stack-derived taint 必须穿过 `GepField`、`GepIndex`、stack slot 的 store/load 和函数参数传播。
 
 这些规则由独立的保守 escape check 负责，而不是普通 HIR verifier。它在 raw HIR 构造后运行，对内部调用图计算 noescape summary；递归调用组通过不动点迭代求解。无法证明不逃逸时一律拒绝，不自动提升到 heap。普通 verifier 与 escape check 均成功后才能构造 `VerifiedHirPackage`。
 
-在可信 extern ABI 表尚未提供某个函数的 parameter summary 时，该 extern 的所有 pointer parameter 一律按 `noescape = false` 处理。不得根据函数名猜测，也不得从用户源码 annotation 直接获得该属性。
-
-verifier 只检查 HIR 中直接可见的类型和 attribute 一致性，不声称重新完成跨函数 escape analysis。escape check 必须有返回局部地址、经临时 slot 传播、存 global、内部调用传播、递归调用和 extern `noescape` 的专项测试。
+verifier 只检查 HIR 中直接可见的类型和 attribute 一致性，不声称重新完成跨函数 escape analysis。escape check 必须有返回局部地址、经临时 slot 传播、存 global、内部调用传播和递归调用的专项测试。
 
 ## 13. AOT 与未来 JIT
 
@@ -602,16 +589,16 @@ interpreter、codegen 和 JIT 的 API 只接受 `VerifiedHirPackage`。`verify_a
 13. return 的数量和类型与 signature 一致；V0 不允许 aggregate 或多结果返回。`no_return` function/call 满足第 9 节的 result、位置和 terminator 约束。
 14. `StackAddr` 结果类型是 `Ptr<slot.typ>`；普通 verifier 不重复执行第 12 节的跨函数 escape analysis。所有 stack slot 具有第 6 节规定的入口零值语义。
 15. `AggregateZero` 的目标以及 `AggregateCopy` 两端是相同 aggregate 类型的 pointer，且类型具有确定布局；copy 允许重叠。
-16. extern 不使用 variadic、未知 attribute、`I1`、含可达 `I1` pointee 的 pointer 或 aggregate C ABI；`parameter_noescape` 长度与参数数量一致。
+16. 所有调用目标都是 package 内的 Gane ABI function；V0 不包含 extern、C ABI 或 variadic。
 17. `Trap` 只作为 terminator。verifier 不承诺通过值域分析证明 canonical guard；危险指令的 total semantics 由 backend/interpreter 和第 10 节 conformance tests 保证。
 18. package 不包含 sema poison type、未解析类型或不属于第 6 节白名单的 global initializer。
-19. global、extern 和 function 的最终链接 symbol 全局唯一，内部 Gane symbol 也不得发生 mangling collision。
+19. global 和 function 的最终链接 symbol 全局唯一，内部 Gane symbol 也不得发生 mangling collision。
 20. `Void` 不能用于 SSA value、参数、block parameter、stack slot、global、array element 或 struct field；无返回值由空 results 表示。
 21. primitive types 已 canonical intern；类型图只通过 pointer 成环，所有 array/struct 均为非零有限尺寸。verifier 不检查不同 aggregate ID 的结构图同构；sema representation 映射稳定性由 lowering tests 检查。
 22. pointer 只能进行 `Equal/NotEqual` 比较；signed/unsigned ordering predicate 只接受 integer。
 23. Array length 能由目标 pointer-width unsigned integer 表示。
 
-verifier 必须包含反向测试：跨分支非法 use、错误 block argument、错误 GEP、错误 store/call、不可表示常量、symbol collision、非法递归/零尺寸类型、`Void` value 和非法 extern 都应被拒绝。escape violations 属于独立 escape check 的反向测试，不混入普通 verifier 测试集。
+verifier 必须包含反向测试：跨分支非法 use、错误 block argument、错误 GEP、错误 store/call、不可表示常量、symbol collision、非法递归/零尺寸类型和 `Void` value 都应被拒绝。escape violations 属于独立 escape check 的反向测试，不混入普通 verifier 测试集。
 
 ## 15. 文本格式与实现阶段
 
@@ -630,9 +617,9 @@ HIR 从阶段 1 起提供确定性的文本打印。相同输入和 target 必�
 2. 定义 ID、类型、raw/verified package、受控 `TargetSpec` 和 builder，实现普通 verifier 与稳定 printer。
 3. 实现 `sema + AST -> raw HIR`，只覆盖第 2 节的 V0 子集，建立 lowering golden tests；lowering 遇到缺失的 sema fact 必须返回 diagnostic，不能 panic 或自行推导。
 4. 在 raw HIR 上实现独立 escape check，只有 verifier 与 escape check 均成功才产生 `VerifiedHirPackage`。
-5. 实现最小 interpreter；先覆盖纯整数、结构化局部内存、total dangerous operations 和控制流，不要求 extern/真实物理布局。
+5. 实现最小 interpreter；先覆盖纯整数、结构化局部内存、total dangerous operations 和控制流，不要求真实物理布局。
 6. 实现 host target 的 LLVM lowering、wrapper main、object 生成和链接，完成 AOT 闭环，并与 interpreter 做差分测试。
-7. 增加 array/struct、`AggregateZero`、`AggregateCopy` 和标量 extern C 的端到端测试。
+7. 增加 array/struct、`AggregateZero` 和 `AggregateCopy` 的端到端测试。
 8. AOT 稳定后再评估可选 HIR pass；局部提升优先使用 LLVM mem2reg/SROA。
 9. 最后添加 profile instrumentation 和函数级 JIT。
 
@@ -644,12 +631,13 @@ V0 支持：
 - `var` 局部/全局变量、普通赋值、blank assignment、`++`/`--`、if、条件/无限 for、无标签 break/continue；
 - 常量、整数运算/比较/cast、地址计算、标量 load/store、aggregate zero/copy；
 - 直接函数调用、零或一个标量返回值；
-- hosted `main` wrapper、标量/pointer extern C；
+- hosted `main` wrapper；
 - 无 heap、无 GC，错误直接 trap。
 
 V0 明确不支持：
 
 - `:=`、复合赋值、三子句 for、if initializer、range、switch、defer、带标签跳转；
+- 无函数体声明、extern/FFI 和 C ABI；
 - float、string、slice、map、interface、method、closure、函数值；
 - aggregate SSA value、aggregate 返回和完整 C aggregate ABI；
 - import/package loader、Go 标准库、reflect、panic/recover；

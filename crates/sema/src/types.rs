@@ -64,7 +64,7 @@ pub enum ObjectKind {
     Invalid,
     Const { value: ConstValue },
     Var { embedded: bool },
-    Func { signature: TypeId, is_extern: bool },
+    Func { signature: TypeId },
     TypeName { named: TypeId, is_alias: bool },
     Field { index: u32, embedded: bool },
     Param { index: u32 },

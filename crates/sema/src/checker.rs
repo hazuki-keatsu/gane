@@ -378,6 +378,12 @@ impl<'ast> Checker<'ast> {
         if decl.recv.is_some() {
             self.unsupported(Span::new(decl.pos(), decl.end()), "method declaration");
         }
+        if decl.body.is_none() {
+            self.unsupported(
+                Span::new(decl.pos(), decl.end()),
+                "function declaration without a body",
+            );
+        }
         let params = self.types.alloc_tuple(Default::default());
         let results = self.types.alloc_tuple(Default::default());
         let signature = self.types.alloc(TypeKind::Signature {
@@ -387,15 +393,7 @@ impl<'ast> Checker<'ast> {
             variadic: false,
         });
         let name = self.symbols.intern(&decl.name.name);
-        self.declare_source_object(
-            &decl.name,
-            ObjectKind::Func {
-                signature,
-                is_extern: decl.body.is_none(),
-            },
-            name,
-            signature,
-        );
+        self.declare_source_object(&decl.name, ObjectKind::Func { signature }, name, signature);
         self.func_decls.insert(
             signature,
             ScopedFuncDecl {
@@ -446,10 +444,6 @@ impl<'ast> Checker<'ast> {
         let objects: Vec<ObjectId> = self.global_initializers.keys().copied().collect();
         for object in objects {
             self.resolve_global(object);
-        }
-        let signatures: Vec<TypeId> = self.func_decls.keys().copied().collect();
-        for signature in signatures {
-            self.check_extern_abi(signature);
         }
     }
 
@@ -552,70 +546,6 @@ impl<'ast> Checker<'ast> {
                 initializer.span,
                 "global initializer requiring runtime evaluation",
             );
-        }
-    }
-
-    fn check_extern_abi(&mut self, signature: TypeId) {
-        let Some(decl) = self.func_decls.get(&signature) else {
-            return;
-        };
-        if decl.decl.body.is_some() {
-            return;
-        }
-        let TypeKind::Signature {
-            params, results, ..
-        } = self.types.get(signature).kind
-        else {
-            return;
-        };
-        let objects = self
-            .types
-            .tuple(params)
-            .into_iter()
-            .flat_map(|tuple| tuple.vars.iter())
-            .chain(
-                self.types
-                    .tuple(results)
-                    .into_iter()
-                    .flat_map(|tuple| tuple.vars.iter()),
-            )
-            .copied()
-            .collect::<Vec<_>>();
-        for object in objects {
-            let typ = self.symbols.object(object).typ;
-            if !self.is_abi_type(typ) {
-                self.diagnostics.error(
-                    UNSUPPORTED_FEATURE,
-                    self.symbols.object(object).span,
-                    "extern function ABI only supports int, byte, and pointers whose pointee types do not contain bool",
-                );
-            }
-        }
-    }
-
-    fn is_abi_type(&self, typ: TypeId) -> bool {
-        match self.types.get(self.types.underlying(typ)).kind {
-            TypeKind::Basic(BasicType::Int | BasicType::Byte) => true,
-            TypeKind::Pointer { base } => {
-                !self.reachable_type_contains_bool(base, &mut HashSet::new())
-            }
-            _ => false,
-        }
-    }
-
-    fn reachable_type_contains_bool(&self, typ: TypeId, seen: &mut HashSet<TypeId>) -> bool {
-        let typ = self.types.underlying(typ);
-        if !seen.insert(typ) {
-            return false;
-        }
-        match &self.types.get(typ).kind {
-            TypeKind::Basic(BasicType::Bool) => true,
-            TypeKind::Pointer { base } => self.reachable_type_contains_bool(*base, seen),
-            TypeKind::Array { elem, .. } => self.reachable_type_contains_bool(*elem, seen),
-            TypeKind::Struct { fields } => fields.iter().any(|field| {
-                self.reachable_type_contains_bool(self.symbols.object(*field).typ, seen)
-            }),
-            _ => false,
         }
     }
 
@@ -2500,21 +2430,17 @@ mod tests {
     }
 
     #[test]
-    fn enforces_the_v0_extern_abi() {
+    fn rejects_function_declarations_without_a_body() {
         let result = analyze(
             "package main\n\
-             type Flags struct { ready bool }\n\
-             func boolValue(value bool)\n\
-             func flags(value *Flags)\n",
+             func foreign(value int)\n\
+             func main() {}\n",
         );
-        assert!(
-            result
-                .diagnostics
-                .iter()
-                .filter(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE)
-                .count()
-                >= 2
-        );
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == UNSUPPORTED_FEATURE
+                && diagnostic.message
+                    == "function declaration without a body is not supported by the MVP"
+        }));
     }
 
     #[test]

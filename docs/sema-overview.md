@@ -110,7 +110,7 @@ check_package_clause
 | `create_file_scopes` | 每个 `PackageFile` 建立一个 file scope | 将来 import alias 只应在声明它的文件可见 |
 | `collect_top_level` | 为所有顶层 type/const/var/func 创建占位 object | 允许函数、类型及全局名字前向引用 |
 | `resolve_type_headers` | 解析 named type underlying type、struct fields、函数参数和结果 | 函数体前先得到完整签名 |
-| `check_global_values` | 检查 const/var 初始化、初始化环、extern ABI 限制 | 全局值可能互相依赖 |
+| `check_global_values` | 检查 const/var 初始化和初始化环 | 全局值可能互相依赖 |
 | `check_function_bodies` | 检查函数体中的局部声明、表达式、赋值、控制流和 return | 已有完整顶层名字与签名 |
 | `validate_entry_point` | 检查 `func main()` 的 MVP 入口约束 | 属于 package 级最终验证 |
 | `finish` | 冻结 arena、整理 diagnostics、构造结果 | checker 的可变状态不再暴露 |
@@ -177,7 +177,7 @@ source identifier
 
 顶层 type/const/var/func 的 `parent` 是 package scope。它们**不**属于 file scope：同一 package 的其他文件必须能看见这些声明。
 
-`Func` object 的 `typ` 是 signature `TypeId`；`ObjectKind::Func` 也保存同一个 signature ID。无函数体声明当前会被标记为 `is_extern`，并走 MVP extern ABI 检查；这不是一套稳定 FFI 设计。
+`Func` object 的 `typ` 是 signature `TypeId`；`ObjectKind::Func` 也保存同一个 signature ID。V0 要求每个函数声明都有函数体；无函数体声明会在 sema 中以 unsupported feature 拒绝，不能借此隐式表示 FFI。
 
 ### 5.2 `Type`
 
@@ -486,7 +486,7 @@ sema
   └─ 产出名称、类型、selection 事实
 ```
 
-FFI 不应仅靠“缺少函数体”这一语法形状得到完整语义。稳定设计至少需要单独明确：链接 symbol、调用约定、平台目标、可传递类型、ownership/escape 规则以及可信 ABI metadata 的来源。当前 `is_extern` 和 ABI 检查只能视为 V0 临时约束。
+FFI 不应仅靠“缺少函数体”这一语法形状得到完整语义。稳定设计至少需要单独明确：链接 symbol、调用约定、平台目标、可传递类型、ownership/escape 规则以及可信 ABI metadata 的来源。V0 不接受 extern；未来必须通过独立的 binding 设计引入。
 
 ## 15. 相关文件
 
