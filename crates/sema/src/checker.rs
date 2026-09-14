@@ -26,6 +26,7 @@ const DUPLICATE_DECLARATION: DiagnosticCode = DiagnosticCode("E2002");
 const INVALID_PACKAGE: DiagnosticCode = DiagnosticCode("E2003");
 const MIXED_PACKAGE: DiagnosticCode = DiagnosticCode("E2004");
 const EMPTY_PACKAGE: DiagnosticCode = DiagnosticCode("E2005");
+const DUPLICATE_FILE: DiagnosticCode = DiagnosticCode("E2006");
 const UNKNOWN_TYPE: DiagnosticCode = DiagnosticCode("E2101");
 const UNSUPPORTED_TYPE: DiagnosticCode = DiagnosticCode("E2102");
 const INVALID_RECURSIVE_TYPE: DiagnosticCode = DiagnosticCode("E2103");
@@ -107,6 +108,7 @@ pub struct AnalysisResult {
     pub(crate) types: TypeArena,
     pub(crate) symbols: SymbolTable,
     pub(crate) scopes: ScopeArena,
+    pub(crate) file_scopes: HashMap<FileId, ScopeId>,
     pub(crate) nodes: NodeIndex,
     pub info: SemanticInfo,
     pub diagnostics: Vec<Diagnostic>,
@@ -119,6 +121,7 @@ pub fn analyze_package(input: PackageInput<'_>) -> AnalysisResult {
     checker.check_package_clause();
     checker.create_universe();
     checker.create_package_scope();
+    checker.create_file_scopes();
     checker.collect_top_level();
     checker.resolve_type_headers();
     checker.check_global_values();
@@ -137,9 +140,10 @@ struct Checker<'ast> {
     diagnostics: Diagnostics,
     package_name: Option<crate::types::NameId>,
     package_scope: Option<ScopeId>,
+    file_scopes: HashMap<FileId, ScopeId>,
     predeclared: Option<PredeclaredTypes>,
-    type_specs: HashMap<TypeId, ast::TypeSpec>,
-    func_decls: HashMap<TypeId, ast::FuncDecl>,
+    type_specs: HashMap<TypeId, ScopedTypeSpec>,
+    func_decls: HashMap<TypeId, ScopedFuncDecl>,
     function_scopes: HashMap<TypeId, ScopeId>,
     global_initializers: HashMap<ObjectId, GlobalInitializer>,
     global_states: HashMap<ObjectId, InitState>,
@@ -157,6 +161,19 @@ struct GlobalInitializer {
     typ: Option<ast::Expr>,
     value: Option<ast::Expr>,
     span: Span,
+    file: FileId,
+}
+
+#[derive(Clone)]
+struct ScopedTypeSpec {
+    spec: ast::TypeSpec,
+    file: FileId,
+}
+
+#[derive(Clone)]
+struct ScopedFuncDecl {
+    decl: ast::FuncDecl,
+    file: FileId,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -177,6 +194,7 @@ impl<'ast> Checker<'ast> {
             diagnostics: Diagnostics::default(),
             package_name: None,
             package_scope: None,
+            file_scopes: HashMap::new(),
             predeclared: None,
             type_specs: HashMap::new(),
             func_decls: HashMap::new(),
@@ -256,45 +274,70 @@ impl<'ast> Checker<'ast> {
         ));
     }
 
-    fn collect_top_level(&mut self) {
-        // Clone declaration lists so collection can mutably update checker
-        // arenas without holding an immutable borrow of self.input.
-        let declarations: Vec<Decl> = self
+    fn create_file_scopes(&mut self) {
+        let package_scope = self.package_scope.expect("package scope must exist");
+        let files = self
             .input
             .files
             .iter()
-            .flat_map(|file| file.ast.decls.clone())
+            .map(|file| (file.id, Span::new(file.ast.pos(), file.ast.end())))
+            .collect::<Vec<_>>();
+
+        for (file, span) in files {
+            if self.file_scopes.contains_key(&file) {
+                self.diagnostics.error(
+                    DUPLICATE_FILE,
+                    span,
+                    format!("duplicate input file id {}", file.raw()),
+                );
+                continue;
+            }
+            let scope = self.scopes.child(package_scope, ScopeKind::File, span);
+            self.file_scopes.insert(file, scope);
+        }
+    }
+
+    fn collect_top_level(&mut self) {
+        // Clone per-file declaration lists so collection can mutably update
+        // checker arenas without holding an immutable borrow of self.input.
+        let files: Vec<(FileId, Vec<Decl>)> = self
+            .input
+            .files
+            .iter()
+            .map(|file| (file.id, file.ast.decls.clone()))
             .collect();
 
-        for declaration in &declarations {
-            match declaration {
-                Decl::GenDecl(decl) => self.collect_gen_decl(decl),
-                Decl::FuncDecl(decl) => self.collect_func_decl(decl),
-                Decl::BadDecl(_) => {}
+        for (file, declarations) in files {
+            for declaration in &declarations {
+                match declaration {
+                    Decl::GenDecl(decl) => self.collect_gen_decl(decl, file),
+                    Decl::FuncDecl(decl) => self.collect_func_decl(decl, file),
+                    Decl::BadDecl(_) => {}
+                }
             }
         }
     }
 
-    fn collect_gen_decl(&mut self, decl: &ast::GenDecl) {
+    fn collect_gen_decl(&mut self, decl: &ast::GenDecl, file: FileId) {
         match decl.tok {
             Token::Type => {
                 for spec in &decl.specs {
                     if let Spec::TypeSpec(spec) = spec {
-                        self.collect_type_spec(spec);
+                        self.collect_type_spec(spec, file);
                     }
                 }
             }
             Token::Const => {
                 for spec in &decl.specs {
                     if let Spec::ValueSpec(spec) = spec {
-                        self.collect_value_spec(spec, true);
+                        self.collect_value_spec(spec, true, file);
                     }
                 }
             }
             Token::Var => {
                 for spec in &decl.specs {
                     if let Spec::ValueSpec(spec) = spec {
-                        self.collect_value_spec(spec, false);
+                        self.collect_value_spec(spec, false, file);
                     }
                 }
             }
@@ -303,7 +346,7 @@ impl<'ast> Checker<'ast> {
         }
     }
 
-    fn collect_type_spec(&mut self, spec: &ast::TypeSpec) {
+    fn collect_type_spec(&mut self, spec: &ast::TypeSpec, file: FileId) {
         let name = self.symbols.intern(&spec.name.name);
         let named = self.types.alloc(TypeKind::Named {
             object: ObjectId::INVALID,
@@ -322,10 +365,16 @@ impl<'ast> Checker<'ast> {
         if let TypeKind::Named { object: slot, .. } = &mut self.types.get_mut(named).unwrap().kind {
             *slot = object;
         }
-        self.type_specs.insert(named, spec.clone());
+        self.type_specs.insert(
+            named,
+            ScopedTypeSpec {
+                spec: spec.clone(),
+                file,
+            },
+        );
     }
 
-    fn collect_func_decl(&mut self, decl: &ast::FuncDecl) {
+    fn collect_func_decl(&mut self, decl: &ast::FuncDecl, file: FileId) {
         if decl.recv.is_some() {
             self.unsupported(Span::new(decl.pos(), decl.end()), "method declaration");
         }
@@ -347,10 +396,16 @@ impl<'ast> Checker<'ast> {
             name,
             signature,
         );
-        self.func_decls.insert(signature, decl.clone());
+        self.func_decls.insert(
+            signature,
+            ScopedFuncDecl {
+                decl: decl.clone(),
+                file,
+            },
+        );
     }
 
-    fn collect_value_spec(&mut self, spec: &ast::ValueSpec, is_const: bool) {
+    fn collect_value_spec(&mut self, spec: &ast::ValueSpec, is_const: bool, file: FileId) {
         for (index, ident) in spec.names.iter().enumerate() {
             let name = self.symbols.intern(&ident.name);
             let kind = if is_const {
@@ -369,6 +424,7 @@ impl<'ast> Checker<'ast> {
                     typ: spec.typ.clone(),
                     value: spec.values.get(index).cloned(),
                     span: ident_span(ident),
+                    file,
                 },
             );
         }
@@ -417,13 +473,15 @@ impl<'ast> Checker<'ast> {
             return;
         };
         self.global_states.insert(object, InitState::Resolving);
+        let scope = self.file_scopes[&initializer.file];
         let explicit_type = initializer
             .typ
             .as_ref()
-            .map(|typ| self.resolve_type_expr(typ, false));
-        let value = initializer.value.as_ref().map(|value| {
-            self.check_expr(value, self.package_scope.expect("package scope must exist"))
-        });
+            .map(|typ| self.resolve_type_expr(typ, scope, false));
+        let value = initializer
+            .value
+            .as_ref()
+            .map(|value| self.check_expr(value, scope));
         let typ = match (explicit_type, value.as_ref()) {
             (Some(typ), Some(value)) => {
                 self.require_assignable(value.typ, typ, initializer.span);
@@ -501,7 +559,7 @@ impl<'ast> Checker<'ast> {
         let Some(decl) = self.func_decls.get(&signature) else {
             return;
         };
-        if decl.body.is_some() {
+        if decl.decl.body.is_some() {
             return;
         }
         let TypeKind::Signature {
@@ -583,7 +641,7 @@ impl<'ast> Checker<'ast> {
                 named
             }
             UnderlyingState::Unresolved => {
-                let Some(spec) = self.type_specs.get(&named).cloned() else {
+                let Some(declaration) = self.type_specs.get(&named).cloned() else {
                     return named;
                 };
                 if let TypeKind::Named { underlying, .. } =
@@ -591,7 +649,8 @@ impl<'ast> Checker<'ast> {
                 {
                     *underlying = UnderlyingState::Resolving;
                 }
-                let underlying = self.resolve_type_expr(&spec.typ, false);
+                let scope = self.file_scopes[&declaration.file];
+                let underlying = self.resolve_type_expr(&declaration.spec.typ, scope, false);
                 if let TypeKind::Named {
                     underlying: slot, ..
                 } = &mut self.types.get_mut(named).unwrap().kind
@@ -607,12 +666,12 @@ impl<'ast> Checker<'ast> {
         }
     }
 
-    fn resolve_type_expr(&mut self, expr: &ast::Expr, indirect: bool) -> TypeId {
+    fn resolve_type_expr(&mut self, expr: &ast::Expr, scope: ScopeId, indirect: bool) -> TypeId {
         match expr {
-            ast::Expr::Ident(ident) => self.resolve_type_name(ident, indirect),
-            ast::Expr::ParenExpr(expr) => self.resolve_type_expr(&expr.x, indirect),
+            ast::Expr::Ident(ident) => self.resolve_type_name(ident, scope, indirect),
+            ast::Expr::ParenExpr(expr) => self.resolve_type_expr(&expr.x, scope, indirect),
             ast::Expr::StarExpr(expr) => {
-                let base = self.resolve_type_expr(&expr.x, true);
+                let base = self.resolve_type_expr(&expr.x, scope, true);
                 if base == TypeId::INVALID {
                     TypeId::INVALID
                 } else {
@@ -636,7 +695,7 @@ impl<'ast> Checker<'ast> {
                     );
                     return TypeId::INVALID;
                 }
-                let element = self.resolve_type_expr(&expr.elt, indirect);
+                let element = self.resolve_type_expr(&expr.elt, scope, indirect);
                 if element == TypeId::INVALID {
                     TypeId::INVALID
                 } else {
@@ -646,7 +705,7 @@ impl<'ast> Checker<'ast> {
                     })
                 }
             }
-            ast::Expr::StructType(struct_type) => self.resolve_struct(struct_type),
+            ast::Expr::StructType(struct_type) => self.resolve_struct(struct_type, scope),
             _ => {
                 self.diagnostics.error(
                     UNSUPPORTED_TYPE,
@@ -658,12 +717,9 @@ impl<'ast> Checker<'ast> {
         }
     }
 
-    fn resolve_type_name(&mut self, ident: &ast::Ident, indirect: bool) -> TypeId {
+    fn resolve_type_name(&mut self, ident: &ast::Ident, scope: ScopeId, indirect: bool) -> TypeId {
         let name = self.symbols.intern(&ident.name);
-        let Some(resolved) = self
-            .scopes
-            .lookup(self.package_scope.expect("package scope must exist"), name)
-        else {
+        let Some(resolved) = self.scopes.lookup(scope, name) else {
             self.diagnostics.error(
                 UNKNOWN_TYPE,
                 ident_span(ident),
@@ -684,7 +740,7 @@ impl<'ast> Checker<'ast> {
         }
     }
 
-    fn resolve_struct(&mut self, struct_type: &ast::StructType) -> TypeId {
+    fn resolve_struct(&mut self, struct_type: &ast::StructType, scope: ScopeId) -> TypeId {
         let mut fields = Vec::new();
         let mut seen = HashSet::new();
         let mut invalid = false;
@@ -706,7 +762,7 @@ impl<'ast> Checker<'ast> {
                 );
                 continue;
             };
-            let typ = self.resolve_type_expr(typ_expr, false);
+            let typ = self.resolve_type_expr(typ_expr, scope, false);
             invalid |= typ == TypeId::INVALID;
             if field.names.is_empty() {
                 self.diagnostics.error(
@@ -769,11 +825,13 @@ impl<'ast> Checker<'ast> {
     }
 
     fn resolve_signature(&mut self, signature: TypeId) {
-        let Some(decl) = self.func_decls.get(&signature).cloned() else {
+        let Some(declaration) = self.func_decls.get(&signature).cloned() else {
             return;
         };
+        let decl = declaration.decl;
+        let file_scope = self.file_scopes[&declaration.file];
         let function_scope = self.scopes.child(
-            self.package_scope.expect("package scope must exist"),
+            file_scope,
             ScopeKind::Function,
             Span::new(decl.pos(), decl.end()),
         );
@@ -825,7 +883,7 @@ impl<'ast> Checker<'ast> {
                 let typ = field
                     .typ
                     .as_ref()
-                    .map(|expr| self.resolve_type_expr(expr, false))
+                    .map(|expr| self.resolve_type_expr(expr, scope, false))
                     .unwrap_or(TypeId::INVALID);
                 if field.names.is_empty() {
                     vars.push(self.declare_unnamed_param(scope, field, vars.len() as u32, typ));
@@ -874,7 +932,7 @@ impl<'ast> Checker<'ast> {
         let functions: Vec<(TypeId, ast::FuncDecl)> = self
             .func_decls
             .iter()
-            .map(|(&signature, decl)| (signature, decl.clone()))
+            .map(|(&signature, declaration)| (signature, declaration.decl.clone()))
             .collect();
         for (signature, decl) in functions {
             let Some(body) = decl.body.as_deref() else {
@@ -1255,7 +1313,7 @@ impl<'ast> Checker<'ast> {
         let explicit_type = spec
             .typ
             .as_ref()
-            .map(|expr| self.resolve_type_expr(expr, false));
+            .map(|expr| self.resolve_type_expr(expr, scope, false));
         let typ = match (explicit_type, values.first()) {
             (Some(typ), _) => typ,
             (None, Some(value)) if value.mode != ValueMode::Nil => value.typ,
@@ -1936,6 +1994,7 @@ impl<'ast> Checker<'ast> {
             types: self.types,
             symbols: self.symbols,
             scopes: self.scopes,
+            file_scopes: self.file_scopes,
             nodes: self.nodes,
             info: self.info,
             diagnostics: self.diagnostics.finish(),
@@ -1995,6 +2054,31 @@ mod tests {
         analyze_package(PackageInput::single("main", FileId::from_raw(1), &ast))
     }
 
+    fn analyze_files(sources: &[(&str, &str)]) -> AnalysisResult {
+        let mut file_set = FileSet::new();
+        let asts = sources
+            .iter()
+            .map(|(name, source)| {
+                let (ast, errors) =
+                    parse_file(&mut file_set, name, source.as_bytes(), Mode::default());
+                assert!(errors.is_none(), "fixture should parse: {errors:?}");
+                ast
+            })
+            .collect::<Vec<_>>();
+        let files = asts
+            .iter()
+            .enumerate()
+            .map(|(index, ast)| PackageFile {
+                id: FileId::from_raw(index as u32 + 1),
+                ast,
+            })
+            .collect();
+        analyze_package(PackageInput {
+            path: PackagePath("main".to_owned()),
+            files,
+        })
+    }
+
     #[test]
     fn collects_top_level_declarations_before_function_bodies() {
         let result = analyze(
@@ -2016,6 +2100,114 @@ mod tests {
             result.types.get(result.predeclared.int).kind,
             TypeKind::Basic(BasicType::Int)
         ));
+    }
+
+    #[test]
+    fn creates_distinct_file_scopes_below_the_package_scope() {
+        let result = analyze_files(&[
+            (
+                "types.go",
+                "package main\ntype Shared int\nvar value Shared\n",
+            ),
+            (
+                "main.go",
+                "package main\nfunc main() { var local Shared; local = value }\n",
+            ),
+        ]);
+
+        assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+        let first = result.file_scope(FileId::from_raw(1)).unwrap();
+        let second = result.file_scope(FileId::from_raw(2)).unwrap();
+        assert_ne!(first, second);
+        for scope in [first, second] {
+            let scope = result.scopes.scope(scope).unwrap();
+            assert_eq!(scope.kind, ScopeKind::File);
+            assert_eq!(scope.parent, Some(result.package.scope));
+            assert!(scope.names.is_empty());
+        }
+
+        let main = result.package_member("main").unwrap();
+        let main_node = result.nodes.get(result.symbols.object(main).span).unwrap();
+        let function_scope = result.info.scopes[&main_node];
+        assert_eq!(
+            result.scopes.scope(function_scope).unwrap().parent,
+            Some(second)
+        );
+    }
+
+    #[test]
+    fn reports_duplicate_input_file_ids_without_replacing_the_first_scope() {
+        let mut file_set = FileSet::new();
+        let (first, first_errors) = parse_file(
+            &mut file_set,
+            "first.go",
+            b"package main\nvar value int\n",
+            Mode::default(),
+        );
+        let (second, second_errors) = parse_file(
+            &mut file_set,
+            "second.go",
+            b"package main\nfunc main() {}\n",
+            Mode::default(),
+        );
+        assert!(first_errors.is_none() && second_errors.is_none());
+        let id = FileId::from_raw(7);
+        let result = analyze_package(PackageInput {
+            path: PackagePath("main".to_owned()),
+            files: vec![
+                PackageFile { id, ast: &first },
+                PackageFile { id, ast: &second },
+            ],
+        });
+
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == DUPLICATE_FILE)
+                .count(),
+            1
+        );
+        let file_scope = result.file_scope(id).unwrap();
+        assert_eq!(
+            result.scopes.scope(file_scope).unwrap().parent,
+            Some(result.package.scope)
+        );
+    }
+
+    #[test]
+    fn reports_cross_file_package_duplicates() {
+        let result = analyze_files(&[
+            ("first.go", "package main\nvar value int\n"),
+            (
+                "second.go",
+                "package main\nvar value int\nfunc main() {}\n",
+            ),
+        ]);
+
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == DUPLICATE_DECLARATION)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn leaves_file_scopes_empty_while_imports_are_unsupported() {
+        let result = analyze_files(&[(
+            "main.go",
+            "package main\nimport \"foreign\"\nfunc main() {}\n",
+        )]);
+
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE));
+        let scope = result.file_scope(FileId::from_raw(1)).unwrap();
+        assert!(result.scopes.scope(scope).unwrap().names.is_empty());
     }
 
     #[test]

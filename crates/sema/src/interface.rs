@@ -50,6 +50,11 @@ impl AnalysisResult {
             .find_map(|(&name, &object)| (self.name(name) == Some(spelling)).then_some(object))
     }
 
+    /// Returns the lexical scope associated with an input source file.
+    pub fn file_scope(&self, file: FileId) -> Option<ScopeId> {
+        self.file_scopes.get(&file).copied()
+    }
+
     /// Returns the checker-local identity assigned to a source span.
     pub fn node_at(&self, span: Span) -> Option<NodeId> {
         self.nodes.get(span)

@@ -174,9 +174,10 @@ pub struct Scope {
 pub enum ScopeKind {
     Universe,
     Package,
+    File,
     Function,
     Block,
-    // Future: File, If, For, Switch, TypeParams, Labels.
+    // Future: If, For, Switch, TypeParams, Labels.
 }
 
 /// Package identity and its top-level scope. Loading source files and import

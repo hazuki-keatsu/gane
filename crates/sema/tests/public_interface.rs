@@ -15,6 +15,8 @@ fn exposes_semantic_facts_without_exposing_storage() {
     let result = analyze_package(PackageInput::single("main", FileId::from_raw(1), &ast));
 
     assert!(!result.has_errors());
+    assert!(result.file_scope(FileId::from_raw(1)).is_some());
+    assert!(result.file_scope(FileId::from_raw(2)).is_none());
     assert_eq!(result.name(result.package.name), Some("main"));
     assert!(matches!(
         result.type_of(result.predeclared.int).kind,

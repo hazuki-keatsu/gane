@@ -1,4 +1,4 @@
-# `gane_parser` 总揽
+# `gane_parser` 总览
 
 本文对应作者自己设计的go语言编辑器gane中的`crates/parser`。它是一个参考 Go 标准库 `go/token`、`go/scanner`、`go/ast`、`go/parser` 移植而来的 Go 源码解析器。
 
