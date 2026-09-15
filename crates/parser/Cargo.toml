@@ -5,8 +5,6 @@ version.workspace = true
 authors.workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
-thiserror = { workspace = true }
 unicode-general-category = { workspace = true }
 
 [dev-dependencies]

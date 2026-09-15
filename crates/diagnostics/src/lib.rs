@@ -154,18 +154,6 @@ fn severity_name(severity: Severity) -> &'static str {
     }
 }
 
-/// A destination for node-anchored diagnostics emitted by parser adapters,
-/// loaders, and sema.
-pub trait DiagnosticSink {
-    fn emit(&mut self, diagnostic: Diagnostic);
-}
-
-impl<T: DiagnosticSink + ?Sized> DiagnosticSink for &mut T {
-    fn emit(&mut self, diagnostic: Diagnostic) {
-        (**self).emit(diagnostic);
-    }
-}
-
 /// In-memory collection of node-anchored diagnostics.
 ///
 /// `Diagnostics` is the compiler-facing collection. Source positions are
@@ -243,12 +231,6 @@ impl Diagnostics {
         self.items.sort_by(diagnostic_order);
         self.items.dedup();
         self.items
-    }
-}
-
-impl DiagnosticSink for Diagnostics {
-    fn emit(&mut self, diagnostic: Diagnostic) {
-        self.push(diagnostic);
     }
 }
 
@@ -354,20 +336,5 @@ mod tests {
             Diagnostic::new(Severity::Error, UNDEFINED_NAME, Label::new(None, "missing"));
 
         assert!(!diagnostic.position(&files).is_valid());
-    }
-
-    #[test]
-    fn sink_receives_diagnostics() {
-        fn report(sink: &mut dyn DiagnosticSink) {
-            sink.emit(Diagnostic::new(
-                Severity::Error,
-                UNDEFINED_NAME,
-                Label::new(None, "missing"),
-            ));
-        }
-
-        let mut diagnostics = Diagnostics::default();
-        report(&mut diagnostics);
-        assert_eq!(diagnostics.len(), 1);
     }
 }
