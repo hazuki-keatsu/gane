@@ -339,6 +339,12 @@ impl<'ast> Checker<'ast> {
     }
 
     fn collect_type_spec(&mut self, spec: &ast::TypeSpec, file: FileId) {
+        if spec.assign.is_valid() {
+            self.unsupported(Some(spec.node_id()), "type alias");
+        }
+        if spec.type_params.is_some() {
+            self.unsupported(Some(spec.node_id()), "type parameters");
+        }
         let name = self.symbols.intern(&spec.name.name);
         let named = self.types.alloc(TypeKind::Named {
             object: ObjectId::INVALID,
@@ -369,6 +375,9 @@ impl<'ast> Checker<'ast> {
     fn collect_func_decl(&mut self, decl: &ast::FuncDecl, file: FileId) {
         if decl.recv.is_some() {
             self.unsupported(Some(decl.node_id()), "method declaration");
+        }
+        if decl.typ.type_params.is_some() {
+            self.unsupported(Some(decl.node_id()), "type parameters");
         }
         if decl.body.is_none() {
             self.unsupported(Some(decl.node_id()), "function declaration without a body");
@@ -682,6 +691,13 @@ impl<'ast> Checker<'ast> {
         };
 
         for field in &field_list.list {
+            if field.tag.is_some() {
+                self.diagnostics.error(
+                    UNSUPPORTED_TYPE,
+                    Some(field.node_id()),
+                    "struct field tags are not supported by HIR V0",
+                );
+            }
             let Some(typ_expr) = &field.typ else {
                 self.diagnostics
                     .error(UNSUPPORTED_TYPE, None, "struct field has no type");
@@ -1327,6 +1343,9 @@ impl<'ast> Checker<'ast> {
     }
 
     fn check_call(&mut self, call: &ast::CallExpr, scope: ScopeId) -> TypeAndValue {
+        if call.ellipsis.is_valid() {
+            self.unsupported(Some(call.node_id()), "ellipsis call argument");
+        }
         let function = self.check_expr(&call.fun, scope);
         let TypeKind::Signature {
             params, results, ..
@@ -1927,6 +1946,25 @@ mod tests {
         })
     }
 
+    fn reports_error(
+        result: &AnalysisResult,
+        code: DiagnosticCode,
+        message: impl AsRef<str>,
+    ) -> bool {
+        result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == code && diagnostic.message() == message.as_ref())
+    }
+
+    fn reports_unsupported(result: &AnalysisResult, feature: &str) -> bool {
+        reports_error(
+            result,
+            UNSUPPORTED_FEATURE,
+            format!("{feature} is not supported by the MVP"),
+        )
+    }
+
     #[test]
     fn collects_top_level_declarations_before_function_bodies() {
         let result = analyze(
@@ -2087,12 +2125,7 @@ mod tests {
             "package main\nimport \"foreign\"\nfunc main() {}\n",
         )]);
 
-        assert!(
-            result
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE)
-        );
+        assert!(reports_unsupported(&result, "import"));
         let scope = result.file_scope(FileId::from_raw(1)).unwrap();
         assert!(result.scopes.scope(scope).unwrap().names.is_empty());
     }
@@ -2346,40 +2379,175 @@ mod tests {
     }
 
     #[test]
-    fn rejects_sends_labels_compound_assignments_and_non_call_statements() {
+    fn rejects_send_before_validating_its_operands() {
+        let result = analyze("package main\nfunc main() { var value int; value <- value }\n");
+
+        assert!(
+            reports_unsupported(&result, "send statement"),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn rejects_each_unsupported_control_flow_statement() {
+        for (feature, source) in [
+            ("range", "package main\nfunc main() { for range 1 {} }"),
+            ("switch", "package main\nfunc main() { switch {} }"),
+            (
+                "type switch",
+                "package main\nfunc main() { var value interface{}; switch value := value.(type) {} }",
+            ),
+            (
+                "select",
+                "package main\nfunc main() { select { default: } }",
+            ),
+            (
+                "defer statement",
+                "package main\nfunc call() {}\nfunc main() { defer call() }",
+            ),
+            (
+                "go statement",
+                "package main\nfunc call() {}\nfunc main() { go call() }",
+            ),
+        ] {
+            let result = analyze(source);
+            assert!(
+                reports_unsupported(&result, feature),
+                "{feature}: {:?}",
+                result.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_labeled_break_and_continue() {
+        for source in [
+            "package main\nfunc main() { outer: for { break outer } }",
+            "package main\nfunc main() { outer: for { continue outer } }",
+        ] {
+            let result = analyze(source);
+            assert!(
+                reports_unsupported(&result, "labeled branch statement"),
+                "{:?}",
+                result.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_short_declarations_compound_assignments_and_non_call_statements() {
         let result = analyze(
             "package main\n\
              func main() {\n\
                  var value int\n\
-                 value <- value\n\
-                 outer: for { value += 1; break outer }\n\
+                 value := 1\n\
+                 value += 1\n\
                  1\n\
              }\n",
         );
-        let unsupported = result
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE)
-            .count();
-        assert!(unsupported >= 5, "{:?}", result.diagnostics);
+
+        for feature in [
+            "short variable declaration",
+            "compound assignment",
+            "non-call expression statement",
+        ] {
+            assert!(
+                reports_unsupported(&result, feature),
+                "{feature}: {:?}",
+                result.diagnostics
+            );
+        }
     }
 
     #[test]
-    fn rejects_unsupported_value_expressions_with_a_diagnostic() {
+    fn rejects_three_clause_for_and_if_initializers() {
         let result = analyze(
             "package main\n\
              func main() {\n\
-                 \"text\"\n\
-                 func() {}\n\
+                 var value int\n\
+                 for value = 0; value < 1; value++ {}\n\
+                 if value = 0; value == 0 {}\n\
              }\n",
         );
-        assert!(result.has_errors());
-        assert!(
-            result
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE)
+
+        for feature in [
+            "three-clause for initializer",
+            "three-clause for post statement",
+            "if initializer",
+        ] {
+            assert!(
+                reports_unsupported(&result, feature),
+                "{feature}: {:?}",
+                result.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_each_unrepresentable_value_expression() {
+        for (feature, source) in [
+            (
+                "non-integer literal",
+                "package main\nfunc main() { _ = \"text\" }",
+            ),
+            (
+                "function literal",
+                "package main\nfunc main() { _ = func() {} }",
+            ),
+            (
+                "slice expression",
+                "package main\nfunc main() { var values [1]int; _ = values[:] }",
+            ),
+            (
+                "generic index list",
+                "package main\nfunc f() {}\nfunc main() { _ = f[int, int] }",
+            ),
+            (
+                "type assertion",
+                "package main\nfunc main() { var value int; _ = value.(int) }",
+            ),
+        ] {
+            let result = analyze(source);
+            assert!(
+                reports_unsupported(&result, feature),
+                "{feature}: {:?}",
+                result.diagnostics
+            );
+        }
+
+        let result = analyze(
+            "package main\ntype Pair struct { value int }\nfunc main() { _ = Pair{value: 1} }",
         );
+        for feature in ["key-value expression", "composite literal"] {
+            assert!(
+                reports_unsupported(&result, feature),
+                "{feature}: {:?}",
+                result.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_type_forms_without_hir_v0_representations() {
+        for source in [
+            "package main\nvar value []int\n",
+            "package main\nvar value func()\n",
+            "package main\nvar value interface{}\n",
+            "package main\nvar value map[int]int\n",
+            "package main\nvar value chan int\n",
+            "package main\ntype Inner struct { value int }\ntype Outer struct { Inner }\n",
+        ] {
+            let result = analyze(source);
+            assert!(
+                result
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == UNSUPPORTED_TYPE),
+                "{source:?}: {:?}",
+                result.diagnostics
+            );
+        }
     }
 
     #[test]
@@ -2392,20 +2560,32 @@ mod tests {
              func many() (int, int) { return 1, 2 }\n\
              func aggregate() Pair { var value Pair; return value }\n",
         );
-        assert!(
-            result
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == UNSUPPORTED_TYPE)
+        assert!(reports_error(
+            &result,
+            UNSUPPORTED_TYPE,
+            "empty structs are not supported by HIR V0"
+        ));
+        assert!(reports_error(
+            &result,
+            UNSUPPORTED_TYPE,
+            "zero-length arrays are not supported by HIR V0"
+        ));
+        assert!(reports_unsupported(&result, "multiple function results"));
+        assert!(reports_unsupported(&result, "aggregate function result"));
+    }
+
+    #[test]
+    fn rejects_aggregate_comparisons() {
+        let result = analyze(
+            "package main\n\
+             type Pair struct { value int }\n\
+             func main() { var left Pair; var right Pair; _ = left == right }\n",
         );
-        assert!(
-            result
-                .diagnostics
-                .iter()
-                .filter(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE)
-                .count()
-                >= 2
-        );
+
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == INVALID_OPERATION
+                && diagnostic.message() == "equality comparison requires a comparable operand"
+        }));
     }
 
     #[test]
@@ -2423,22 +2603,74 @@ mod tests {
     }
 
     #[test]
-    fn rejects_runtime_global_initializers() {
-        let result = analyze(
-            "package main\n\
-             var value int\n\
-             var pointer = &value\n\
-             var computed = getValue()\n\
-             func getValue() int { return 1 }\n",
+    fn rejects_unrepresentable_declarations_and_ellipsis_calls() {
+        for (feature, source) in [
+            (
+                "type alias",
+                "package main\ntype Alias = int\nfunc main() {}\n",
+            ),
+            (
+                "type parameters",
+                "package main\ntype Box[T int] int\nfunc main() {}\n",
+            ),
+            (
+                "type parameters",
+                "package main\nfunc identity[T int](value int) int { return value }\nfunc main() {}\n",
+            ),
+            (
+                "method declaration",
+                "package main\ntype Pair struct { value int }\nfunc (pair Pair) method() {}\nfunc main() {}\n",
+            ),
+            (
+                "local declaration",
+                "package main\nfunc main() { const value = 1 }\n",
+            ),
+            (
+                "ellipsis call argument",
+                "package main\nfunc take(values [1]int) {}\nfunc main() { var values [1]int; take(values...) }\n",
+            ),
+        ] {
+            let result = analyze(source);
+            assert!(
+                reports_unsupported(&result, feature),
+                "{feature}: {:?}",
+                result.diagnostics
+            );
+        }
+
+        let tagged = analyze(
+            "package main\ntype Tagged struct { value int `json:\"value\"` }\nfunc main() {}\n",
         );
-        assert!(
-            result
-                .diagnostics
-                .iter()
-                .filter(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE)
-                .count()
-                >= 2
-        );
+        assert!(reports_error(
+            &tagged,
+            UNSUPPORTED_TYPE,
+            "struct field tags are not supported by HIR V0"
+        ));
+    }
+
+    #[test]
+    fn rejects_unrepresentable_global_initializers() {
+        for (feature, source) in [
+            (
+                "global initializer requiring runtime evaluation",
+                "package main\nvar value int\nvar pointer = &value\nfunc main() {}\n",
+            ),
+            (
+                "global initializer requiring runtime evaluation",
+                "package main\nvar computed = getValue()\nfunc getValue() int { return 1 }\nfunc main() {}\n",
+            ),
+            (
+                "composite literal",
+                "package main\ntype Pair struct { value int }\nvar pair Pair = Pair{value: 1}\nfunc main() {}\n",
+            ),
+        ] {
+            let result = analyze(source);
+            assert!(
+                reports_unsupported(&result, feature),
+                "{feature}: {:?}",
+                result.diagnostics
+            );
+        }
     }
 
     #[test]
