@@ -18,7 +18,7 @@
   - builder：负责分配 ID、维护 value 定义位置、构造 block 参数
 此阶段不依赖 AST、不依赖 LLVM。优先保证“无法轻易构造错 IR”，但 verifier 仍必须把外部输入当作不可信。
 
-- [ ] 先写 verifier 与稳定 HIR printer
+- [x] 先写 verifier 与稳定 HIR printer
 这是最值得优先投入的一步。先覆盖设计文档第 14 节中的：
   - ID、类型、符号唯一性；
   - CFG 与 block 参数；

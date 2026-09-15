@@ -348,4 +348,19 @@ impl UnverifiedHirPackage {
     pub(crate) fn from_inner(package: HirPackage) -> Self {
         Self(package)
     }
+
+    pub(crate) fn inner(&self) -> &HirPackage {
+        &self.0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inner_mut(&mut self) -> &mut HirPackage {
+        &mut self.0
+    }
+}
+
+impl VerifiedHirPackage {
+    pub(crate) fn inner(&self) -> &HirPackage {
+        &self.0
+    }
 }

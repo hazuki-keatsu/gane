@@ -13,6 +13,7 @@ pub use crate::types::{
     HirType, HirTypeKind, LayoutError, LayoutProvider, SourceOrigin, Symbol, TypeArena,
     TypeArenaError,
 };
+pub use crate::verify::{HirDiagnostic, verify};
 
 #[cfg(test)]
 mod tests {
