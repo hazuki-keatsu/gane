@@ -17,6 +17,7 @@
 //! trees. In this port those fields are `Option`s and are simply skipped.
 
 use super::ast::*;
+use crate::token::{AstNodeId, Pos};
 
 /// A lightweight, reference-based view of any AST node, used to traverse
 /// trees uniformly (one variant per Go node struct, mirroring Go's `Node`
@@ -167,6 +168,126 @@ impl<'a> From<&'a Decl> for NodeRef<'a> {
 }
 
 impl NodeRef<'_> {
+    /// Returns the first source position belonging to the referenced node.
+    pub fn pos(&self) -> Pos {
+        match self {
+            NodeRef::Field(node) => node.pos(),
+            NodeRef::FieldList(node) => node.pos(),
+            NodeRef::BadExpr(node) => node.pos(),
+            NodeRef::Ident(node) => node.pos(),
+            NodeRef::Ellipsis(node) => node.pos(),
+            NodeRef::BasicLit(node) => node.pos(),
+            NodeRef::FuncLit(node) => node.pos(),
+            NodeRef::CompositeLit(node) => node.pos(),
+            NodeRef::ParenExpr(node) => node.pos(),
+            NodeRef::SelectorExpr(node) => node.pos(),
+            NodeRef::IndexExpr(node) => node.pos(),
+            NodeRef::IndexListExpr(node) => node.pos(),
+            NodeRef::SliceExpr(node) => node.pos(),
+            NodeRef::TypeAssertExpr(node) => node.pos(),
+            NodeRef::CallExpr(node) => node.pos(),
+            NodeRef::StarExpr(node) => node.pos(),
+            NodeRef::UnaryExpr(node) => node.pos(),
+            NodeRef::BinaryExpr(node) => node.pos(),
+            NodeRef::KeyValueExpr(node) => node.pos(),
+            NodeRef::ArrayType(node) => node.pos(),
+            NodeRef::StructType(node) => node.pos(),
+            NodeRef::FuncType(node) => node.pos(),
+            NodeRef::InterfaceType(node) => node.pos(),
+            NodeRef::MapType(node) => node.pos(),
+            NodeRef::ChanType(node) => node.pos(),
+            NodeRef::BadStmt(node) => node.pos(),
+            NodeRef::DeclStmt(node) => node.pos(),
+            NodeRef::EmptyStmt(node) => node.pos(),
+            NodeRef::LabeledStmt(node) => node.pos(),
+            NodeRef::ExprStmt(node) => node.pos(),
+            NodeRef::SendStmt(node) => node.pos(),
+            NodeRef::IncDecStmt(node) => node.pos(),
+            NodeRef::AssignStmt(node) => node.pos(),
+            NodeRef::GoStmt(node) => node.pos(),
+            NodeRef::DeferStmt(node) => node.pos(),
+            NodeRef::ReturnStmt(node) => node.pos(),
+            NodeRef::BranchStmt(node) => node.pos(),
+            NodeRef::BlockStmt(node) => node.pos(),
+            NodeRef::IfStmt(node) => node.pos(),
+            NodeRef::CaseClause(node) => node.pos(),
+            NodeRef::SwitchStmt(node) => node.pos(),
+            NodeRef::TypeSwitchStmt(node) => node.pos(),
+            NodeRef::CommClause(node) => node.pos(),
+            NodeRef::SelectStmt(node) => node.pos(),
+            NodeRef::ForStmt(node) => node.pos(),
+            NodeRef::RangeStmt(node) => node.pos(),
+            NodeRef::ImportSpec(node) => node.pos(),
+            NodeRef::ValueSpec(node) => node.pos(),
+            NodeRef::TypeSpec(node) => node.pos(),
+            NodeRef::BadDecl(node) => node.pos(),
+            NodeRef::GenDecl(node) => node.pos(),
+            NodeRef::FuncDecl(node) => node.pos(),
+            NodeRef::File(node) => node.pos(),
+            NodeRef::Package(node) => node.pos(),
+        }
+    }
+
+    /// Returns the parser-assigned identity of the referenced syntax node.
+    pub fn node_id(&self) -> AstNodeId {
+        match self {
+            NodeRef::Field(node) => node.node_id(),
+            NodeRef::FieldList(node) => node.node_id(),
+            NodeRef::BadExpr(node) => node.node_id(),
+            NodeRef::Ident(node) => node.node_id(),
+            NodeRef::Ellipsis(node) => node.node_id(),
+            NodeRef::BasicLit(node) => node.node_id(),
+            NodeRef::FuncLit(node) => node.node_id(),
+            NodeRef::CompositeLit(node) => node.node_id(),
+            NodeRef::ParenExpr(node) => node.node_id(),
+            NodeRef::SelectorExpr(node) => node.node_id(),
+            NodeRef::IndexExpr(node) => node.node_id(),
+            NodeRef::IndexListExpr(node) => node.node_id(),
+            NodeRef::SliceExpr(node) => node.node_id(),
+            NodeRef::TypeAssertExpr(node) => node.node_id(),
+            NodeRef::CallExpr(node) => node.node_id(),
+            NodeRef::StarExpr(node) => node.node_id(),
+            NodeRef::UnaryExpr(node) => node.node_id(),
+            NodeRef::BinaryExpr(node) => node.node_id(),
+            NodeRef::KeyValueExpr(node) => node.node_id(),
+            NodeRef::ArrayType(node) => node.node_id(),
+            NodeRef::StructType(node) => node.node_id(),
+            NodeRef::FuncType(node) => node.node_id(),
+            NodeRef::InterfaceType(node) => node.node_id(),
+            NodeRef::MapType(node) => node.node_id(),
+            NodeRef::ChanType(node) => node.node_id(),
+            NodeRef::BadStmt(node) => node.node_id(),
+            NodeRef::DeclStmt(node) => node.node_id(),
+            NodeRef::EmptyStmt(node) => node.node_id(),
+            NodeRef::LabeledStmt(node) => node.node_id(),
+            NodeRef::ExprStmt(node) => node.node_id(),
+            NodeRef::SendStmt(node) => node.node_id(),
+            NodeRef::IncDecStmt(node) => node.node_id(),
+            NodeRef::AssignStmt(node) => node.node_id(),
+            NodeRef::GoStmt(node) => node.node_id(),
+            NodeRef::DeferStmt(node) => node.node_id(),
+            NodeRef::ReturnStmt(node) => node.node_id(),
+            NodeRef::BranchStmt(node) => node.node_id(),
+            NodeRef::BlockStmt(node) => node.node_id(),
+            NodeRef::IfStmt(node) => node.node_id(),
+            NodeRef::CaseClause(node) => node.node_id(),
+            NodeRef::SwitchStmt(node) => node.node_id(),
+            NodeRef::TypeSwitchStmt(node) => node.node_id(),
+            NodeRef::CommClause(node) => node.node_id(),
+            NodeRef::SelectStmt(node) => node.node_id(),
+            NodeRef::ForStmt(node) => node.node_id(),
+            NodeRef::RangeStmt(node) => node.node_id(),
+            NodeRef::ImportSpec(node) => node.node_id(),
+            NodeRef::ValueSpec(node) => node.node_id(),
+            NodeRef::TypeSpec(node) => node.node_id(),
+            NodeRef::BadDecl(node) => node.node_id(),
+            NodeRef::GenDecl(node) => node.node_id(),
+            NodeRef::FuncDecl(node) => node.node_id(),
+            NodeRef::File(node) => node.node_id(),
+            NodeRef::Package(node) => node.node_id(),
+        }
+    }
+
     /// Returns the Go struct name of the referenced node (e.g. `"GenDecl"`,
     /// `"Ident"`), matching Go's `%T` on the pointer type minus the `*ast.`
     /// prefix.
@@ -592,7 +713,7 @@ pub fn preorder_stack<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::token::{File as TokenFile, FileSet, NO_POS, Pos, Token};
+    use crate::token::{AstNodeId, File as TokenFile, FileSet, NO_POS, Pos, Token};
     use std::rc::Rc;
 
     // ------------------------------------------------------------------
@@ -617,6 +738,7 @@ mod tests {
 
     fn ident_at(name: &str, name_pos: Pos) -> Ident {
         Ident {
+            node_id: AstNodeId::INVALID,
             name_pos,
             name: name.into(),
         }
@@ -628,6 +750,7 @@ mod tests {
 
     fn lit(value: &str) -> BasicLit {
         BasicLit {
+            node_id: AstNodeId::INVALID,
             value_pos: NO_POS,
             value_end: NO_POS,
             kind: Token::String,
@@ -637,13 +760,16 @@ mod tests {
 
     fn func_decl(name: &str, body: Vec<Stmt>) -> FuncDecl {
         FuncDecl {
+            node_id: AstNodeId::INVALID,
             commands: vec![],
             recv: None,
             name: ident(name),
             typ: FuncType {
+                node_id: AstNodeId::INVALID,
                 func: NO_POS,
                 type_params: None,
                 params: Some(FieldList {
+                    node_id: AstNodeId::INVALID,
                     opening: NO_POS,
                     list: vec![],
                     closing: NO_POS,
@@ -651,6 +777,7 @@ mod tests {
                 results: None,
             },
             body: Some(Box::new(BlockStmt {
+                node_id: AstNodeId::INVALID,
                 lbrace: NO_POS,
                 list: body,
                 rbrace: NO_POS,
@@ -660,7 +787,9 @@ mod tests {
 
     fn call_stmt(fun: &str, args: Vec<Expr>) -> Stmt {
         Stmt::ExprStmt(ExprStmt {
+            node_id: AstNodeId::INVALID,
             x: Expr::CallExpr(Box::new(CallExpr {
+                node_id: AstNodeId::INVALID,
                 fun: Expr::Ident(ident(fun)),
                 lparen: NO_POS,
                 args,
@@ -672,6 +801,7 @@ mod tests {
 
     fn preorder_file<'a>(decls: Vec<Decl>) -> File {
         File {
+            node_id: AstNodeId::INVALID,
             commands: vec![],
             package: NO_POS,
             name: ident("p"),
@@ -688,24 +818,30 @@ mod tests {
     #[test]
     fn test_preorder_break() {
         let f = preorder_file(vec![Decl::GenDecl(GenDecl {
+            node_id: AstNodeId::INVALID,
             commands: vec![],
             tok_pos: NO_POS,
             tok: Token::Type,
             lparen: NO_POS,
             specs: vec![Spec::TypeSpec(TypeSpec {
+                node_id: AstNodeId::INVALID,
                 commands: vec![],
                 name: ident("T"),
                 type_params: None,
                 assign: NO_POS,
                 typ: Expr::StructType(StructType {
+                    node_id: AstNodeId::INVALID,
                     struct_: NO_POS,
                     fields: Some(FieldList {
+                        node_id: AstNodeId::INVALID,
                         opening: NO_POS,
                         list: vec![Field {
+                            node_id: AstNodeId::INVALID,
                             commands: vec![],
                             names: vec![ident("F")],
                             typ: Some(Expr::Ident(ident("int"))),
                             tag: Some(BasicLit {
+                                node_id: AstNodeId::INVALID,
                                 value_pos: NO_POS,
                                 value_end: NO_POS,
                                 kind: Token::String,
@@ -811,11 +947,15 @@ mod tests {
 
         // var X = f(3.14)*2 + c
         let var_value = Expr::BinaryExpr(Box::new(BinaryExpr {
+            node_id: AstNodeId::INVALID,
             x: Expr::BinaryExpr(Box::new(BinaryExpr {
+                node_id: AstNodeId::INVALID,
                 x: Expr::CallExpr(Box::new(CallExpr {
+                    node_id: AstNodeId::INVALID,
                     fun: Expr::Ident(ident_at("f", at("f(3.14)"))),
                     lparen: at("(3.14)"),
                     args: vec![Expr::BasicLit(BasicLit {
+                        node_id: AstNodeId::INVALID,
                         value_pos: at("3.14"),
                         value_end: NO_POS,
                         kind: Token::Float,
@@ -827,6 +967,7 @@ mod tests {
                 op_pos: at("*2"),
                 op: Token::Mul,
                 y: Expr::BasicLit(BasicLit {
+                    node_id: AstNodeId::INVALID,
                     value_pos: at("*2") + 1,
                     value_end: NO_POS,
                     kind: Token::Int,
@@ -839,20 +980,24 @@ mod tests {
         }));
 
         let f = File {
+            node_id: AstNodeId::INVALID,
             commands: vec![],
             package: at("package"),
             name: ident_at("p", at("package p") + 8),
             decls: vec![
                 Decl::GenDecl(GenDecl {
+                    node_id: AstNodeId::INVALID,
                     commands: vec![],
                     tok_pos: at("const"),
                     tok: Token::Const,
                     lparen: NO_POS,
                     specs: vec![Spec::ValueSpec(ValueSpec {
+                        node_id: AstNodeId::INVALID,
                         commands: vec![],
                         names: vec![ident_at("c", at("const c") + 6)],
                         typ: None,
                         values: vec![Expr::BasicLit(BasicLit {
+                            node_id: AstNodeId::INVALID,
                             value_pos: at("1.0"),
                             value_end: NO_POS,
                             kind: Token::Float,
@@ -862,11 +1007,13 @@ mod tests {
                     rparen: NO_POS,
                 }),
                 Decl::GenDecl(GenDecl {
+                    node_id: AstNodeId::INVALID,
                     commands: vec![],
                     tok_pos: at("var"),
                     tok: Token::Var,
                     lparen: NO_POS,
                     specs: vec![Spec::ValueSpec(ValueSpec {
+                        node_id: AstNodeId::INVALID,
                         commands: vec![],
                         names: vec![ident_at("X", at("var X") + 4)],
                         typ: None,
@@ -923,19 +1070,24 @@ mod tests {
         let at = |pat: &str| file.pos(idx(src, pat));
 
         let f = File {
+            node_id: AstNodeId::INVALID,
             commands: vec![],
             package: at("package"),
             name: ident_at("p", at("package p") + 8),
             decls: vec![Decl::FuncDecl(FuncDecl {
+                node_id: AstNodeId::INVALID,
                 commands: vec![],
                 recv: None,
                 name: ident_at("f", at("f(x, y")),
                 typ: FuncType {
+                    node_id: AstNodeId::INVALID,
                     func: at("func f"),
                     type_params: None,
                     params: Some(FieldList {
+                        node_id: AstNodeId::INVALID,
                         opening: at("(x"),
                         list: vec![Field {
+                            node_id: AstNodeId::INVALID,
                             commands: vec![],
                             names: vec![
                                 ident_at("x", at("f(x") + 2),
@@ -949,6 +1101,7 @@ mod tests {
                     results: None,
                 },
                 body: Some(Box::new(BlockStmt {
+                    node_id: AstNodeId::INVALID,
                     lbrace: at("{"),
                     list: vec![call_stmt_binary(&fset, &file, src)],
                     rbrace: at("}"),
@@ -979,10 +1132,13 @@ mod tests {
     fn call_stmt_binary(_fset: &FileSet, file: &TokenFile, src: &str) -> Stmt {
         let at = |pat: &str| file.pos(idx(src, pat));
         Stmt::ExprStmt(ExprStmt {
+            node_id: AstNodeId::INVALID,
             x: Expr::CallExpr(Box::new(CallExpr {
+                node_id: AstNodeId::INVALID,
                 fun: Expr::Ident(ident_at("print", at("print("))),
                 lparen: at("print(") + 5,
                 args: vec![Expr::BinaryExpr(Box::new(BinaryExpr {
+                    node_id: AstNodeId::INVALID,
                     x: Expr::Ident(ident_at("x", at("(x + y)") + 1)),
                     op_pos: at("+ y"),
                     op: Token::Add,

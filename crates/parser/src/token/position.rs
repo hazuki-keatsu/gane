@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 // If debug is set, invalid offset and position values cause a panic
 const DEBUG: bool = false;
@@ -92,6 +93,39 @@ pub struct Pos(i64);
 /// smaller than any other `Pos` value. The corresponding [`Position`] value
 /// for `NO_POS` is the zero value for [`Position`].
 pub const NO_POS: Pos = Pos(0);
+
+/// Stable identity for one concrete syntax node produced by a [`FileSet`].
+///
+/// IDs are intentionally meaningful only together with the parse session that
+/// created them. They identify syntax-tree nodes; source positions remain the
+/// mechanism for locating text in diagnostics when they are emitted.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct AstNodeId(u64);
+
+impl AstNodeId {
+    /// The reserved identity for a node that has not been attached to a parse
+    /// session. Parsed ASTs never contain this value.
+    pub const INVALID: Self = Self(0);
+
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+
+    /// Returns the parse-session component, if this is a valid identity.
+    pub const fn parse_session(self) -> Option<u32> {
+        if self.0 == 0 {
+            None
+        } else {
+            Some((self.0 >> 32) as u32)
+        }
+    }
+}
+
+static NEXT_PARSE_SESSION: AtomicU32 = AtomicU32::new(1);
+
+fn next_parse_session() -> u32 {
+    NEXT_PARSE_SESSION.fetch_add(1, Ordering::Relaxed)
+}
 
 impl Pos {
     /// Reports whether the position is valid.
@@ -461,20 +495,43 @@ impl File {
 ///
 /// Unlike Go, this port is not thread-safe: files are held as `Rc<File>`, and
 /// `iterate` must not mutate the file set from its callback.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FileSet {
     base: i64,                       // base offset for the next file
     files: BTreeMap<i64, Rc<File>>,  // files in ascending base order (keys are file base offsets)
     last: RefCell<Option<Rc<File>>>, // cache of last file looked up
+    session: u32,
+    next_node: u32,
+}
+
+impl Default for FileSet {
+    fn default() -> Self {
+        Self {
+            base: 1,
+            files: BTreeMap::new(),
+            last: RefCell::new(None),
+            session: next_parse_session(),
+            next_node: 0,
+        }
+    }
 }
 
 impl FileSet {
     /// Creates a new file set.
     pub fn new() -> FileSet {
-        FileSet {
-            base: 1, // 0 == NO_POS
-            ..FileSet::default()
-        }
+        FileSet::default()
+    }
+
+    /// Allocates an AST node identity.
+    /// This is crate-private because AST identities must be assigned by the
+    /// parser or a controlled AST builder, never guessed by callers.
+    pub(crate) fn alloc_node(&mut self) -> AstNodeId {
+        self.next_node = self
+            .next_node
+            .checked_add(1)
+            .expect("AST node identity overflow");
+        let id = AstNodeId(((self.session as u64) << 32) | self.next_node as u64);
+        id
     }
 
     /// Returns the minimum base offset that must be provided to

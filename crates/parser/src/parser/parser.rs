@@ -21,7 +21,7 @@ use std::rc::Rc;
 use crate::ast::File as AstFile;
 use crate::ast::*;
 use crate::scanner::{ErrorHandler, ErrorList, SCAN_COMMENTS, Scanner};
-use crate::token::{File, NO_POS, Pos, Token};
+use crate::token::{AstNodeId, File, NO_POS, Pos, Token};
 
 use super::interface::{ALL_ERRORS, DECLARATION_ERRORS, IMPORTS_ONLY, Mode, PACKAGE_CLAUSE_ONLY};
 
@@ -391,6 +391,7 @@ impl<'src> Parser<'src> {
             self.expect(Token::Ident); // use expect() error handling
         }
         Ident {
+            node_id: AstNodeId::INVALID,
             name_pos: pos,
             name,
         }
@@ -423,6 +424,7 @@ impl<'src> Parser<'src> {
             self.error_expected(pos, "type");
             self.advance(expr_end);
             return Expr::BadExpr(BadExpr {
+                node_id: AstNodeId::INVALID,
                 from: pos,
                 to: self.pos,
             });
@@ -451,6 +453,7 @@ impl<'src> Parser<'src> {
             self.next();
             let sel = self.parse_ident();
             return Expr::SelectorExpr(Box::new(SelectorExpr {
+                node_id: AstNodeId::INVALID,
                 x: Expr::Ident(ident),
                 sel,
             }));
@@ -470,6 +473,7 @@ impl<'src> Parser<'src> {
                 let len = if self.tok == Token::Ellipsis {
                     // always permit ellipsis for more fault-tolerant parsing
                     let ellipsis = Ellipsis {
+                        node_id: AstNodeId::INVALID,
                         ellipsis: self.pos,
                         elt: None,
                     };
@@ -493,7 +497,12 @@ impl<'src> Parser<'src> {
         }
         self.expect(Token::RBrack);
         let elt = self.parse_type();
-        Expr::ArrayType(Box::new(ArrayType { lbrack, len, elt }))
+        Expr::ArrayType(Box::new(ArrayType {
+            node_id: AstNodeId::INVALID,
+            lbrack,
+            len,
+            elt,
+        }))
     }
 
     fn parse_array_field_or_type_instance(&mut self, x: Ident) -> (Option<Ident>, Expr) {
@@ -522,6 +531,7 @@ impl<'src> Parser<'src> {
             return (
                 Some(x),
                 Expr::ArrayType(Box::new(ArrayType {
+                    node_id: AstNodeId::INVALID,
                     lbrack,
                     len: None,
                     elt,
@@ -541,6 +551,7 @@ impl<'src> Parser<'src> {
                 return (
                     Some(x),
                     Expr::ArrayType(Box::new(ArrayType {
+                        node_id: AstNodeId::INVALID,
                         lbrack,
                         len: Some(args.into_iter().next().unwrap()),
                         elt,
@@ -608,6 +619,7 @@ impl<'src> Parser<'src> {
                     typ = Some(self.parse_qualified_ident(None));
                 }
                 typ = Some(Expr::StarExpr(Box::new(StarExpr {
+                    node_id: AstNodeId::INVALID,
                     star,
                     x: typ.unwrap(),
                 })));
@@ -620,6 +632,7 @@ impl<'src> Parser<'src> {
                     let star = self.pos;
                     self.next();
                     typ = Some(Expr::StarExpr(Box::new(StarExpr {
+                        node_id: AstNodeId::INVALID,
                         star,
                         x: self.parse_qualified_ident(None),
                     })));
@@ -637,6 +650,7 @@ impl<'src> Parser<'src> {
                 self.error_expected(pos, "field name or embedded type");
                 self.advance(expr_end);
                 typ = Some(Expr::BadExpr(BadExpr {
+                    node_id: AstNodeId::INVALID,
                     from: pos,
                     to: self.pos,
                 }));
@@ -646,6 +660,7 @@ impl<'src> Parser<'src> {
         let mut tag = None;
         if self.tok == Token::String {
             tag = Some(BasicLit {
+                node_id: AstNodeId::INVALID,
                 value_pos: self.pos,
                 value_end: self.end(),
                 kind: self.tok,
@@ -657,6 +672,7 @@ impl<'src> Parser<'src> {
         self.expect_semi();
 
         Field {
+            node_id: AstNodeId::INVALID,
             commands,
             names,
             typ,
@@ -677,8 +693,10 @@ impl<'src> Parser<'src> {
         let rbrace = self.expect(Token::RBrace);
 
         Expr::StructType(StructType {
+            node_id: AstNodeId::INVALID,
             struct_: pos,
             fields: Some(FieldList {
+                node_id: AstNodeId::INVALID,
                 opening: lbrace,
                 list,
                 closing: rbrace,
@@ -690,13 +708,18 @@ impl<'src> Parser<'src> {
     fn parse_pointer_type(&mut self) -> Expr {
         let star = self.expect(Token::Mul);
         let base = self.parse_type();
-        Expr::StarExpr(Box::new(StarExpr { star, x: base }))
+        Expr::StarExpr(Box::new(StarExpr {
+            node_id: AstNodeId::INVALID,
+            star,
+            x: base,
+        }))
     }
 
     fn parse_dots_type(&mut self) -> Expr {
         let pos = self.expect(Token::Ellipsis);
         let elt = self.parse_type();
         Expr::Ellipsis(Box::new(Ellipsis {
+            node_id: AstNodeId::INVALID,
             ellipsis: pos,
             elt: Some(elt),
         }))
@@ -944,6 +967,7 @@ impl<'src> Parser<'src> {
                     err_pos = Some(epos);
                     keys[i] = i;
                     list[i].typ = Some(Expr::BadExpr(BadExpr {
+                        node_id: AstNodeId::INVALID,
                         from: epos,
                         to: self.pos,
                     }));
@@ -1003,7 +1027,11 @@ impl<'src> Parser<'src> {
                         }
                     }
                     // Use T instead of invalid ...T.
-                    f.typ = Some(Expr::BadExpr(BadExpr { from, to }));
+                    f.typ = Some(Expr::BadExpr(BadExpr {
+                        node_id: AstNodeId::INVALID,
+                        from,
+                        to,
+                    }));
                 }
             }
         }
@@ -1016,6 +1044,7 @@ impl<'src> Parser<'src> {
             for par in &list {
                 assert(par.typ.is_some(), "nil type in unnamed parameter list");
                 params.push(Field {
+                    node_id: AstNodeId::INVALID,
                     commands: par.commands.clone(),
                     names: Vec::new(),
                     typ: par.typ.clone(),
@@ -1041,6 +1070,7 @@ impl<'src> Parser<'src> {
                     let typ = list[k].typ.clone();
                     assert(typ.is_some(), "nil type in named parameter list");
                     params.push(Field {
+                        node_id: AstNodeId::INVALID,
                         commands: list[k].commands.clone(),
                         names: std::mem::take(&mut names),
                         typ,
@@ -1057,6 +1087,7 @@ impl<'src> Parser<'src> {
             let typ = list[k].typ.clone();
             assert(typ.is_some(), "nil type in named parameter list");
             params.push(Field {
+                node_id: AstNodeId::INVALID,
                 commands: list[k].commands.clone(),
                 names,
                 typ,
@@ -1080,6 +1111,7 @@ impl<'src> Parser<'src> {
         }
 
         Some(FieldList {
+            node_id: AstNodeId::INVALID,
             opening: lbrack,
             list,
             closing: rbrack,
@@ -1095,6 +1127,7 @@ impl<'src> Parser<'src> {
             }
             let rparen = self.expect(Token::RParen);
             return Some(FieldList {
+                node_id: AstNodeId::INVALID,
                 opening: lparen,
                 list,
                 closing: rparen,
@@ -1105,12 +1138,14 @@ impl<'src> Parser<'src> {
         if let Some(typ) = self.try_ident_or_type() {
             let mut list = Vec::with_capacity(1);
             list.push(Field {
+                node_id: AstNodeId::INVALID,
                 commands,
                 names: Vec::new(),
                 typ: Some(typ),
                 tag: None,
             });
             return Some(FieldList {
+                node_id: AstNodeId::INVALID,
                 opening: NO_POS,
                 list,
                 closing: NO_POS,
@@ -1136,6 +1171,7 @@ impl<'src> Parser<'src> {
         let results = self.parse_parameters(true);
 
         FuncType {
+            node_id: AstNodeId::INVALID,
             func: pos,
             type_params: None,
             params,
@@ -1179,6 +1215,7 @@ impl<'src> Parser<'src> {
                             let results = self.parse_parameters(true);
                             idents = vec![ident];
                             Expr::FuncType(FuncType {
+                                node_id: AstNodeId::INVALID,
                                 func: NO_POS,
                                 type_params: None,
                                 params,
@@ -1198,6 +1235,7 @@ impl<'src> Parser<'src> {
                     let results = self.parse_parameters(true);
                     idents = vec![ident];
                     Expr::FuncType(FuncType {
+                        node_id: AstNodeId::INVALID,
                         func: NO_POS,
                         type_params: None,
                         params,
@@ -1224,6 +1262,7 @@ impl<'src> Parser<'src> {
         // joined with additional type specs using '|'. The TODO(rfindley)
         // comments about comment handling are obsolete in this port.)
         Field {
+            node_id: AstNodeId::INVALID,
             commands,
             names: idents,
             typ: Some(typ),
@@ -1261,7 +1300,13 @@ impl<'src> Parser<'src> {
             let op = Token::Or;
             self.next();
             let y = self.embedded_term();
-            x = Expr::BinaryExpr(Box::new(BinaryExpr { x, op_pos, op, y }));
+            x = Expr::BinaryExpr(Box::new(BinaryExpr {
+                node_id: AstNodeId::INVALID,
+                x,
+                op_pos,
+                op,
+                y,
+            }));
         }
         x
     }
@@ -1272,7 +1317,12 @@ impl<'src> Parser<'src> {
             let op = Token::Tilde;
             self.next();
             let x = self.parse_type();
-            return Expr::UnaryExpr(Box::new(UnaryExpr { op_pos, op, x }));
+            return Expr::UnaryExpr(Box::new(UnaryExpr {
+                node_id: AstNodeId::INVALID,
+                op_pos,
+                op,
+                x,
+            }));
         }
 
         let t = self.try_ident_or_type();
@@ -1283,6 +1333,7 @@ impl<'src> Parser<'src> {
                 self.error_expected(pos, "~ term or type");
                 self.advance(expr_end);
                 Expr::BadExpr(BadExpr {
+                    node_id: AstNodeId::INVALID,
                     from: pos,
                     to: self.pos,
                 })
@@ -1312,6 +1363,7 @@ impl<'src> Parser<'src> {
                     let typ = self.embedded_elem(None);
                     self.expect_semi();
                     list.push(Field {
+                        node_id: AstNodeId::INVALID,
                         commands,
                         names: Vec::new(),
                         typ: Some(typ),
@@ -1326,6 +1378,7 @@ impl<'src> Parser<'src> {
                             let typ = self.embedded_elem(Some(t));
                             self.expect_semi();
                             list.push(Field {
+                                node_id: AstNodeId::INVALID,
                                 commands,
                                 names: Vec::new(),
                                 typ: Some(typ),
@@ -1343,8 +1396,10 @@ impl<'src> Parser<'src> {
         let rbrace = self.expect(Token::RBrace);
 
         Expr::InterfaceType(InterfaceType {
+            node_id: AstNodeId::INVALID,
             interface: pos,
             methods: Some(FieldList {
+                node_id: AstNodeId::INVALID,
                 opening: lbrace,
                 list,
                 closing: rbrace,
@@ -1361,6 +1416,7 @@ impl<'src> Parser<'src> {
         let value = self.parse_type();
 
         Expr::MapType(Box::new(MapType {
+            node_id: AstNodeId::INVALID,
             map: pos,
             key,
             value,
@@ -1386,6 +1442,7 @@ impl<'src> Parser<'src> {
         let value = self.parse_type();
 
         Expr::ChanType(Box::new(ChanType {
+            node_id: AstNodeId::INVALID,
             begin: pos,
             arrow,
             dir,
@@ -1411,9 +1468,11 @@ impl<'src> Parser<'src> {
         if list.is_empty() {
             self.error_expected(closing, "type argument list");
             return Expr::IndexExpr(Box::new(IndexExpr {
+                node_id: AstNodeId::INVALID,
                 x: typ,
                 lbrack: opening,
                 index: Expr::BadExpr(BadExpr {
+                    node_id: AstNodeId::INVALID,
                     from: opening + 1,
                     to: closing,
                 }),
@@ -1451,6 +1510,7 @@ impl<'src> Parser<'src> {
                 let typ = self.parse_type();
                 let rparen = self.expect(Token::RParen);
                 Some(Expr::ParenExpr(Box::new(ParenExpr {
+                    node_id: AstNodeId::INVALID,
                     lparen,
                     x: typ,
                     rparen,
@@ -1490,6 +1550,7 @@ impl<'src> Parser<'src> {
         let rbrace = self.expect2(Token::RBrace);
 
         BlockStmt {
+            node_id: AstNodeId::INVALID,
             lbrace,
             list,
             rbrace,
@@ -1502,6 +1563,7 @@ impl<'src> Parser<'src> {
         let rbrace = self.expect2(Token::RBrace);
 
         BlockStmt {
+            node_id: AstNodeId::INVALID,
             lbrace,
             list,
             rbrace,
@@ -1523,6 +1585,7 @@ impl<'src> Parser<'src> {
         self.expr_lev -= 1;
 
         Expr::FuncLit(FuncLit {
+            node_id: AstNodeId::INVALID,
             typ: Box::new(typ),
             body: Box::new(body),
         })
@@ -1536,6 +1599,7 @@ impl<'src> Parser<'src> {
 
             Token::Int | Token::Float | Token::Imag | Token::Char | Token::String => {
                 let x = BasicLit {
+                    node_id: AstNodeId::INVALID,
                     value_pos: self.pos,
                     value_end: self.end(),
                     kind: self.tok,
@@ -1554,7 +1618,12 @@ impl<'src> Parser<'src> {
                 let x = self.parse_rhs(); // types may be parenthesized: (some type)
                 self.expr_lev -= 1;
                 let rparen = self.expect(Token::RParen);
-                return Expr::ParenExpr(Box::new(ParenExpr { lparen, x, rparen }));
+                return Expr::ParenExpr(Box::new(ParenExpr {
+                    node_id: AstNodeId::INVALID,
+                    lparen,
+                    x,
+                    rparen,
+                }));
             }
 
             Token::Func => return self.parse_func_type_or_lit(),
@@ -1573,6 +1642,7 @@ impl<'src> Parser<'src> {
         self.error_expected(pos, "operand");
         self.advance(stmt_start);
         Expr::BadExpr(BadExpr {
+            node_id: AstNodeId::INVALID,
             from: pos,
             to: self.pos,
         })
@@ -1580,7 +1650,11 @@ impl<'src> Parser<'src> {
 
     fn parse_selector(&mut self, x: Expr) -> Expr {
         let sel = self.parse_ident();
-        Expr::SelectorExpr(Box::new(SelectorExpr { x, sel }))
+        Expr::SelectorExpr(Box::new(SelectorExpr {
+            node_id: AstNodeId::INVALID,
+            x,
+            sel,
+        }))
     }
 
     fn parse_type_assertion(&mut self, x: Expr) -> Expr {
@@ -1596,6 +1670,7 @@ impl<'src> Parser<'src> {
         let rparen = self.expect(Token::RParen);
 
         Expr::TypeAssertExpr(Box::new(TypeAssertExpr {
+            node_id: AstNodeId::INVALID,
             x,
             lparen,
             typ,
@@ -1612,9 +1687,11 @@ impl<'src> Parser<'src> {
             let rbrack = self.pos;
             self.next();
             return Expr::IndexExpr(Box::new(IndexExpr {
+                node_id: AstNodeId::INVALID,
                 x,
                 lbrack,
                 index: Expr::BadExpr(BadExpr {
+                    node_id: AstNodeId::INVALID,
                     from: rbrack,
                     to: rbrack,
                 }),
@@ -1674,6 +1751,7 @@ impl<'src> Parser<'src> {
                         "middle index required in 3-index slice".to_string(),
                     );
                     index[1] = Some(Expr::BadExpr(BadExpr {
+                        node_id: AstNodeId::INVALID,
                         from: colons[0] + 1,
                         to: colons[1],
                     }));
@@ -1684,12 +1762,14 @@ impl<'src> Parser<'src> {
                         "final index required in 3-index slice".to_string(),
                     );
                     index[2] = Some(Expr::BadExpr(BadExpr {
+                        node_id: AstNodeId::INVALID,
                         from: colons[1] + 1,
                         to: rbrack,
                     }));
                 }
             }
             return Expr::SliceExpr(Box::new(SliceExpr {
+                node_id: AstNodeId::INVALID,
                 x,
                 lbrack,
                 low: index[0].take(),
@@ -1703,6 +1783,7 @@ impl<'src> Parser<'src> {
         if args.is_empty() {
             // index expression
             return Expr::IndexExpr(Box::new(IndexExpr {
+                node_id: AstNodeId::INVALID,
                 x,
                 lbrack,
                 index: index[0].take().unwrap(),
@@ -1734,6 +1815,7 @@ impl<'src> Parser<'src> {
         let rparen = self.expect_closing(Token::RParen, "argument list");
 
         Expr::CallExpr(Box::new(CallExpr {
+            node_id: AstNodeId::INVALID,
             fun,
             lparen,
             args: list,
@@ -1749,6 +1831,7 @@ impl<'src> Parser<'src> {
             self.next();
             let value = self.parse_expr();
             return Expr::KeyValueExpr(Box::new(KeyValueExpr {
+                node_id: AstNodeId::INVALID,
                 key: x,
                 colon,
                 value,
@@ -1781,6 +1864,7 @@ impl<'src> Parser<'src> {
         self.expr_lev -= 1;
         let rbrace = self.expect_closing(Token::RBrace, "composite literal");
         Expr::CompositeLit(Box::new(CompositeLit {
+            node_id: AstNodeId::INVALID,
             typ,
             lbrace,
             elts,
@@ -1822,10 +1906,15 @@ impl<'src> Parser<'src> {
                                 self.next(); // make progress
                             }
                             let sel = Ident {
+                                node_id: AstNodeId::INVALID,
                                 name_pos: pos,
                                 name: "_".to_string(),
                             };
-                            x = Expr::SelectorExpr(Box::new(SelectorExpr { x, sel }));
+                            x = Expr::SelectorExpr(Box::new(SelectorExpr {
+                                node_id: AstNodeId::INVALID,
+                                x,
+                                sel,
+                            }));
                         }
                     }
                 }
@@ -1880,7 +1969,12 @@ impl<'src> Parser<'src> {
                 let (pos, op) = (self.pos, self.tok);
                 self.next();
                 let x = self.parse_unary_expr();
-                return Expr::UnaryExpr(Box::new(UnaryExpr { op_pos: pos, op, x }));
+                return Expr::UnaryExpr(Box::new(UnaryExpr {
+                    node_id: AstNodeId::INVALID,
+                    op_pos: pos,
+                    op,
+                    x,
+                }));
             }
 
             Token::Arrow => {
@@ -1925,6 +2019,7 @@ impl<'src> Parser<'src> {
                     }
                     // <-(expr)
                     x => Expr::UnaryExpr(Box::new(UnaryExpr {
+                        node_id: AstNodeId::INVALID,
                         op_pos: arrow,
                         op: Token::Arrow,
                         x,
@@ -1937,7 +2032,11 @@ impl<'src> Parser<'src> {
                 let pos = self.pos;
                 self.next();
                 let x = self.parse_unary_expr();
-                return Expr::StarExpr(Box::new(StarExpr { star: pos, x }));
+                return Expr::StarExpr(Box::new(StarExpr {
+                    node_id: AstNodeId::INVALID,
+                    star: pos,
+                    x,
+                }));
             }
 
             _ => self.parse_primary_expr(None),
@@ -1978,6 +2077,7 @@ impl<'src> Parser<'src> {
             let pos = self.expect(op);
             let y = self.parse_binary_expr(None, oprec + 1);
             x = Expr::BinaryExpr(Box::new(BinaryExpr {
+                node_id: AstNodeId::INVALID,
                 x,
                 op_pos: pos,
                 op,
@@ -2113,12 +2213,14 @@ fn pack_index_expr(x: Expr, lbrack: Pos, exprs: Vec<Expr>, rbrack: Pos) -> Expr 
     match exprs.len() {
         0 => panic!("internal error: packIndexExpr with empty expr slice"),
         1 => Expr::IndexExpr(Box::new(IndexExpr {
+            node_id: AstNodeId::INVALID,
             x,
             lbrack,
             index: exprs.into_iter().next().unwrap(),
             rbrack,
         })),
         _ => Expr::IndexListExpr(Box::new(IndexListExpr {
+            node_id: AstNodeId::INVALID,
             x,
             lbrack,
             indices: exprs,
@@ -2211,6 +2313,7 @@ impl<'src> Parser<'src> {
                     let x = self.parse_rhs();
                     (
                         vec![Expr::UnaryExpr(Box::new(UnaryExpr {
+                            node_id: AstNodeId::INVALID,
                             op_pos: pos,
                             op: Token::Range,
                             x,
@@ -2222,6 +2325,7 @@ impl<'src> Parser<'src> {
                 };
                 return (
                     Stmt::AssignStmt(AssignStmt {
+                        node_id: AstNodeId::INVALID,
                         lhs: x,
                         tok_pos: pos,
                         tok,
@@ -2251,7 +2355,12 @@ impl<'src> Parser<'src> {
                         // function.
                         let label = label.clone();
                         let stmt = self.parse_stmt();
-                        let s = LabeledStmt { label, colon, stmt };
+                        let s = LabeledStmt {
+                            node_id: AstNodeId::INVALID,
+                            label,
+                            colon,
+                            stmt,
+                        };
                         return (Stmt::LabeledStmt(Box::new(s)), false);
                     }
                 }
@@ -2265,6 +2374,7 @@ impl<'src> Parser<'src> {
                 let from = x[0].pos();
                 return (
                     Stmt::BadStmt(BadStmt {
+                        node_id: AstNodeId::INVALID,
                         from,
                         to: colon + 1,
                     }),
@@ -2279,6 +2389,7 @@ impl<'src> Parser<'src> {
                 let chan_ = x.remove(0);
                 return (
                     Stmt::SendStmt(SendStmt {
+                        node_id: AstNodeId::INVALID,
                         chan_,
                         arrow,
                         value: y,
@@ -2293,6 +2404,7 @@ impl<'src> Parser<'src> {
                 let x0 = x.remove(0);
                 return (
                     Stmt::IncDecStmt(IncDecStmt {
+                        node_id: AstNodeId::INVALID,
                         x: x0,
                         tok_pos,
                         tok,
@@ -2305,7 +2417,13 @@ impl<'src> Parser<'src> {
 
         // expression
         let x0 = x.remove(0);
-        (Stmt::ExprStmt(ExprStmt { x: x0 }), false)
+        (
+            Stmt::ExprStmt(ExprStmt {
+                node_id: AstNodeId::INVALID,
+                x: x0,
+            }),
+            false,
+        )
     }
 
     fn parse_call_expr(&mut self, call_type: &str) -> Option<CallExpr> {
@@ -2335,10 +2453,12 @@ impl<'src> Parser<'src> {
         self.expect_semi();
         match call {
             None => Stmt::BadStmt(BadStmt {
+                node_id: AstNodeId::INVALID,
                 from: pos,
                 to: pos + 2,
             }), // len("go")
             Some(call) => Stmt::GoStmt(GoStmt {
+                node_id: AstNodeId::INVALID,
                 go_: pos,
                 call: Box::new(call),
             }),
@@ -2351,10 +2471,12 @@ impl<'src> Parser<'src> {
         self.expect_semi();
         match call {
             None => Stmt::BadStmt(BadStmt {
+                node_id: AstNodeId::INVALID,
                 from: pos,
                 to: pos + 5,
             }), // len("defer")
             Some(call) => Stmt::DeferStmt(DeferStmt {
+                node_id: AstNodeId::INVALID,
                 defer_: pos,
                 call: Box::new(call),
             }),
@@ -2371,6 +2493,7 @@ impl<'src> Parser<'src> {
         self.expect_semi();
 
         Stmt::ReturnStmt(ReturnStmt {
+            node_id: AstNodeId::INVALID,
             return_: pos,
             results: x,
         })
@@ -2387,6 +2510,7 @@ impl<'src> Parser<'src> {
         self.expect_semi();
 
         Stmt::BranchStmt(BranchStmt {
+            node_id: AstNodeId::INVALID,
             tok_pos: pos,
             tok,
             label,
@@ -2411,6 +2535,7 @@ impl<'src> Parser<'src> {
         );
         self.error(s.pos(), msg);
         Some(Expr::BadExpr(BadExpr {
+            node_id: AstNodeId::INVALID,
             from: s.pos(),
             to: s.end(),
         }))
@@ -2425,6 +2550,7 @@ impl<'src> Parser<'src> {
             return (
                 None,
                 Expr::BadExpr(BadExpr {
+                    node_id: AstNodeId::INVALID,
                     from: self.pos,
                     to: self.pos,
                 }),
@@ -2487,6 +2613,7 @@ impl<'src> Parser<'src> {
         let cond = match cond {
             Some(cond) => cond,
             None => Expr::BadExpr(BadExpr {
+                node_id: AstNodeId::INVALID,
                 from: self.pos,
                 to: self.pos,
             }),
@@ -2516,6 +2643,7 @@ impl<'src> Parser<'src> {
                 _ => {
                     self.error_expected(self.pos, "if statement or block");
                     else_ = Some(Stmt::BadStmt(BadStmt {
+                        node_id: AstNodeId::INVALID,
                         from: self.pos,
                         to: self.pos,
                     }));
@@ -2527,6 +2655,7 @@ impl<'src> Parser<'src> {
         }
 
         Stmt::IfStmt(Box::new(IfStmt {
+            node_id: AstNodeId::INVALID,
             if_: pos,
             init,
             cond,
@@ -2549,6 +2678,7 @@ impl<'src> Parser<'src> {
         let body = self.parse_stmt_list();
 
         Stmt::CaseClause(CaseClause {
+            node_id: AstNodeId::INVALID,
             case: pos,
             list,
             colon,
@@ -2640,6 +2770,7 @@ impl<'src> Parser<'src> {
         let rbrace = self.expect(Token::RBrace);
         self.expect_semi();
         let body = BlockStmt {
+            node_id: AstNodeId::INVALID,
             lbrace,
             list,
             rbrace,
@@ -2647,6 +2778,7 @@ impl<'src> Parser<'src> {
 
         if type_switch {
             return Stmt::TypeSwitchStmt(Box::new(TypeSwitchStmt {
+                node_id: AstNodeId::INVALID,
                 switch: pos,
                 init: s1,
                 assign: s2.expect("type switch guard"),
@@ -2656,6 +2788,7 @@ impl<'src> Parser<'src> {
 
         let tag = self.make_expr(s2, "switch expression");
         Stmt::SwitchStmt(Box::new(SwitchStmt {
+            node_id: AstNodeId::INVALID,
             switch: pos,
             init: s1,
             tag,
@@ -2681,6 +2814,7 @@ impl<'src> Parser<'src> {
                 let rhs = self.parse_rhs();
                 let chan_ = lhs.remove(0);
                 comm = Some(Stmt::SendStmt(SendStmt {
+                    node_id: AstNodeId::INVALID,
                     chan_,
                     arrow,
                     value: rhs,
@@ -2699,6 +2833,7 @@ impl<'src> Parser<'src> {
                     self.next();
                     let rhs = self.parse_rhs();
                     comm = Some(Stmt::AssignStmt(AssignStmt {
+                        node_id: AstNodeId::INVALID,
                         lhs,
                         tok_pos,
                         tok,
@@ -2712,7 +2847,10 @@ impl<'src> Parser<'src> {
                         // continue with first expression
                     }
                     let x = lhs.remove(0);
-                    comm = Some(Stmt::ExprStmt(ExprStmt { x }));
+                    comm = Some(Stmt::ExprStmt(ExprStmt {
+                        node_id: AstNodeId::INVALID,
+                        x,
+                    }));
                 }
             }
         } else {
@@ -2723,6 +2861,7 @@ impl<'src> Parser<'src> {
         let body = self.parse_stmt_list();
 
         Stmt::CommClause(Box::new(CommClause {
+            node_id: AstNodeId::INVALID,
             case: pos,
             comm,
             colon,
@@ -2740,12 +2879,14 @@ impl<'src> Parser<'src> {
         let rbrace = self.expect(Token::RBrace);
         self.expect_semi();
         let body = BlockStmt {
+            node_id: AstNodeId::INVALID,
             lbrace,
             list,
             rbrace,
         };
 
         Stmt::SelectStmt(SelectStmt {
+            node_id: AstNodeId::INVALID,
             select: pos,
             body: Box::new(body),
         })
@@ -2768,11 +2909,13 @@ impl<'src> Parser<'src> {
                     self.next();
                     let x = self.parse_rhs();
                     let y = vec![Expr::UnaryExpr(Box::new(UnaryExpr {
+                        node_id: AstNodeId::INVALID,
                         op_pos: pos,
                         op: Token::Range,
                         x,
                     }))];
                     s2 = Some(Stmt::AssignStmt(AssignStmt {
+                        node_id: AstNodeId::INVALID,
                         lhs: Vec::new(),
                         tok_pos: NO_POS,
                         tok: Token::Illegal,
@@ -2826,6 +2969,7 @@ impl<'src> Parser<'src> {
                     let msg = "at most 2 expressions";
                     self.error_expected(last.pos(), msg);
                     return Stmt::BadStmt(BadStmt {
+                        node_id: AstNodeId::INVALID,
                         from: pos,
                         to: body.end(),
                     });
@@ -2843,6 +2987,7 @@ impl<'src> Parser<'src> {
                 _ => unreachable!("range rhs is not a unary expression"),
             };
             return Stmt::RangeStmt(RangeStmt {
+                node_id: AstNodeId::INVALID,
                 for_: pos,
                 key,
                 value,
@@ -2857,6 +3002,7 @@ impl<'src> Parser<'src> {
         // regular for statement
         let cond = self.make_expr(s2, "boolean or range expression");
         Stmt::ForStmt(Box::new(ForStmt {
+            node_id: AstNodeId::INVALID,
             for_: pos,
             init: s1,
             cond,
@@ -2870,6 +3016,7 @@ impl<'src> Parser<'src> {
 
         let s = match self.tok {
             Token::Const | Token::Type | Token::Var => Stmt::DeclStmt(DeclStmt {
+        node_id: AstNodeId::INVALID,
                 decl: self.parse_decl(stmt_start),
             }),
             // tokens that may start an expression
@@ -2923,6 +3070,7 @@ impl<'src> Parser<'src> {
                 // producing an empty statement in a valid program?
                 // (handle correctly anyway)
                 let s = EmptyStmt {
+        node_id: AstNodeId::INVALID,
                     semicolon: self.pos,
                     implicit: self.lit == "\n",
                 };
@@ -2932,6 +3080,7 @@ impl<'src> Parser<'src> {
             Token::RBrace => {
                 // a semicolon may be omitted before a closing "}"
                 Stmt::EmptyStmt(EmptyStmt {
+        node_id: AstNodeId::INVALID,
                     semicolon: self.pos,
                     implicit: true,
                 })
@@ -2942,6 +3091,7 @@ impl<'src> Parser<'src> {
                 self.error_expected(pos, "statement");
                 self.advance(stmt_start);
                 Stmt::BadStmt(BadStmt {
+        node_id: AstNodeId::INVALID,
                     from: pos,
                     to: self.pos,
                 })
@@ -2992,6 +3142,7 @@ impl<'src> Parser<'src> {
         let list = self.parse_parameter_list(name0, typ0, Token::RBrack, false);
         let close_pos = self.expect(Token::RBrack);
         spec.type_params = Some(FieldList {
+            node_id: AstNodeId::INVALID,
             opening: open_pos,
             list,
             closing: close_pos,
@@ -3046,10 +3197,12 @@ impl<'src> Parser<'src> {
         }
 
         Decl::FuncDecl(FuncDecl {
+            node_id: AstNodeId::INVALID,
             commands,
             recv,
             name: ident,
             typ: FuncType {
+                node_id: AstNodeId::INVALID,
                 func: pos,
                 type_params: tparams,
                 params,
@@ -3080,6 +3233,7 @@ impl<'src> Parser<'src> {
         }
 
         Decl::GenDecl(GenDecl {
+            node_id: AstNodeId::INVALID,
             commands,
             tok_pos: pos,
             tok: keyword,
@@ -3107,6 +3261,7 @@ impl<'src> Parser<'src> {
                 self.error_expected(pos, "declaration");
                 self.advance(sync);
                 return Decl::BadDecl(BadDecl {
+                    node_id: AstNodeId::INVALID,
                     from: pos,
                     to: self.pos,
                 });
@@ -3176,6 +3331,7 @@ impl<'src> Parser<'src> {
         }
 
         let f = AstFile {
+            node_id: AstNodeId::INVALID,
             commands,
             package: pos,
             name: ident,
@@ -3200,6 +3356,7 @@ fn parse_import_spec(p: &mut Parser, _keyword: Token) -> Spec {
         Token::Ident => ident = Some(p.parse_ident()),
         Token::Period => {
             ident = Some(Ident {
+                node_id: AstNodeId::INVALID,
                 name_pos: p.pos,
                 name: ".".to_string(),
             });
@@ -3226,9 +3383,11 @@ fn parse_import_spec(p: &mut Parser, _keyword: Token) -> Spec {
 
     // collect imports
     let spec = ImportSpec {
+        node_id: AstNodeId::INVALID,
         commands,
         name: ident,
         path: BasicLit {
+            node_id: AstNodeId::INVALID,
             value_pos: pos,
             value_end: end,
             kind: Token::String,
@@ -3272,6 +3431,7 @@ fn parse_value_spec(p: &mut Parser, keyword: Token) -> Spec {
     p.expect_semi();
 
     Spec::ValueSpec(ValueSpec {
+        node_id: AstNodeId::INVALID,
         commands,
         names: idents,
         typ,
@@ -3283,12 +3443,14 @@ fn parse_type_spec(p: &mut Parser, _keyword: Token) -> Spec {
     let commands = p.take_leading_commands(p.pos);
     let name = p.parse_ident();
     let mut spec = TypeSpec {
+        node_id: AstNodeId::INVALID,
         commands,
         name,
         type_params: None,
         assign: NO_POS,
         // placeholder; overwritten in every branch below before returning
         typ: Expr::BadExpr(BadExpr {
+            node_id: AstNodeId::INVALID,
             from: NO_POS,
             to: NO_POS,
         }),
@@ -3394,6 +3556,7 @@ fn extract_name(x: &Expr, force: bool) -> (Option<Ident>, Option<Expr>) {
                         return (
                             Some(name.clone()),
                             Some(Expr::StarExpr(Box::new(StarExpr {
+                                node_id: AstNodeId::INVALID,
                                 star: b.op_pos,
                                 x: b.y.clone(),
                             }))),
@@ -3406,6 +3569,7 @@ fn extract_name(x: &Expr, force: bool) -> (Option<Ident>, Option<Expr>) {
                     return (
                         Some(name),
                         Some(Expr::BinaryExpr(Box::new(BinaryExpr {
+                            node_id: AstNodeId::INVALID,
                             x: lhs,
                             op_pos: b.op_pos,
                             op: Token::Or,
@@ -3426,6 +3590,7 @@ fn extract_name(x: &Expr, force: bool) -> (Option<Ident>, Option<Expr>) {
                         return (
                             Some(name.clone()),
                             Some(Expr::ParenExpr(Box::new(ParenExpr {
+                                node_id: AstNodeId::INVALID,
                                 lparen: c.lparen,
                                 x: c.args[0].clone(),
                                 rparen: c.rparen,

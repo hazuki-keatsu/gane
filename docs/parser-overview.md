@@ -119,6 +119,12 @@ Pos = File.base + source_byte_offset
 
 `NO_POS = 0` 表示无效位置。`FileSet` 给每个文件分配不重叠的整数区间，所以多个文件的 AST 节点可以直接携带同一种 `Pos`。
 
+### `AstNodeId`：语法节点身份
+
+`Pos` 描述的是源码位置，不能作为语义查询的身份：不同节点可以拥有相同范围，位置也会随源码编辑改变。每个 `parse_file` 和 `parse_expr_from` 返回的具体 AST 节点因此还带有 parser 分配的 `AstNodeId`，通过 `node_id()` 取得。ID 只在生成它的 `FileSet` 中有意义，并包含 parse-session 成分，不能混用不同 `FileSet` 解析出的文件。
+
+`AstNodeId` 不携带源码范围，也不能经由 `FileSet` 反查位置。诊断在仍持有 AST 时读取节点的 `pos()` 并将其作为私有数据捕获；节点 ID 字段保持 crate-private；调用方应使用 parser 返回的 AST，而不要用 struct literal 伪造带身份的节点。即使 parser 经错误恢复返回部分 AST，这些节点也会获得 ID。
+
 ### `Position`：给人看的位置
 
 `Position` 包含：

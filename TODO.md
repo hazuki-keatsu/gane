@@ -1,0 +1,2 @@
+- [ ] 美化 Diagnostics 输出（引入命令行 Color 包）
+- [ ] 优化 return_check 的 require_assignable 的 anchor 对应到指定的对象

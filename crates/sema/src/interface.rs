@@ -8,15 +8,17 @@
 pub use crate::{
     checker::analyze_package,
     types::{
-        BasicType, ChanDirection, ConstValue, FileId, IntegerValue, NameId, NodeId, Object,
-        ObjectId, ObjectKind, Package, PackageId, PackagePath, ScopeId, Selection, SelectionKind,
-        SemanticInfo, Tuple, TupleId, Type, TypeAndValue, TypeId, TypeKind, UnderlyingState,
-        ValueMode,
+        BasicType, ChanDirection, ConstValue, FileId, IntegerValue, NameId, Object, ObjectId,
+        ObjectKind, Package, PackageId, PackagePath, ScopeId, Selection, SelectionKind, Tuple,
+        TupleId, Type, TypeAndValue, TypeId, TypeKind, UnderlyingState, ValueMode,
     },
 };
-pub use gane_diagnostics::{Diagnostic, DiagnosticCode, Severity, Span};
+pub use gane_diagnostics::{Diagnostic, DiagnosticCode, Severity};
+pub use gane_parser::token::AstNodeId;
 
-pub use crate::checker::{AnalysisResult, PackageFile, PackageInput, PredeclaredTypes};
+pub use crate::checker::{
+    AnalysisResult, GlobalInitializer, PackageFile, PackageInput, PredeclaredTypes,
+};
 
 impl AnalysisResult {
     /// Returns the object for `id`, or the canonical invalid object for an
@@ -55,9 +57,30 @@ impl AnalysisResult {
         self.file_scopes.get(&file).copied()
     }
 
-    /// Returns the checker-local identity assigned to a source span.
-    pub fn node_at(&self, span: Span) -> Option<NodeId> {
-        self.nodes.get(span)
+    /// Returns the object defined by this source node, when it is a
+    /// declaration-bearing node.
+    pub fn definition(&self, node: AstNodeId) -> Option<ObjectId> {
+        self.info.defs.get(&node).copied()
+    }
+
+    /// Returns the object denoted by this identifier-use node.
+    pub fn use_of(&self, node: AstNodeId) -> Option<ObjectId> {
+        self.info.uses.get(&node).copied()
+    }
+
+    /// Returns the type, value mode, and folded constant for this expression.
+    pub fn type_and_value(&self, node: AstNodeId) -> Option<&TypeAndValue> {
+        self.info.types.get(&node)
+    }
+
+    /// Returns semantic selection facts for a selector expression.
+    pub fn selection(&self, node: AstNodeId) -> Option<&Selection> {
+        self.info.selections.get(&node)
+    }
+
+    /// Returns the resolved HIR-facing initializer for a package variable.
+    pub fn global_initializer(&self, object: ObjectId) -> Option<&GlobalInitializer> {
+        self.global_initializers.get(&object)
     }
 
     /// Returns the final underlying type of a resolved named type.

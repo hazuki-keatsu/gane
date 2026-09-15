@@ -5,7 +5,7 @@
 //! does not resolve lexical visibility; `scope` owns declaration and lookup.
 
 use crate::types::{NameId, Object, ObjectId, ObjectKind, PackageId, ScopeId, TypeId};
-use gane_diagnostics::Span;
+use gane_parser::token::AstNodeId;
 use std::collections::HashMap;
 
 /// Bidirectional, per-analysis name interner.
@@ -126,7 +126,7 @@ pub fn declared_object(
     name: NameId,
     package: Option<PackageId>,
     parent: ScopeId,
-    span: Span,
+    declaration: Option<AstNodeId>,
     typ: TypeId,
 ) -> Object {
     Object {
@@ -134,7 +134,7 @@ pub fn declared_object(
         name,
         package,
         parent,
-        span,
+        declaration,
         typ,
     }
 }
@@ -145,7 +145,7 @@ fn invalid_object() -> Object {
         NameId::default(),
         None,
         ScopeId::default(),
-        Span::default(),
+        None,
         TypeId::INVALID,
     )
 }
@@ -176,7 +176,7 @@ mod tests {
             count,
             None,
             ScopeId::from_raw(1),
-            Span::default(),
+            None,
             TypeId::from_raw(1),
         ));
 

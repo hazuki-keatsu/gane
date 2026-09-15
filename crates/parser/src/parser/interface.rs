@@ -14,9 +14,9 @@
 use std::ops::{BitAnd, BitOr};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 
-use crate::ast::{Expr, File, new_ident};
+use crate::ast::{Expr, File, assign_file_node_ids, new_ident};
 use crate::scanner::ErrorList;
-use crate::token::{FileSet, NO_POS, Pos};
+use crate::token::{AstNodeId, FileSet, NO_POS, Pos};
 
 use super::parser::{Bailout, Parser};
 
@@ -121,6 +121,7 @@ pub fn parse_file(
             // source is not a valid Go source file - satisfy the ParseFile
             // API and return a valid (but) empty *ast.File
             File {
+                node_id: AstNodeId::INVALID,
                 commands: Vec::new(),
                 package: NO_POS,
                 name: new_ident(""),
@@ -136,6 +137,7 @@ pub fn parse_file(
     // whether parsing succeeded or not.
     f.file_start = Pos::from_int(file.base());
     f.file_end = file.end();
+    assign_file_node_ids(&mut f, fset);
 
     let err = p.sorted_errors();
     (f, err)
@@ -179,6 +181,10 @@ pub fn parse_expr_from(
         }
     };
 
+    let mut x = x;
+    if let Some(expr) = &mut x {
+        crate::ast::assign_expr_node_ids(expr, fset);
+    }
     let err = p.sorted_errors();
     (x, err)
 }
@@ -193,4 +199,68 @@ pub fn parse_expr_from(
 pub fn parse_expr(x: &str) -> (Option<Expr>, Option<ErrorList>) {
     let mut fset = FileSet::new();
     parse_expr_from(&mut fset, "", x.as_bytes(), Mode::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn parsed_nodes_have_unique_ids_and_registered_ranges() {
+        let mut files = FileSet::new();
+        let (file, errors) = parse_file(
+            &mut files,
+            "main.go",
+            b"package main\nfunc main() {}\n",
+            Mode::default(),
+        );
+        assert!(errors.is_none());
+
+        let file_id = file.node_id();
+        let package_name_id = file.name.node_id();
+        let declaration_id = file.decls[0].node_id();
+        assert_ne!(file_id, AstNodeId::INVALID);
+        assert_ne!(file_id, package_name_id);
+        assert_ne!(package_name_id, declaration_id);
+
+        let ids = crate::ast::preorder(crate::ast::NodeRef::File(&file))
+            .map(|node| node.node_id())
+            .collect::<Vec<_>>();
+        assert!(ids.iter().all(|id| *id != AstNodeId::INVALID));
+        assert_eq!(
+            ids.iter().copied().collect::<HashSet<_>>().len(),
+            ids.len(),
+            "every parsed AST node must receive a distinct identity"
+        );
+    }
+
+    #[test]
+    fn node_ids_do_not_collide_between_file_sets() {
+        let mut first = FileSet::new();
+        let (first_file, first_errors) =
+            parse_file(&mut first, "a.go", b"package main\n", Mode::default());
+        assert!(first_errors.is_none());
+
+        let mut second = FileSet::new();
+        let (second_file, second_errors) =
+            parse_file(&mut second, "b.go", b"package main\n", Mode::default());
+        assert!(second_errors.is_none());
+
+        assert_ne!(first_file.node_id(), second_file.node_id());
+    }
+
+    #[test]
+    fn recovered_file_nodes_still_have_ids() {
+        let mut files = FileSet::new();
+        let (file, errors) = parse_file(
+            &mut files,
+            "broken.go",
+            b"package main\nfunc main( {",
+            Mode::default(),
+        );
+
+        assert!(errors.is_some());
+        assert_ne!(file.node_id(), AstNodeId::INVALID);
+    }
 }

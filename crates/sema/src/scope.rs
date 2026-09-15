@@ -5,7 +5,7 @@
 //! stable NameId/ObjectId pairs instead of strings or object references.
 
 use crate::types::{NameId, ObjectId, Scope, ScopeId, ScopeKind};
-use gane_diagnostics::Span;
+use gane_parser::token::AstNodeId;
 
 /// A duplicate declaration in one lexical scope.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,7 +41,7 @@ impl Default for ScopeArena {
             scopes: vec![Scope {
                 parent: None,
                 kind: ScopeKind::Universe,
-                span: Span::default(),
+                anchor: None,
                 names: Default::default(),
             }],
         }
@@ -59,13 +59,18 @@ impl ScopeArena {
 
     /// Allocates a child scope. Parents always precede children in the arena,
     /// which makes the parent chain acyclic by construction.
-    pub fn child(&mut self, parent: ScopeId, kind: ScopeKind, span: Span) -> ScopeId {
+    pub fn child(
+        &mut self,
+        parent: ScopeId,
+        kind: ScopeKind,
+        anchor: Option<AstNodeId>,
+    ) -> ScopeId {
         assert!(self.contains(parent), "parent scope must exist");
         let id = ScopeId::from_raw(self.scopes.len() as u32);
         self.scopes.push(Scope {
             parent: Some(parent),
             kind,
-            span,
+            anchor,
             names: Default::default(),
         });
         id
@@ -163,8 +168,8 @@ mod tests {
     fn lookup_walks_parents_and_prefers_the_nearest_declaration() {
         let mut scopes = ScopeArena::new();
         let universe = scopes.universe();
-        let package = scopes.child(universe, ScopeKind::Package, Span::default());
-        let block = scopes.child(package, ScopeKind::Block, Span::default());
+        let package = scopes.child(universe, ScopeKind::Package, None);
+        let block = scopes.child(package, ScopeKind::Block, None);
         let name = NameId::from_raw(1);
         let outer = ObjectId::from_raw(1);
         let inner = ObjectId::from_raw(2);

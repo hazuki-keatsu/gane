@@ -6,19 +6,19 @@
 
 use std::collections::{HashMap, HashSet};
 
-use gane_diagnostics::{Diagnostic, DiagnosticCode, Diagnostics, Label, Span};
+use gane_diagnostics::{Diagnostic, DiagnosticCode, Diagnostics, Label};
 use gane_parser::{
     ast::{self, Decl, Spec},
-    token::Token,
+    token::{AstNodeId, Token},
 };
 
 use crate::{
     scope::{DeclareError, DuplicateDeclaration, ScopeArena},
-    symbol_table::{declared_object, SymbolTable},
+    symbol_table::{SymbolTable, declared_object},
     types::{
-        BasicType, ConstValue, FileId, IntegerValue, NodeId, ObjectId, ObjectKind, Package,
-        PackageId, PackagePath, ScopeId, ScopeKind, SemanticInfo, TypeAndValue, TypeArena, TypeId,
-        TypeKind, UnderlyingState, ValueMode,
+        BasicType, ConstValue, FileId, IntegerValue, ObjectId, ObjectKind, Package, PackageId,
+        PackagePath, ScopeId, ScopeKind, SemanticInfo, TypeAndValue, TypeArena, TypeId, TypeKind,
+        UnderlyingState, ValueMode,
     },
 };
 
@@ -27,6 +27,7 @@ const INVALID_PACKAGE: DiagnosticCode = DiagnosticCode("E2003");
 const MIXED_PACKAGE: DiagnosticCode = DiagnosticCode("E2004");
 const EMPTY_PACKAGE: DiagnosticCode = DiagnosticCode("E2005");
 const DUPLICATE_FILE: DiagnosticCode = DiagnosticCode("E2006");
+const MIXED_FILESET: DiagnosticCode = DiagnosticCode("E2007");
 const UNKNOWN_TYPE: DiagnosticCode = DiagnosticCode("E2101");
 const UNSUPPORTED_TYPE: DiagnosticCode = DiagnosticCode("E2102");
 const INVALID_RECURSIVE_TYPE: DiagnosticCode = DiagnosticCode("E2103");
@@ -77,27 +78,13 @@ pub struct PredeclaredTypes {
     pub byte: TypeId,
 }
 
-/// Stable mapping from source spans to checker-local node IDs.
-#[derive(Clone, Debug, Default)]
-pub struct NodeIndex {
-    by_span: HashMap<Span, NodeId>,
-    next: u32,
-}
-
-impl NodeIndex {
-    pub fn id_for(&mut self, span: Span) -> NodeId {
-        if let Some(&id) = self.by_span.get(&span) {
-            return id;
-        }
-        self.next += 1;
-        let id = NodeId::from_raw(self.next);
-        self.by_span.insert(span, id);
-        id
-    }
-
-    pub fn get(&self, span: Span) -> Option<NodeId> {
-        self.by_span.get(&span).copied()
-    }
+/// The HIR-relevant, compile-time result of a package variable initializer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GlobalInitializer {
+    /// The source declaration has Gane's ordinary zero initialization.
+    Zero,
+    /// A scalar bool/int/byte constant initializer.
+    Scalar(ConstValue),
 }
 
 /// Frozen output of package declaration collection and type-header resolution.
@@ -109,8 +96,8 @@ pub struct AnalysisResult {
     pub(crate) symbols: SymbolTable,
     pub(crate) scopes: ScopeArena,
     pub(crate) file_scopes: HashMap<FileId, ScopeId>,
-    pub(crate) nodes: NodeIndex,
-    pub info: SemanticInfo,
+    pub(crate) info: SemanticInfo,
+    pub(crate) global_initializers: HashMap<ObjectId, GlobalInitializer>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -135,7 +122,6 @@ struct Checker<'ast> {
     types: TypeArena,
     symbols: SymbolTable,
     scopes: ScopeArena,
-    nodes: NodeIndex,
     info: SemanticInfo,
     diagnostics: Diagnostics,
     package_name: Option<crate::types::NameId>,
@@ -145,7 +131,8 @@ struct Checker<'ast> {
     type_specs: HashMap<TypeId, ScopedTypeSpec>,
     func_decls: HashMap<TypeId, ScopedFuncDecl>,
     function_scopes: HashMap<TypeId, ScopeId>,
-    global_initializers: HashMap<ObjectId, GlobalInitializer>,
+    pending_global_initializers: HashMap<ObjectId, PendingGlobalInitializer>,
+    resolved_global_initializers: HashMap<ObjectId, GlobalInitializer>,
     global_states: HashMap<ObjectId, InitState>,
 }
 
@@ -155,12 +142,12 @@ struct ControlContext {
 }
 
 #[derive(Clone)]
-struct GlobalInitializer {
+struct PendingGlobalInitializer {
     object: ObjectId,
     is_const: bool,
     typ: Option<ast::Expr>,
     value: Option<ast::Expr>,
-    span: Span,
+    anchor: Option<AstNodeId>,
     file: FileId,
 }
 
@@ -189,7 +176,6 @@ impl<'ast> Checker<'ast> {
             types: TypeArena::new(),
             symbols: SymbolTable::new(),
             scopes: ScopeArena::new(),
-            nodes: NodeIndex::default(),
             info: SemanticInfo::default(),
             diagnostics: Diagnostics::default(),
             package_name: None,
@@ -199,37 +185,43 @@ impl<'ast> Checker<'ast> {
             type_specs: HashMap::new(),
             func_decls: HashMap::new(),
             function_scopes: HashMap::new(),
-            global_initializers: HashMap::new(),
+            pending_global_initializers: HashMap::new(),
+            resolved_global_initializers: HashMap::new(),
             global_states: HashMap::new(),
         }
     }
 
     fn check_package_clause(&mut self) {
         let Some(first) = self.input.files.first() else {
-            self.diagnostics.error(
-                EMPTY_PACKAGE,
-                Span::default(),
-                "package contains no source files",
-            );
+            self.diagnostics
+                .error(EMPTY_PACKAGE, None, "package contains no source files");
             self.package_name = Some(self.symbols.intern(""));
             return;
         };
 
         let expected = first.ast.name.name.as_str();
+        let session = first.ast.node_id().parse_session();
         self.package_name = Some(self.symbols.intern(expected));
         if expected != "main" {
             self.diagnostics.error(
                 INVALID_PACKAGE,
-                ident_span(&first.ast.name),
+                Some(first.ast.name.node_id()),
                 "MVP only supports `package main`",
             );
         }
 
         for file in self.input.files.iter().skip(1) {
+            if file.ast.node_id().parse_session() != session {
+                self.diagnostics.error(
+                    MIXED_FILESET,
+                    Some(file.ast.node_id()),
+                    "all package files must come from the same parser FileSet",
+                );
+            }
             if file.ast.name.name != expected {
                 self.diagnostics.error(
                     MIXED_PACKAGE,
-                    ident_span(&file.ast.name),
+                    Some(file.ast.name.node_id()),
                     format!(
                         "file belongs to package `{}`, expected `{expected}`",
                         file.ast.name.name
@@ -261,16 +253,16 @@ impl<'ast> Checker<'ast> {
     }
 
     fn create_package_scope(&mut self) {
-        let span = self
+        let anchor = self
             .input
             .files
             .first()
-            .map(|file| Span::new(file.ast.pos(), file.ast.end()))
+            .map(|file| Some(file.ast.node_id()))
             .unwrap_or_default();
         self.package_scope = Some(self.scopes.child(
             self.scopes.universe(),
             ScopeKind::Package,
-            span,
+            anchor,
         ));
     }
 
@@ -280,19 +272,19 @@ impl<'ast> Checker<'ast> {
             .input
             .files
             .iter()
-            .map(|file| (file.id, Span::new(file.ast.pos(), file.ast.end())))
+            .map(|file| (file.id, Some(file.ast.node_id())))
             .collect::<Vec<_>>();
 
-        for (file, span) in files {
+        for (file, anchor) in files {
             if self.file_scopes.contains_key(&file) {
                 self.diagnostics.error(
                     DUPLICATE_FILE,
-                    span,
+                    anchor,
                     format!("duplicate input file id {}", file.raw()),
                 );
                 continue;
             }
-            let scope = self.scopes.child(package_scope, ScopeKind::File, span);
+            let scope = self.scopes.child(package_scope, ScopeKind::File, anchor);
             self.file_scopes.insert(file, scope);
         }
     }
@@ -341,7 +333,7 @@ impl<'ast> Checker<'ast> {
                     }
                 }
             }
-            Token::Import => self.unsupported(Span::new(decl.pos(), decl.end()), "import"),
+            Token::Import => self.unsupported(Some(decl.node_id()), "import"),
             _ => {}
         }
     }
@@ -376,13 +368,10 @@ impl<'ast> Checker<'ast> {
 
     fn collect_func_decl(&mut self, decl: &ast::FuncDecl, file: FileId) {
         if decl.recv.is_some() {
-            self.unsupported(Span::new(decl.pos(), decl.end()), "method declaration");
+            self.unsupported(Some(decl.node_id()), "method declaration");
         }
         if decl.body.is_none() {
-            self.unsupported(
-                Span::new(decl.pos(), decl.end()),
-                "function declaration without a body",
-            );
+            self.unsupported(Some(decl.node_id()), "function declaration without a body");
         }
         let params = self.types.alloc_tuple(Default::default());
         let results = self.types.alloc_tuple(Default::default());
@@ -414,14 +403,14 @@ impl<'ast> Checker<'ast> {
                 ObjectKind::Var { embedded: false }
             };
             let object = self.declare_source_object(ident, kind, name, TypeId::INVALID);
-            self.global_initializers.insert(
+            self.pending_global_initializers.insert(
                 object,
-                GlobalInitializer {
+                PendingGlobalInitializer {
                     object,
                     is_const,
                     typ: spec.typ.clone(),
                     value: spec.values.get(index).cloned(),
-                    span: ident_span(ident),
+                    anchor: Some(ident.node_id()),
                     file,
                 },
             );
@@ -441,7 +430,7 @@ impl<'ast> Checker<'ast> {
     }
 
     fn check_global_values(&mut self) {
-        let objects: Vec<ObjectId> = self.global_initializers.keys().copied().collect();
+        let objects: Vec<ObjectId> = self.pending_global_initializers.keys().copied().collect();
         for object in objects {
             self.resolve_global(object);
         }
@@ -453,7 +442,7 @@ impl<'ast> Checker<'ast> {
             Some(InitState::Resolving) => {
                 self.diagnostics.error(
                     TYPE_MISMATCH,
-                    self.symbols.object(object).span,
+                    self.symbols.object(object).declaration,
                     "initialization cycle",
                 );
                 if let Some(global) = self.symbols.object_mut(object) {
@@ -463,7 +452,7 @@ impl<'ast> Checker<'ast> {
             }
             None => {}
         }
-        let Some(initializer) = self.global_initializers.get(&object).cloned() else {
+        let Some(initializer) = self.pending_global_initializers.get(&object).cloned() else {
             return;
         };
         self.global_states.insert(object, InitState::Resolving);
@@ -478,7 +467,7 @@ impl<'ast> Checker<'ast> {
             .map(|value| self.check_expr(value, scope));
         let typ = match (explicit_type, value.as_ref()) {
             (Some(typ), Some(value)) => {
-                self.require_assignable(value.typ, typ, initializer.span);
+                self.require_assignable(value.typ, typ, initializer.anchor);
                 typ
             }
             (Some(typ), None) if !initializer.is_const => typ,
@@ -486,7 +475,7 @@ impl<'ast> Checker<'ast> {
             (None, Some(_)) => {
                 self.diagnostics.error(
                     MISSING_VARIABLE_TYPE,
-                    initializer.span,
+                    initializer.anchor,
                     "cannot infer a variable type from nil",
                 );
                 TypeId::INVALID
@@ -494,7 +483,7 @@ impl<'ast> Checker<'ast> {
             _ => {
                 self.diagnostics.error(
                     TYPE_MISMATCH,
-                    initializer.span,
+                    initializer.anchor,
                     "constant or variable requires an initializer or explicit type",
                 );
                 TypeId::INVALID
@@ -503,32 +492,40 @@ impl<'ast> Checker<'ast> {
         if initializer.is_const && value.is_none() {
             self.diagnostics.error(
                 TYPE_MISMATCH,
-                initializer.span,
+                initializer.anchor,
                 "constant declaration requires an initializer",
             );
         }
-        self.validate_v0_global_initializer(&initializer, typ, value.as_ref());
-        let constant = value.and_then(|value| value.constant);
+        let initializer_is_valid =
+            self.validate_v0_global_initializer(&initializer, typ, value.as_ref());
+        let constant = value.as_ref().and_then(|value| value.constant.clone());
         if let Some(global) = self.symbols.object_mut(initializer.object) {
             global.typ = typ;
             if let ObjectKind::Const { value } = &mut global.kind {
                 *value = constant.unwrap_or(ConstValue::Unknown);
             }
         }
+        if !initializer.is_const && initializer_is_valid {
+            let resolved = match value.as_ref().and_then(|value| value.constant.clone()) {
+                Some(value) => GlobalInitializer::Scalar(value),
+                None => GlobalInitializer::Zero,
+            };
+            self.resolved_global_initializers.insert(object, resolved);
+        }
         self.global_states.insert(object, InitState::Done);
     }
 
     fn validate_v0_global_initializer(
         &mut self,
-        initializer: &GlobalInitializer,
+        initializer: &PendingGlobalInitializer,
         typ: TypeId,
         value: Option<&TypeAndValue>,
-    ) {
+    ) -> bool {
         let Some(value) = value else {
-            return;
+            return typ != TypeId::INVALID;
         };
         if typ == TypeId::INVALID || value.mode == ValueMode::Invalid {
-            return;
+            return false;
         }
         let allowed = match self.types.get(self.types.underlying(typ)).kind {
             TypeKind::Basic(BasicType::Bool) => {
@@ -543,10 +540,11 @@ impl<'ast> Checker<'ast> {
         };
         if !allowed {
             self.unsupported(
-                initializer.span,
+                initializer.anchor,
                 "global initializer requiring runtime evaluation",
             );
         }
+        allowed
     }
 
     /// Resolves a named type's underlying type. `indirect` records whether the
@@ -563,7 +561,7 @@ impl<'ast> Checker<'ast> {
                 if !indirect {
                     self.diagnostics.error(
                         INVALID_RECURSIVE_TYPE,
-                        Span::default(),
+                        None,
                         "invalid recursive type: cycle requires pointer indirection",
                     );
                     return TypeId::INVALID;
@@ -612,7 +610,7 @@ impl<'ast> Checker<'ast> {
                 let Some(length) = expr.len.as_ref().and_then(parse_array_length) else {
                     self.diagnostics.error(
                         UNSUPPORTED_TYPE,
-                        Span::default(),
+                        None,
                         "MVP array length must be a non-negative decimal integer literal",
                     );
                     return TypeId::INVALID;
@@ -620,7 +618,7 @@ impl<'ast> Checker<'ast> {
                 if matches!(&length, ConstValue::Int(value) if value.is_zero()) {
                     self.diagnostics.error(
                         UNSUPPORTED_TYPE,
-                        Span::new(expr.pos(), expr.end()),
+                        Some(expr.node_id()),
                         "zero-length arrays are not supported by HIR V0",
                     );
                     return TypeId::INVALID;
@@ -639,7 +637,7 @@ impl<'ast> Checker<'ast> {
             _ => {
                 self.diagnostics.error(
                     UNSUPPORTED_TYPE,
-                    Span::default(),
+                    None,
                     "type syntax is not supported by the MVP",
                 );
                 TypeId::INVALID
@@ -652,7 +650,7 @@ impl<'ast> Checker<'ast> {
         let Some(resolved) = self.scopes.lookup(scope, name) else {
             self.diagnostics.error(
                 UNKNOWN_TYPE,
-                ident_span(ident),
+                Some(ident.node_id()),
                 format!("undefined type `{}`", ident.name),
             );
             return TypeId::INVALID;
@@ -662,7 +660,7 @@ impl<'ast> Checker<'ast> {
             _ => {
                 self.diagnostics.error(
                     UNKNOWN_TYPE,
-                    ident_span(ident),
+                    Some(ident.node_id()),
                     format!("`{}` does not name a type", ident.name),
                 );
                 TypeId::INVALID
@@ -677,7 +675,7 @@ impl<'ast> Checker<'ast> {
         let Some(field_list) = &struct_type.fields else {
             self.diagnostics.error(
                 UNSUPPORTED_TYPE,
-                Span::new(struct_type.pos(), struct_type.end()),
+                Some(struct_type.node_id()),
                 "empty structs are not supported by HIR V0",
             );
             return TypeId::INVALID;
@@ -685,11 +683,8 @@ impl<'ast> Checker<'ast> {
 
         for field in &field_list.list {
             let Some(typ_expr) = &field.typ else {
-                self.diagnostics.error(
-                    UNSUPPORTED_TYPE,
-                    Span::default(),
-                    "struct field has no type",
-                );
+                self.diagnostics
+                    .error(UNSUPPORTED_TYPE, None, "struct field has no type");
                 continue;
             };
             let typ = self.resolve_type_expr(typ_expr, scope, false);
@@ -697,7 +692,7 @@ impl<'ast> Checker<'ast> {
             if field.names.is_empty() {
                 self.diagnostics.error(
                     UNSUPPORTED_TYPE,
-                    Span::new(field.pos(), field.end()),
+                    Some(field.node_id()),
                     "embedded struct fields are not supported by the MVP",
                 );
                 continue;
@@ -707,7 +702,7 @@ impl<'ast> Checker<'ast> {
                 if !seen.insert(name) {
                     self.diagnostics.error(
                         DUPLICATE_FIELD,
-                        ident_span(ident),
+                        Some(ident.node_id()),
                         format!("duplicate struct field `{}`", ident.name),
                     );
                 }
@@ -719,7 +714,7 @@ impl<'ast> Checker<'ast> {
         if fields.is_empty() && !invalid {
             self.diagnostics.error(
                 UNSUPPORTED_TYPE,
-                Span::new(struct_type.pos(), struct_type.end()),
+                Some(struct_type.node_id()),
                 "empty structs are not supported by HIR V0",
             );
             return TypeId::INVALID;
@@ -738,7 +733,7 @@ impl<'ast> Checker<'ast> {
         index: u32,
         typ: TypeId,
     ) -> ObjectId {
-        let span = ident_span(ident);
+        let anchor = Some(ident.node_id());
         let object = self.symbols.alloc(declared_object(
             ObjectKind::Field {
                 index,
@@ -747,10 +742,10 @@ impl<'ast> Checker<'ast> {
             name,
             Some(PackageId::from_raw(0)),
             self.package_scope.expect("package scope must exist"),
-            span,
+            anchor,
             typ,
         ));
-        self.info.defs.insert(self.nodes.id_for(span), object);
+        self.info.defs.insert(ident.node_id(), object);
         object
     }
 
@@ -760,11 +755,9 @@ impl<'ast> Checker<'ast> {
         };
         let decl = declaration.decl;
         let file_scope = self.file_scopes[&declaration.file];
-        let function_scope = self.scopes.child(
-            file_scope,
-            ScopeKind::Function,
-            Span::new(decl.pos(), decl.end()),
-        );
+        let function_scope =
+            self.scopes
+                .child(file_scope, ScopeKind::Function, Some(decl.node_id()));
         self.function_scopes.insert(signature, function_scope);
         let params = self.resolve_tuple(decl.typ.params.as_ref(), function_scope);
         let results = self.resolve_tuple(decl.typ.results.as_ref(), function_scope);
@@ -780,16 +773,10 @@ impl<'ast> Checker<'ast> {
             })
             .unwrap_or_default();
         if result_types.len() > 1 {
-            self.unsupported(
-                Span::new(decl.pos(), decl.end()),
-                "multiple function results",
-            );
+            self.unsupported(Some(decl.node_id()), "multiple function results");
         }
         if result_types.iter().any(|typ| self.is_aggregate_type(*typ)) {
-            self.unsupported(
-                Span::new(decl.pos(), decl.end()),
-                "aggregate function result",
-            );
+            self.unsupported(Some(decl.node_id()), "aggregate function result");
         }
         if let TypeKind::Signature {
             params: params_slot,
@@ -820,8 +807,7 @@ impl<'ast> Checker<'ast> {
                 } else {
                     for ident in &field.names {
                         let name = self.symbols.intern(&ident.name);
-                        let span = ident_span(ident);
-                        let node = self.nodes.id_for(span);
+                        let anchor = Some(ident.node_id());
                         let object = self.declare_in_scope(
                             scope,
                             name,
@@ -829,9 +815,9 @@ impl<'ast> Checker<'ast> {
                                 index: vars.len() as u32,
                             },
                             Some(PackageId::from_raw(0)),
-                            span,
+                            anchor,
                             typ,
-                            Some(node),
+                            Some(ident.node_id()),
                         );
                         vars.push(object);
                     }
@@ -853,7 +839,7 @@ impl<'ast> Checker<'ast> {
             crate::types::NameId::default(),
             Some(PackageId::from_raw(0)),
             scope,
-            Span::new(field.pos(), field.end()),
+            Some(field.node_id()),
             typ,
         ))
     }
@@ -887,14 +873,12 @@ impl<'ast> Checker<'ast> {
                 results,
                 loop_depth: 0,
             };
-            self.info
-                .scopes
-                .insert(self.nodes.id_for(ident_span(&decl.name)), scope);
+            self.info.scopes.insert(decl.name.node_id(), scope);
             let returns = self.check_block(body, scope, &mut control);
             if !control.results.is_empty() && !returns {
                 self.diagnostics.error(
                     MISSING_RETURN,
-                    ident_span(&decl.name),
+                    Some(decl.name.node_id()),
                     "function with results may reach the end without returning",
                 );
             }
@@ -907,15 +891,10 @@ impl<'ast> Checker<'ast> {
         parent: ScopeId,
         control: &mut ControlContext,
     ) -> bool {
-        let scope = self.scopes.child(
-            parent,
-            ScopeKind::Block,
-            Span::new(block.pos(), block.end()),
-        );
-        self.info.scopes.insert(
-            self.nodes.id_for(Span::new(block.pos(), block.end())),
-            scope,
-        );
+        let scope = self
+            .scopes
+            .child(parent, ScopeKind::Block, Some(block.node_id()));
+        self.info.scopes.insert(block.node_id(), scope);
         let mut returns = false;
         for statement in &block.list {
             returns |= self.check_stmt(statement, scope, control);
@@ -937,24 +916,15 @@ impl<'ast> Checker<'ast> {
             }
             ast::Stmt::ExprStmt(statement) => {
                 if !is_call_expression(&statement.x) {
-                    self.unsupported(
-                        Span::new(statement.pos(), statement.end()),
-                        "non-call expression statement",
-                    );
+                    self.unsupported(Some(statement.node_id()), "non-call expression statement");
                 }
                 self.check_expr(&statement.x, scope);
             }
             ast::Stmt::AssignStmt(statement) => {
                 if statement.tok == Token::Define {
-                    self.unsupported(
-                        Span::new(statement.pos(), statement.end()),
-                        "short variable declaration",
-                    );
+                    self.unsupported(Some(statement.node_id()), "short variable declaration");
                 } else if statement.tok != Token::Assign {
-                    self.unsupported(
-                        Span::new(statement.pos(), statement.end()),
-                        "compound assignment",
-                    );
+                    self.unsupported(Some(statement.node_id()), "compound assignment");
                 }
                 self.check_assignment(&statement.lhs, &statement.rhs, scope);
             }
@@ -963,31 +933,26 @@ impl<'ast> Checker<'ast> {
                 if value.mode != ValueMode::Variable {
                     self.diagnostics.error(
                         EXPECTED_VARIABLE,
-                        Span::new(statement.x.pos(), statement.x.end()),
+                        Some(statement.x.node_id()),
                         "increment or decrement target is not assignable",
                     );
                 }
-                self.require_integer(&value, Span::new(statement.x.pos(), statement.x.end()));
+                self.require_integer(&value, Some(statement.x.node_id()));
             }
             ast::Stmt::ReturnStmt(statement) => {
                 self.check_return(statement, scope, control);
                 guaranteed_return = true;
             }
             ast::Stmt::IfStmt(statement) => {
-                let if_scope = self.scopes.child(
-                    scope,
-                    ScopeKind::Block,
-                    Span::new(statement.pos(), statement.end()),
-                );
+                let if_scope =
+                    self.scopes
+                        .child(scope, ScopeKind::Block, Some(statement.node_id()));
                 if let Some(init) = &statement.init {
-                    self.unsupported(Span::new(init.pos(), init.end()), "if initializer");
+                    self.unsupported(Some(init.node_id()), "if initializer");
                     self.check_stmt(init, if_scope, control);
                 }
                 let condition = self.check_expr(&statement.cond, if_scope);
-                self.require_boolean(
-                    &condition,
-                    Span::new(statement.cond.pos(), statement.cond.end()),
-                );
+                self.require_boolean(&condition, Some(statement.cond.node_id()));
                 let then_returns = self.check_block(&statement.body, if_scope, control);
                 let else_returns = statement
                     .else_
@@ -997,30 +962,19 @@ impl<'ast> Checker<'ast> {
                 guaranteed_return = then_returns && else_returns;
             }
             ast::Stmt::ForStmt(statement) => {
-                let for_scope = self.scopes.child(
-                    scope,
-                    ScopeKind::Block,
-                    Span::new(statement.pos(), statement.end()),
-                );
+                let for_scope =
+                    self.scopes
+                        .child(scope, ScopeKind::Block, Some(statement.node_id()));
                 if let Some(init) = &statement.init {
-                    self.unsupported(
-                        Span::new(init.pos(), init.end()),
-                        "three-clause for initializer",
-                    );
+                    self.unsupported(Some(init.node_id()), "three-clause for initializer");
                     self.check_stmt(init, for_scope, control);
                 }
                 if let Some(condition) = &statement.cond {
                     let condition_value = self.check_expr(condition, for_scope);
-                    self.require_boolean(
-                        &condition_value,
-                        Span::new(condition.pos(), condition.end()),
-                    );
+                    self.require_boolean(&condition_value, Some(condition.node_id()));
                 }
                 if let Some(post) = &statement.post {
-                    self.unsupported(
-                        Span::new(post.pos(), post.end()),
-                        "three-clause for post statement",
-                    );
+                    self.unsupported(Some(post.node_id()), "three-clause for post statement");
                     self.check_stmt(post, for_scope, control);
                 }
                 control.loop_depth += 1;
@@ -1029,33 +983,24 @@ impl<'ast> Checker<'ast> {
                 guaranteed_return = statement.cond.is_none() && body_returns;
             }
             ast::Stmt::LabeledStmt(statement) => {
-                self.unsupported(
-                    Span::new(statement.pos(), statement.end()),
-                    "labeled statement",
-                );
+                self.unsupported(Some(statement.node_id()), "labeled statement");
                 guaranteed_return = self.check_stmt(&statement.stmt, scope, control);
             }
             ast::Stmt::SendStmt(statement) => {
-                self.unsupported(
-                    Span::new(statement.pos(), statement.end()),
-                    "send statement",
-                );
+                self.unsupported(Some(statement.node_id()), "send statement");
                 self.check_expr(&statement.chan_, scope);
                 self.check_expr(&statement.value, scope);
             }
             ast::Stmt::GoStmt(statement) => {
-                self.unsupported(Span::new(statement.pos(), statement.end()), "go statement");
+                self.unsupported(Some(statement.node_id()), "go statement");
                 self.check_call(&statement.call, scope);
             }
             ast::Stmt::DeferStmt(statement) => {
-                self.unsupported(
-                    Span::new(statement.pos(), statement.end()),
-                    "defer statement",
-                );
+                self.unsupported(Some(statement.node_id()), "defer statement");
                 self.check_call(&statement.call, scope);
             }
             ast::Stmt::RangeStmt(statement) => {
-                self.unsupported(Span::new(statement.pos(), statement.end()), "range");
+                self.unsupported(Some(statement.node_id()), "range");
                 if let Some(key) = &statement.key {
                     self.check_expr(key, scope);
                 }
@@ -1066,7 +1011,7 @@ impl<'ast> Checker<'ast> {
                 self.check_block(&statement.body, scope, control);
             }
             ast::Stmt::SwitchStmt(statement) => {
-                self.unsupported(Span::new(statement.pos(), statement.end()), "switch");
+                self.unsupported(Some(statement.node_id()), "switch");
                 if let Some(init) = &statement.init {
                     self.check_stmt(init, scope, control);
                 }
@@ -1076,7 +1021,7 @@ impl<'ast> Checker<'ast> {
                 self.check_block(&statement.body, scope, control);
             }
             ast::Stmt::TypeSwitchStmt(statement) => {
-                self.unsupported(Span::new(statement.pos(), statement.end()), "type switch");
+                self.unsupported(Some(statement.node_id()), "type switch");
                 if let Some(init) = &statement.init {
                     self.check_stmt(init, scope, control);
                 }
@@ -1084,7 +1029,7 @@ impl<'ast> Checker<'ast> {
                 self.check_block(&statement.body, scope, control);
             }
             ast::Stmt::SelectStmt(statement) => {
-                self.unsupported(Span::new(statement.pos(), statement.end()), "select");
+                self.unsupported(Some(statement.node_id()), "select");
                 self.check_block(&statement.body, scope, control);
             }
             ast::Stmt::CaseClause(statement) => {
@@ -1123,45 +1068,35 @@ impl<'ast> Checker<'ast> {
         if values.len() != control.results.len() {
             self.diagnostics.error(
                 INVALID_RETURN,
-                Span::new(statement.pos(), statement.end()),
+                Some(statement.node_id()),
                 "return has an incorrect number of values",
             );
         }
         for (value, result) in values.iter().zip(&control.results) {
-            self.require_assignable(
-                value.typ,
-                *result,
-                Span::new(statement.pos(), statement.end()),
-            );
+            self.require_assignable(value.typ, *result, Some(statement.node_id()));
         }
     }
 
     fn check_branch(&mut self, statement: &ast::BranchStmt, control: &ControlContext) {
         if statement.label.is_some() {
-            self.unsupported(
-                Span::new(statement.pos(), statement.end()),
-                "labeled branch statement",
-            );
+            self.unsupported(Some(statement.node_id()), "labeled branch statement");
             return;
         }
         match statement.tok {
             Token::Break | Token::Continue if control.loop_depth > 0 => {}
             Token::Break | Token::Continue => self.diagnostics.error(
                 INVALID_BRANCH,
-                Span::new(statement.pos(), statement.end()),
+                Some(statement.node_id()),
                 "break or continue is only valid inside a for loop",
             ),
-            _ => self.unsupported(
-                Span::new(statement.pos(), statement.end()),
-                "labeled branch statement",
-            ),
+            _ => self.unsupported(Some(statement.node_id()), "labeled branch statement"),
         }
     }
 
-    fn unsupported(&mut self, span: Span, feature: &str) {
+    fn unsupported(&mut self, anchor: Option<AstNodeId>, feature: &str) {
         self.diagnostics.error(
             UNSUPPORTED_FEATURE,
-            span,
+            anchor,
             format!("{feature} is not supported by the MVP"),
         );
     }
@@ -1175,7 +1110,7 @@ impl<'ast> Checker<'ast> {
         let Some(main) = self.scopes.lookup_local(package_scope, name) else {
             self.diagnostics.error(
                 INVALID_ENTRY_POINT,
-                Span::default(),
+                None,
                 "MVP executable requires func main()",
             );
             return;
@@ -1184,7 +1119,7 @@ impl<'ast> Checker<'ast> {
         let ObjectKind::Func { signature, .. } = object.kind else {
             self.diagnostics.error(
                 INVALID_ENTRY_POINT,
-                object.span,
+                object.declaration,
                 "main must be declared as a function",
             );
             return;
@@ -1208,7 +1143,7 @@ impl<'ast> Checker<'ast> {
         if parameter_count != 0 || result_count != 0 {
             self.diagnostics.error(
                 INVALID_ENTRY_POINT,
-                object.span,
+                object.declaration,
                 "main must not have parameters or results",
             );
         }
@@ -1219,10 +1154,7 @@ impl<'ast> Checker<'ast> {
             return;
         };
         if declaration.tok != Token::Var {
-            self.unsupported(
-                Span::new(declaration.pos(), declaration.end()),
-                "local declaration",
-            );
+            self.unsupported(Some(declaration.node_id()), "local declaration");
             return;
         }
         for spec in &declaration.specs {
@@ -1250,7 +1182,7 @@ impl<'ast> Checker<'ast> {
             (None, Some(_)) => {
                 self.diagnostics.error(
                     MISSING_VARIABLE_TYPE,
-                    Span::new(spec.pos(), spec.end()),
+                    Some(spec.node_id()),
                     "cannot infer a variable type from nil",
                 );
                 TypeId::INVALID
@@ -1258,7 +1190,7 @@ impl<'ast> Checker<'ast> {
             (None, None) => {
                 self.diagnostics.error(
                     MISSING_VARIABLE_TYPE,
-                    Span::new(spec.pos(), spec.end()),
+                    Some(spec.node_id()),
                     "local variable requires an explicit type or an initializer",
                 );
                 TypeId::INVALID
@@ -1266,32 +1198,27 @@ impl<'ast> Checker<'ast> {
         };
         if let Some(explicit_type) = explicit_type {
             for value in &values {
-                self.require_assignable(
-                    value.typ,
-                    explicit_type,
-                    Span::new(spec.pos(), spec.end()),
-                );
+                self.require_assignable(value.typ, explicit_type, Some(spec.node_id()));
             }
         }
         if spec.names.len() != values.len() && !values.is_empty() {
             self.diagnostics.error(
                 TYPE_MISMATCH,
-                Span::new(spec.pos(), spec.end()),
+                Some(spec.node_id()),
                 "variable declaration has a different number of names and values",
             );
         }
         for ident in &spec.names {
             let name = self.symbols.intern(&ident.name);
-            let span = ident_span(ident);
-            let node = self.nodes.id_for(span);
+            let anchor = Some(ident.node_id());
             self.declare_in_scope(
                 scope,
                 name,
                 ObjectKind::Var { embedded: false },
                 Some(PackageId::from_raw(0)),
-                span,
+                anchor,
                 typ,
-                Some(node),
+                Some(ident.node_id()),
             );
         }
     }
@@ -1305,7 +1232,7 @@ impl<'ast> Checker<'ast> {
                 constant: parse_array_length(expr),
             },
             ast::Expr::BasicLit(_) => {
-                self.unsupported_value(Span::new(expr.pos(), expr.end()), "non-integer literal")
+                self.unsupported_value(Some(expr.node_id()), "non-integer literal")
             }
             ast::Expr::BadExpr(_) => self.invalid_value(),
             ast::Expr::ParenExpr(expr) => self.check_expr(&expr.x, scope),
@@ -1318,7 +1245,7 @@ impl<'ast> Checker<'ast> {
                         constant: None,
                     },
                     None => self.invalid_operation(
-                        Span::new(expr.pos(), expr.end()),
+                        Some(expr.node_id()),
                         "cannot dereference a non-pointer",
                     ),
                 }
@@ -1328,23 +1255,22 @@ impl<'ast> Checker<'ast> {
             ast::Expr::IndexExpr(expr) => {
                 let array = self.check_expr(&expr.x, scope);
                 let index = self.check_expr(&expr.index, scope);
-                self.require_integer(&index, Span::new(expr.index.pos(), expr.index.end()));
+                self.require_integer(&index, Some(expr.index.node_id()));
                 match self.types.array_element(array.typ) {
                     Some(typ) => TypeAndValue {
                         typ,
                         mode: ValueMode::Variable,
                         constant: None,
                     },
-                    None => self.invalid_operation(
-                        Span::new(expr.pos(), expr.end()),
-                        "indexing requires an array",
-                    ),
+                    None => {
+                        self.invalid_operation(Some(expr.node_id()), "indexing requires an array")
+                    }
                 }
             }
             ast::Expr::SelectorExpr(expr) => self.check_selector(expr, scope),
             ast::Expr::CallExpr(expr) => self.check_call(expr, scope),
             ast::Expr::SliceExpr(expr) => {
-                self.unsupported(Span::new(expr.pos(), expr.end()), "slice expression");
+                self.unsupported(Some(expr.node_id()), "slice expression");
                 self.check_expr(&expr.x, scope);
                 if let Some(low) = &expr.low {
                     self.check_expr(low, scope);
@@ -1358,7 +1284,7 @@ impl<'ast> Checker<'ast> {
                 self.invalid_value()
             }
             ast::Expr::IndexListExpr(expr) => {
-                self.unsupported(Span::new(expr.pos(), expr.end()), "generic index list");
+                self.unsupported(Some(expr.node_id()), "generic index list");
                 self.check_expr(&expr.x, scope);
                 for index in &expr.indices {
                     self.check_expr(index, scope);
@@ -1366,23 +1292,23 @@ impl<'ast> Checker<'ast> {
                 self.invalid_value()
             }
             ast::Expr::KeyValueExpr(expr) => {
-                self.unsupported(Span::new(expr.pos(), expr.end()), "key-value expression");
+                self.unsupported(Some(expr.node_id()), "key-value expression");
                 self.check_expr(&expr.key, scope);
                 self.check_expr(&expr.value, scope);
                 self.invalid_value()
             }
             ast::Expr::CompositeLit(expr) => {
-                self.unsupported(Span::new(expr.pos(), expr.end()), "composite literal");
+                self.unsupported(Some(expr.node_id()), "composite literal");
                 for element in &expr.elts {
                     self.check_expr(element, scope);
                 }
                 self.invalid_value()
             }
             ast::Expr::FuncLit(_) => {
-                self.unsupported_value(Span::new(expr.pos(), expr.end()), "function literal")
+                self.unsupported_value(Some(expr.node_id()), "function literal")
             }
             ast::Expr::TypeAssertExpr(expr) => {
-                self.unsupported(Span::new(expr.pos(), expr.end()), "type assertion");
+                self.unsupported(Some(expr.node_id()), "type assertion");
                 self.check_expr(&expr.x, scope);
                 self.invalid_value()
             }
@@ -1392,15 +1318,11 @@ impl<'ast> Checker<'ast> {
             | ast::Expr::FuncType(_)
             | ast::Expr::InterfaceType(_)
             | ast::Expr::MapType(_)
-            | ast::Expr::ChanType(_) => self.unsupported_value(
-                Span::new(expr.pos(), expr.end()),
-                "type syntax in value expression",
-            ),
+            | ast::Expr::ChanType(_) => {
+                self.unsupported_value(Some(expr.node_id()), "type syntax in value expression")
+            }
         };
-        self.info.types.insert(
-            self.nodes.id_for(Span::new(expr.pos(), expr.end())),
-            result.clone(),
-        );
+        self.info.types.insert(expr.node_id(), result.clone());
         result
     }
 
@@ -1410,10 +1332,7 @@ impl<'ast> Checker<'ast> {
             params, results, ..
         } = self.types.get(function.typ).kind
         else {
-            return self.invalid_operation(
-                Span::new(call.pos(), call.end()),
-                "call requires a function",
-            );
+            return self.invalid_operation(Some(call.node_id()), "call requires a function");
         };
         let parameter_count = self
             .types
@@ -1423,7 +1342,7 @@ impl<'ast> Checker<'ast> {
         if call.args.len() != parameter_count {
             self.diagnostics.error(
                 TYPE_MISMATCH,
-                Span::new(call.pos(), call.end()),
+                Some(call.node_id()),
                 "function call has an incorrect number of arguments",
             );
         }
@@ -1437,7 +1356,7 @@ impl<'ast> Checker<'ast> {
                 self.require_assignable(
                     argument.typ,
                     self.symbols.object(*parameter).typ,
-                    Span::new(call.pos(), call.end()),
+                    Some(call.node_id()),
                 );
             }
         }
@@ -1488,9 +1407,7 @@ impl<'ast> Checker<'ast> {
                 mode: ValueMode::Value,
                 constant: None,
             },
-            _ => {
-                self.invalid_operation(Span::new(expr.pos(), expr.end()), "invalid unary operation")
-            }
+            _ => self.invalid_operation(Some(expr.node_id()), "invalid unary operation"),
         }
     }
 
@@ -1499,9 +1416,9 @@ impl<'ast> Checker<'ast> {
         let right = self.check_expr(&expr.y, scope);
         match expr.op {
             Token::Add | Token::Sub | Token::Mul | Token::Quo | Token::Rem => {
-                self.require_integer(&left, Span::new(expr.x.pos(), expr.x.end()));
-                self.require_integer(&right, Span::new(expr.y.pos(), expr.y.end()));
-                self.require_assignable(right.typ, left.typ, Span::new(expr.pos(), expr.end()));
+                self.require_integer(&left, Some(expr.x.node_id()));
+                self.require_integer(&right, Some(expr.y.node_id()));
+                self.require_assignable(right.typ, left.typ, Some(expr.node_id()));
                 TypeAndValue {
                     typ: left.typ,
                     mode: ValueMode::Value,
@@ -1509,9 +1426,9 @@ impl<'ast> Checker<'ast> {
                 }
             }
             Token::Less | Token::Leq | Token::Greater | Token::Geq => {
-                self.require_integer(&left, Span::new(expr.x.pos(), expr.x.end()));
-                self.require_integer(&right, Span::new(expr.y.pos(), expr.y.end()));
-                self.require_assignable(right.typ, left.typ, Span::new(expr.pos(), expr.end()));
+                self.require_integer(&left, Some(expr.x.node_id()));
+                self.require_integer(&right, Some(expr.y.node_id()));
+                self.require_assignable(right.typ, left.typ, Some(expr.node_id()));
                 TypeAndValue {
                     typ: self
                         .predeclared
@@ -1529,11 +1446,11 @@ impl<'ast> Checker<'ast> {
                 if left.typ != TypeId::INVALID && !self.types.comparable(left.typ) {
                     self.diagnostics.error(
                         INVALID_OPERATION,
-                        Span::new(expr.x.pos(), expr.x.end()),
+                        Some(expr.x.node_id()),
                         "equality comparison requires a comparable operand",
                     );
                 }
-                self.require_assignable(right.typ, left.typ, Span::new(expr.pos(), expr.end()));
+                self.require_assignable(right.typ, left.typ, Some(expr.node_id()));
                 TypeAndValue {
                     typ: self
                         .predeclared
@@ -1544,8 +1461,8 @@ impl<'ast> Checker<'ast> {
                 }
             }
             Token::LAnd | Token::LOr => {
-                self.require_boolean(&left, Span::new(expr.x.pos(), expr.x.end()));
-                self.require_boolean(&right, Span::new(expr.y.pos(), expr.y.end()));
+                self.require_boolean(&left, Some(expr.x.node_id()));
+                self.require_boolean(&right, Some(expr.y.node_id()));
                 TypeAndValue {
                     typ: self
                         .predeclared
@@ -1555,10 +1472,7 @@ impl<'ast> Checker<'ast> {
                     constant: self.fold_boolean_binary(expr.op, &left.constant, &right.constant),
                 }
             }
-            _ => self.invalid_operation(
-                Span::new(expr.pos(), expr.end()),
-                "invalid binary operation",
-            ),
+            _ => self.invalid_operation(Some(expr.node_id()), "invalid binary operation"),
         }
     }
 
@@ -1571,10 +1485,8 @@ impl<'ast> Checker<'ast> {
             indirect = true;
         }
         let TypeKind::Struct { fields } = &self.types.get(self.types.underlying(typ)).kind else {
-            return self.invalid_operation(
-                Span::new(expr.pos(), expr.end()),
-                "field selection requires a struct",
-            );
+            return self
+                .invalid_operation(Some(expr.node_id()), "field selection requires a struct");
         };
         let name = self.symbols.intern(&expr.sel.name);
         let Some((index, field)) = fields
@@ -1582,11 +1494,11 @@ impl<'ast> Checker<'ast> {
             .enumerate()
             .find(|(_, field)| self.symbols.object(**field).name == name)
         else {
-            return self.invalid_operation(ident_span(&expr.sel), "unknown struct field");
+            return self.invalid_operation(Some(expr.sel.node_id()), "unknown struct field");
         };
         let field = *field;
         self.info.selections.insert(
-            self.nodes.id_for(Span::new(expr.pos(), expr.end())),
+            expr.node_id(),
             crate::types::Selection {
                 object: field,
                 kind: crate::types::SelectionKind::Field,
@@ -1605,7 +1517,7 @@ impl<'ast> Checker<'ast> {
         if lhs.len() != rhs.len() {
             self.diagnostics.error(
                 TYPE_MISMATCH,
-                Span::default(),
+                None,
                 "assignment has a different number of left and right values",
             );
         }
@@ -1615,7 +1527,7 @@ impl<'ast> Checker<'ast> {
                 if right.mode == ValueMode::NoValue {
                     self.diagnostics.error(
                         INVALID_OPERATION,
-                        Span::new(right_expr.pos(), right_expr.end()),
+                        Some(right_expr.node_id()),
                         "blank assignment requires a value",
                     );
                 }
@@ -1626,18 +1538,18 @@ impl<'ast> Checker<'ast> {
             if left.mode != ValueMode::Variable {
                 self.diagnostics.error(
                     EXPECTED_VARIABLE,
-                    Span::default(),
+                    None,
                     "assignment target is not assignable",
                 );
             }
-            self.require_assignable(right.typ, left.typ, Span::default());
+            self.require_assignable(right.typ, left.typ, None);
         }
     }
 
     fn bind_value_name(&mut self, ident: &ast::Ident, scope: ScopeId) -> TypeAndValue {
         if ident.name == "_" {
             return self.invalid_operation(
-                ident_span(ident),
+                Some(ident.node_id()),
                 "blank identifier cannot be used as a value",
             );
         }
@@ -1645,26 +1557,27 @@ impl<'ast> Checker<'ast> {
         let Some(resolved) = self.scopes.lookup(scope, name) else {
             self.diagnostics.error(
                 UNDEFINED_NAME,
-                ident_span(ident),
+                Some(ident.node_id()),
                 format!("undefined name `{}`", ident.name),
             );
             return self.invalid_value();
         };
-        if self.global_initializers.contains_key(&resolved.object) {
+        if self
+            .pending_global_initializers
+            .contains_key(&resolved.object)
+        {
             self.resolve_global(resolved.object);
         }
         let object = self.symbols.object(resolved.object);
         if matches!(&object.kind, ObjectKind::TypeName { .. }) {
             self.diagnostics.error(
                 TYPE_USED_AS_VALUE,
-                ident_span(ident),
+                Some(ident.node_id()),
                 format!("type `{}` used as a value", ident.name),
             );
             return self.invalid_value();
         }
-        self.info
-            .uses
-            .insert(self.nodes.id_for(ident_span(ident)), resolved.object);
+        self.info.uses.insert(ident.node_id(), resolved.object);
         let mode = match object.kind {
             ObjectKind::Var { .. } | ObjectKind::Param { .. } => ValueMode::Variable,
             ObjectKind::Nil => ValueMode::Nil,
@@ -1689,13 +1602,13 @@ impl<'ast> Checker<'ast> {
         }
     }
 
-    fn invalid_operation(&mut self, span: Span, message: &str) -> TypeAndValue {
-        self.diagnostics.error(INVALID_OPERATION, span, message);
+    fn invalid_operation(&mut self, anchor: Option<AstNodeId>, message: &str) -> TypeAndValue {
+        self.diagnostics.error(INVALID_OPERATION, anchor, message);
         self.invalid_value()
     }
 
-    fn unsupported_value(&mut self, span: Span, feature: &str) -> TypeAndValue {
-        self.unsupported(span, feature);
+    fn unsupported_value(&mut self, anchor: Option<AstNodeId>, feature: &str) -> TypeAndValue {
+        self.unsupported(anchor, feature);
         self.invalid_value()
     }
 
@@ -1706,21 +1619,21 @@ impl<'ast> Checker<'ast> {
         )
     }
 
-    fn require_assignable(&mut self, source: TypeId, target: TypeId, span: Span) {
+    fn require_assignable(&mut self, source: TypeId, target: TypeId, anchor: Option<AstNodeId>) {
         if !self.types.assignable_to(source, target) {
             self.diagnostics.error(
                 TYPE_MISMATCH,
-                span,
+                anchor,
                 "value is not assignable to the target type",
             );
         }
     }
 
-    fn require_integer(&mut self, value: &TypeAndValue, span: Span) {
+    fn require_integer(&mut self, value: &TypeAndValue, anchor: Option<AstNodeId>) {
         if value.typ != TypeId::INVALID && !self.is_integer_type(value.typ) {
             self.diagnostics.error(
                 INVALID_OPERATION,
-                span,
+                anchor,
                 "operation requires an integer operand",
             );
         }
@@ -1730,10 +1643,10 @@ impl<'ast> Checker<'ast> {
         self.types.is_basic(typ, BasicType::Int) || self.types.is_basic(typ, BasicType::Byte)
     }
 
-    fn require_boolean(&mut self, value: &TypeAndValue, span: Span) {
+    fn require_boolean(&mut self, value: &TypeAndValue, anchor: Option<AstNodeId>) {
         if value.typ != TypeId::INVALID && !self.types.is_basic(value.typ, BasicType::Bool) {
             self.diagnostics
-                .error(EXPECTED_BOOLEAN, span, "condition must have type bool");
+                .error(EXPECTED_BOOLEAN, anchor, "condition must have type bool");
         }
     }
 
@@ -1815,7 +1728,7 @@ impl<'ast> Checker<'ast> {
                 is_alias: false,
             },
             None,
-            Span::default(),
+            None,
             typ,
             None,
         );
@@ -1828,7 +1741,7 @@ impl<'ast> Checker<'ast> {
             name,
             ObjectKind::Const { value },
             None,
-            Span::default(),
+            None,
             typ,
             None,
         );
@@ -1841,7 +1754,7 @@ impl<'ast> Checker<'ast> {
             name,
             ObjectKind::Nil,
             None,
-            Span::default(),
+            None,
             TypeId::INVALID,
             None,
         );
@@ -1854,16 +1767,15 @@ impl<'ast> Checker<'ast> {
         name: crate::types::NameId,
         typ: TypeId,
     ) -> ObjectId {
-        let span = ident_span(ident);
-        let node = self.nodes.id_for(span);
+        let anchor = Some(ident.node_id());
         let object = self.declare_in_scope(
             self.package_scope.expect("package scope must exist"),
             name,
             kind,
             Some(PackageId::from_raw(0)),
-            span,
+            anchor,
             typ,
-            Some(node),
+            Some(ident.node_id()),
         );
         object
     }
@@ -1875,40 +1787,50 @@ impl<'ast> Checker<'ast> {
         name: crate::types::NameId,
         kind: ObjectKind,
         package: Option<PackageId>,
-        span: Span,
+        anchor: Option<AstNodeId>,
         typ: TypeId,
-        definition: Option<NodeId>,
+        definition: Option<AstNodeId>,
     ) -> ObjectId {
         let object = self
             .symbols
-            .alloc(declared_object(kind, name, package, scope, span, typ));
+            .alloc(declared_object(kind, name, package, scope, anchor, typ));
         if let Some(node) = definition {
             self.info.defs.insert(node, object);
         }
 
         if let Err(error) = self.scopes.declare(scope, name, object) {
             match error {
-                DeclareError::Duplicate(duplicate) => self.report_duplicate(span, duplicate),
+                DeclareError::Duplicate(duplicate) => self.report_duplicate(anchor, duplicate),
                 DeclareError::UnknownScope(_) => unreachable!("checker created an invalid scope"),
             }
         }
         object
     }
 
-    fn report_duplicate(&mut self, span: Span, duplicate: DuplicateDeclaration) {
+    fn report_duplicate(&mut self, anchor: Option<AstNodeId>, duplicate: DuplicateDeclaration) {
         let previous = self.symbols.object(duplicate.existing);
         self.diagnostics.push(
             Diagnostic::new(
                 gane_diagnostics::Severity::Error,
                 DUPLICATE_DECLARATION,
-                span,
-                "duplicate declaration in scope",
+                Label::new(anchor, "duplicate declaration in scope"),
             )
-            .with_secondary(Label::new(previous.span, "previous declaration is here")),
+            .with_secondary(Label::new(
+                previous.declaration,
+                "previous declaration is here",
+            )),
         );
     }
 
     fn finish(self) -> AnalysisResult {
+        let mut diagnostics = self.diagnostics;
+        diagnostics.capture_positions(|id| {
+            self.input.files.iter().find_map(|file| {
+                ast::preorder(ast::NodeRef::File(file.ast))
+                    .find(|node| node.node_id() == id)
+                    .map(|node| node.pos())
+            })
+        });
         let package = Package {
             id: PackageId::from_raw(0),
             name: self.package_name.expect("package name must be initialized"),
@@ -1925,15 +1847,11 @@ impl<'ast> Checker<'ast> {
             symbols: self.symbols,
             scopes: self.scopes,
             file_scopes: self.file_scopes,
-            nodes: self.nodes,
             info: self.info,
-            diagnostics: self.diagnostics.finish(),
+            global_initializers: self.resolved_global_initializers,
+            diagnostics: diagnostics.finish(),
         }
     }
-}
-
-fn ident_span(ident: &ast::Ident) -> Span {
-    Span::new(ident.pos(), ident.end())
 }
 
 fn parse_array_length(expr: &ast::Expr) -> Option<ConstValue> {
@@ -1970,7 +1888,7 @@ fn is_call_expression(mut expr: &ast::Expr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gane_parser::{parser::parse_file, parser::Mode, token::FileSet};
+    use gane_parser::{parser::Mode, parser::parse_file, token::FileSet};
 
     fn analyze(source: &str) -> AnalysisResult {
         let mut files = FileSet::new();
@@ -2057,7 +1975,7 @@ mod tests {
         }
 
         let main = result.package_member("main").unwrap();
-        let main_node = result.nodes.get(result.symbols.object(main).span).unwrap();
+        let main_node = result.symbols.object(main).declaration.unwrap();
         let function_scope = result.info.scopes[&main_node];
         assert_eq!(
             result.scopes.scope(function_scope).unwrap().parent,
@@ -2106,13 +2024,50 @@ mod tests {
     }
 
     #[test]
+    fn rejects_package_files_from_different_file_sets() {
+        let mut first_set = FileSet::new();
+        let (first, first_errors) = parse_file(
+            &mut first_set,
+            "first.go",
+            b"package main\nvar value int\n",
+            Mode::default(),
+        );
+        let mut second_set = FileSet::new();
+        let (second, second_errors) = parse_file(
+            &mut second_set,
+            "second.go",
+            b"package main\nfunc main() {}\n",
+            Mode::default(),
+        );
+        assert!(first_errors.is_none() && second_errors.is_none());
+
+        let result = analyze_package(PackageInput {
+            path: PackagePath("main".to_owned()),
+            files: vec![
+                PackageFile {
+                    id: FileId::from_raw(1),
+                    ast: &first,
+                },
+                PackageFile {
+                    id: FileId::from_raw(2),
+                    ast: &second,
+                },
+            ],
+        });
+
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == MIXED_FILESET)
+        );
+    }
+
+    #[test]
     fn reports_cross_file_package_duplicates() {
         let result = analyze_files(&[
             ("first.go", "package main\nvar value int\n"),
-            (
-                "second.go",
-                "package main\nvar value int\nfunc main() {}\n",
-            ),
+            ("second.go", "package main\nvar value int\nfunc main() {}\n"),
         ]);
 
         assert_eq!(
@@ -2132,10 +2087,12 @@ mod tests {
             "package main\nimport \"foreign\"\nfunc main() {}\n",
         )]);
 
-        assert!(result
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE));
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE)
+        );
         let scope = result.file_scope(FileId::from_raw(1)).unwrap();
         assert!(result.scopes.scope(scope).unwrap().names.is_empty());
     }
@@ -2192,10 +2149,12 @@ mod tests {
         assert!(valid.diagnostics.is_empty());
 
         let invalid = analyze("package main\ntype Loop struct { next Loop }\n");
-        assert!(invalid
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == INVALID_RECURSIVE_TYPE));
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == INVALID_RECURSIVE_TYPE)
+        );
     }
 
     #[test]
@@ -2212,20 +2171,24 @@ mod tests {
         assert_eq!(result.info.defs.len(), 5);
         assert_eq!(result.info.uses.len(), 3);
         assert!(result.info.scopes.len() >= 3);
-        assert!(result
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == UNDEFINED_NAME));
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == UNDEFINED_NAME)
+        );
     }
 
     #[test]
     fn reports_type_names_used_as_values() {
         let result = analyze("package main\nfunc f() { int = 1 }\n");
 
-        assert!(result
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == TYPE_USED_AS_VALUE));
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == TYPE_USED_AS_VALUE)
+        );
     }
 
     #[test]
@@ -2273,14 +2236,18 @@ mod tests {
              }\n",
         );
 
-        assert!(result
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == TYPE_MISMATCH));
-        assert!(result
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == EXPECTED_BOOLEAN));
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == TYPE_MISMATCH)
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == EXPECTED_BOOLEAN)
+        );
     }
 
     #[test]
@@ -2294,16 +2261,20 @@ mod tests {
         );
         assert!(errors.is_none());
         let missing = analyze_package(PackageInput::single("main", FileId::from_raw(1), &missing));
-        assert!(missing
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == INVALID_ENTRY_POINT));
+        assert!(
+            missing
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == INVALID_ENTRY_POINT)
+        );
 
         let invalid = analyze("package main\nfunc main(value int) {}\n");
-        assert!(invalid
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == INVALID_ENTRY_POINT));
+        assert!(
+            invalid
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == INVALID_ENTRY_POINT)
+        );
     }
 
     #[test]
@@ -2312,10 +2283,12 @@ mod tests {
             "package main\n\
              func choose(ok bool) int { if ok { return 1 } }\n",
         );
-        assert!(missing
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == MISSING_RETURN));
+        assert!(
+            missing
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == MISSING_RETURN)
+        );
 
         let valid = analyze(
             "package main\n\
@@ -2324,24 +2297,30 @@ mod tests {
         assert!(valid.diagnostics.is_empty());
 
         let invalid_return = analyze("package main\nfunc helper() { return 1 }\n");
-        assert!(invalid_return
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == INVALID_RETURN));
+        assert!(
+            invalid_return
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == INVALID_RETURN)
+        );
     }
 
     #[test]
     fn validates_branch_context_and_rejects_mvp_features() {
         let result = analyze("package main\nfunc main() { break; value := 1 }\n");
 
-        assert!(result
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == INVALID_BRANCH));
-        assert!(result
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE));
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == INVALID_BRANCH)
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == UNSUPPORTED_FEATURE)
+        );
     }
 
     #[test]
@@ -2438,7 +2417,7 @@ mod tests {
         );
         assert!(result.diagnostics.iter().any(|diagnostic| {
             diagnostic.code == UNSUPPORTED_FEATURE
-                && diagnostic.message
+                && diagnostic.message()
                     == "function declaration without a body is not supported by the MVP"
         }));
     }
@@ -2525,15 +2504,19 @@ mod tests {
     #[test]
     fn reports_global_initialization_cycles_and_type_mismatches() {
         let cycle = analyze("package main\nvar first = second\nvar second = first\n");
-        assert!(cycle
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.message == "initialization cycle"));
+        assert!(
+            cycle
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message() == "initialization cycle")
+        );
 
         let mismatch = analyze("package main\nvar ready bool = 1\n");
-        assert!(mismatch
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == TYPE_MISMATCH));
+        assert!(
+            mismatch
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == TYPE_MISMATCH)
+        );
     }
 }

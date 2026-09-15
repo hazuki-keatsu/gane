@@ -60,7 +60,7 @@ let analysis = analyze_package(PackageInput::single(
 assert!(!analysis.has_errors());
 ```
 
-多文件 package 必须使用同一个 `FileSet` 解析所有文件；这使所有 `Span` 位于同一坐标系，诊断才能定位到正确文件。
+多文件 package 必须使用同一个 `FileSet` 解析所有文件；这样它们的 `Pos` 位于同一文件位置空间，诊断可在 sema 完成前从对应 AST 捕获位置。
 
 ```rust
 use gane_sema::{FileId, PackageFile, PackageInput, PackagePath};
@@ -128,7 +128,7 @@ TypeId     一个语义类型
 TupleId    函数参数/结果 tuple
 ScopeId    一个词法作用域
 FileId     PackageInput 中一个源文件
-NodeId     一个 AST span 在本次 checker 中的节点身份
+AstNodeId  parser 为一个 AST 节点分配的稳定身份
 PackageId  package 身份（当前 MVP 内部使用 0）
 ```
 
@@ -157,7 +157,7 @@ source identifier
       └─ use         ── SemanticInfo.uses ──► ObjectId
                                                  │
                                                  ├─ Object.kind
-                                                 ├─ Object.span
+                                                 ├─ Object.declaration: AstNodeId
                                                  ├─ Object.parent: ScopeId
                                                  └─ Object.typ: TypeId
                                                                     │
@@ -172,7 +172,7 @@ source identifier
 - `name`：`NameId`，通过 `AnalysisResult::name` 还原拼写；
 - `package`：所属 package；
 - `parent`：声明所在 scope；
-- `span`：声明位置；
+- `declaration`：声明节点的 `AstNodeId`（若来自源码）；
 - `typ`：该实体的 `TypeId`。
 
 顶层 type/const/var/func 的 `parent` 是 package scope。它们**不**属于 file scope：同一 package 的其他文件必须能看见这些声明。
@@ -280,11 +280,11 @@ PackageInput.files
 let scope = analysis.file_scope(FileId::from_raw(1));
 ```
 
-外部不能枚举该 scope 的 names，因为 `ScopeArena` 仍是内部实现。对当前调用方而言，`ScopeId` 可用于记录、比较或关联语义事实；真正查询声明/类型应使用下节的 `AnalysisResult` 和 `SemanticInfo` API。
+外部不能枚举该 scope 的 names，因为 `ScopeArena` 仍是内部实现。对当前调用方而言，`ScopeId` 可用于记录、比较或关联语义事实；真正查询声明/类型应使用下节的 `AnalysisResult` API。
 
-## 7. `SemanticInfo`：AST 与语义结果的连接
+## 7. AST node identity：语义结果的连接
 
-`SemanticInfo` 是 node 级事实表。它不拥有 arena，也不做名字查找。它的 key 是 checker 由 AST `Span` 分配的 `NodeId`：
+`SemanticInfo` 是 sema 内部的 node 级事实表。它不拥有 arena，也不做名字查找；其 key 是 parser 直接写入 AST 的 `AstNodeId`，而非源码范围。同一 package 的文件必须由同一个 `FileSet` 解析；`AstNodeId` 也包含 parse-session 身份，以免不同 `FileSet` 的节点碰撞。
 
 | 字段 | key | value | 含义 |
 | --- | --- | --- | --- |
@@ -299,23 +299,18 @@ let scope = analysis.file_scope(FileId::from_raw(1));
 典型查询模式：
 
 ```rust
-use gane_diagnostics::Span;
+// 1. AST 节点直接提供 parser-assigned ID。
+let node = ident.node_id();
 
-// 1. 从 AST identifier 或 expression 得到其 span。
-let span = Span::new(ident.pos(), ident.end());
-
-// 2. 取得本次 analysis 中分配的 NodeId。
-let node = analysis.node_at(span).expect("node was checked");
-
-// 3a. 声明点：defs → ObjectId → TypeId → Type。
-let object = analysis.info.defs[&node];
+// 2a. 声明点：defs → ObjectId → TypeId → Type。
+let object = analysis.definition(node).expect("node was checked");
 let typ = analysis.type_of(analysis.object(object).typ);
 
-// 3b. 使用点：uses → ObjectId。
-let resolved = analysis.info.uses[&node];
+// 2b. 使用点：uses → ObjectId。
+let resolved = analysis.use_of(node);
 
-// 3c. 任意已检查 expression：直接查询 TypeAndValue。
-let value = &analysis.info.types[&node];
+// 2c. 任意已检查 expression：直接查询 TypeAndValue。
+let value = analysis.type_and_value(expr.node_id()).expect("expression was checked");
 let expression_type = analysis.type_of(value.typ);
 ```
 
@@ -424,6 +419,8 @@ E2401  invalid return
 E2405  unsupported MVP feature
 ```
 
+checker 产出以 `AstNodeId` 为锚点的 `Diagnostic`。诊断在 sema 完成前从 AST 捕获私有 `Pos`；调用方在拥有原始 `FileSet` 时调用 `Diagnostic::display_with` 或 `position` 解析为人可读的位置。
+
 checker 不会因单个错误停止：
 
 - 无效类型传播 `TypeId::INVALID`；
@@ -444,7 +441,11 @@ analysis.type_of(type_id)
 analysis.tuple(tuple_id)
 analysis.package_member("name")
 analysis.file_scope(file_id)
-analysis.node_at(span)
+analysis.definition(node_id)
+analysis.use_of(node_id)
+analysis.type_and_value(node_id)
+analysis.selection(node_id)
+analysis.global_initializer(object_id)
 analysis.underlying_type(type_id)
 analysis.identical_types(left, right)
 analysis.is_assignable(source, target)

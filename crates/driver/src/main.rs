@@ -22,9 +22,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use gane_parser::parser::{parse_file, Mode};
+use gane_parser::parser::{Mode, parse_file};
 use gane_parser::token::FileSet;
-use gane_sema::{analyze_package, FileId, PackageInput};
+use gane_sema::{FileId, PackageInput, analyze_package};
 
 const USAGE: &str = "\
 usage: gane-driver <file.go> [output-dir]

@@ -4,7 +4,7 @@
 //! Objects, scopes, packages, and checker results use the same stable arena IDs
 //! so they can refer to recursive declarations without Rust reference cycles.
 
-use gane_diagnostics::Span;
+use gane_parser::token::AstNodeId;
 use std::collections::{BTreeMap, HashMap};
 
 macro_rules! arena_id {
@@ -28,7 +28,6 @@ arena_id!(ObjectId);
 arena_id!(ScopeId);
 arena_id!(NameId);
 arena_id!(PackageId);
-arena_id!(NodeId);
 arena_id!(FileId);
 arena_id!(TupleId);
 
@@ -54,7 +53,8 @@ pub struct Object {
     pub name: NameId,
     pub package: Option<PackageId>,
     pub parent: ScopeId,
-    pub span: Span,
+    /// Source declaration identity, if this object originates in source.
+    pub declaration: Option<AstNodeId>,
     /// Always valid; semantic errors use [`TypeId::INVALID`].
     pub typ: TypeId,
 }
@@ -165,7 +165,7 @@ pub struct Scope {
     #[allow(dead_code)]
     pub kind: ScopeKind,
     #[allow(dead_code)]
-    pub span: Span,
+    pub anchor: Option<AstNodeId>,
     /// BTreeMap gives deterministic diagnostics and test output.
     pub names: BTreeMap<NameId, ObjectId>,
 }
@@ -416,11 +416,11 @@ impl TypeArena {
 /// Immutable semantic facts made available after checking a package.
 #[derive(Clone, Debug, Default)]
 pub struct SemanticInfo {
-    pub defs: HashMap<NodeId, ObjectId>,
-    pub uses: HashMap<NodeId, ObjectId>,
-    pub types: HashMap<NodeId, TypeAndValue>,
-    pub scopes: HashMap<NodeId, ScopeId>,
-    pub selections: HashMap<NodeId, Selection>,
+    pub(crate) defs: HashMap<AstNodeId, ObjectId>,
+    pub(crate) uses: HashMap<AstNodeId, ObjectId>,
+    pub(crate) types: HashMap<AstNodeId, TypeAndValue>,
+    pub(crate) scopes: HashMap<AstNodeId, ScopeId>,
+    pub(crate) selections: HashMap<AstNodeId, Selection>,
 }
 
 #[derive(Clone, Debug)]

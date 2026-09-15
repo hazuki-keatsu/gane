@@ -1,36 +1,12 @@
 //! Shared diagnostic data structures for the Gane toolchain.
 //!
-//! Source locations are represented by the parser's [`FileSet`] and [`Pos`],
+//! Source locations are represented by the parser's [`FileSet`] and `Pos`,
 //! which remain the single source of truth for file and line information.
 
 use std::cmp::Ordering;
 use std::fmt;
 
-use gane_parser::token::{FileSet, Pos, Position};
-
-/// A half-open source range represented in the parser's file set.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Span {
-    pub start: Pos,
-    pub end: Pos,
-}
-
-impl Span {
-    pub const fn new(start: Pos, end: Pos) -> Self {
-        Self { start, end }
-    }
-
-    pub const fn point(pos: Pos) -> Self {
-        Self::new(pos, pos)
-    }
-    pub fn start_position(self, files: &FileSet) -> Position {
-        files.position(self.start)
-    }
-
-    pub fn end_position(self, files: &FileSet) -> Position {
-        files.position(self.end)
-    }
-}
+use gane_parser::token::{AstNodeId, FileSet, Pos, Position};
 
 /// The impact of a diagnostic on analysis.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -51,43 +27,52 @@ impl fmt::Display for DiagnosticCode {
     }
 }
 
-/// A source range explaining or qualifying a diagnostic.
+/// A diagnostic location anchored to an AST node.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Label {
-    pub span: Span,
+    pub node: Option<AstNodeId>,
     pub message: String,
+    position: Option<Pos>,
 }
 
 impl Label {
-    pub fn new(span: Span, message: impl Into<String>) -> Self {
+    pub fn new(node: Option<AstNodeId>, message: impl Into<String>) -> Self {
         Self {
-            span,
+            node,
             message: message.into(),
+            position: None,
         }
+    }
+
+    fn capture_position(&mut self, locate: &mut impl FnMut(AstNodeId) -> Option<Pos>) {
+        self.position = self.node.and_then(locate);
+    }
+
+    fn position(&self, files: &FileSet) -> Position {
+        self.position
+            .map(|pos| files.position(pos))
+            .unwrap_or_default()
     }
 }
 
-/// One user-visible diagnostic with a primary source range.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+/// A user-visible diagnostic anchored to parser-assigned AST node identities.
+///
+/// Source positions are resolved only when a caller supplies the [`FileSet`]
+/// that parsed the source. Diagnostics store AST identities rather than source
+/// ranges.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Diagnostic {
     pub severity: Severity,
     pub code: DiagnosticCode,
-    pub message: String,
-    pub primary: Span,
+    pub primary: Label,
     pub secondary: Vec<Label>,
 }
 
 impl Diagnostic {
-    pub fn new(
-        severity: Severity,
-        code: DiagnosticCode,
-        primary: Span,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn new(severity: Severity, code: DiagnosticCode, primary: Label) -> Self {
         Self {
             severity,
             code,
-            message: message.into(),
             primary,
             secondary: Vec::new(),
         }
@@ -98,13 +83,29 @@ impl Diagnostic {
         self
     }
 
+    /// Captures source positions for this diagnostic's node anchors.
+    ///
+    /// This is called while the producer still owns the AST. The captured
+    /// positions are private diagnostic data; [`AstNodeId`] is not resolved
+    /// through [`FileSet`] during rendering.
+    pub fn capture_positions(&mut self, mut locate: impl FnMut(AstNodeId) -> Option<Pos>) {
+        self.primary.capture_position(&mut locate);
+        for label in &mut self.secondary {
+            label.capture_position(&mut locate);
+        }
+    }
+
     pub fn position(&self, files: &FileSet) -> Position {
-        self.primary.start_position(files)
+        self.primary.position(files)
+    }
+
+    pub fn message(&self) -> &str {
+        &self.primary.message
     }
 
     /// Returns a diagnostic renderer that resolves source positions through
     /// the parser's file set.
-    pub fn display_with<'a>(&'a self, files: &'a FileSet) -> DiagnosticDisplay<'a> {
+    pub fn display_with<'a>(&'a self, files: &'a FileSet) -> impl fmt::Display + 'a {
         DiagnosticDisplay {
             diagnostic: self,
             files,
@@ -119,16 +120,12 @@ impl fmt::Display for Diagnostic {
             "{}[{}]: {}",
             severity_name(self.severity),
             self.code,
-            self.message
+            self.message()
         )
     }
 }
 
-/// A source-aware [`Diagnostic`] renderer.
-///
-/// [`Diagnostic`] itself cannot render line and column information because a
-/// [`FileSet`] is owned by the parsing or loading context, not by a diagnostic.
-pub struct DiagnosticDisplay<'a> {
+struct DiagnosticDisplay<'a> {
     diagnostic: &'a Diagnostic,
     files: &'a FileSet,
 }
@@ -140,12 +137,8 @@ impl fmt::Display for DiagnosticDisplay<'_> {
         writeln!(f, " --> {}", diagnostic.position(self.files))?;
 
         for label in &diagnostic.secondary {
-            writeln!(
-                f,
-                "  = note: {}\n     --> {}",
-                label.message,
-                label.span.start_position(self.files)
-            )?;
+            let position = label.position(self.files);
+            writeln!(f, "  = note: {}\n     --> {}", label.message, position)?;
         }
 
         Ok(())
@@ -161,7 +154,8 @@ fn severity_name(severity: Severity) -> &'static str {
     }
 }
 
-/// A destination for diagnostics emitted by parser adapters, loaders, and sema.
+/// A destination for node-anchored diagnostics emitted by parser adapters,
+/// loaders, and sema.
 pub trait DiagnosticSink {
     fn emit(&mut self, diagnostic: Diagnostic);
 }
@@ -172,7 +166,10 @@ impl<T: DiagnosticSink + ?Sized> DiagnosticSink for &mut T {
     }
 }
 
-/// In-memory diagnostics collection.
+/// In-memory collection of node-anchored diagnostics.
+///
+/// `Diagnostics` is the compiler-facing collection. Source positions are
+/// resolved on demand through [`Diagnostic::display_with`].
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Diagnostics {
     items: Vec<Diagnostic>,
@@ -183,16 +180,43 @@ impl Diagnostics {
         self.items.push(diagnostic);
     }
 
-    pub fn error(&mut self, code: DiagnosticCode, primary: Span, message: impl Into<String>) {
-        self.push(Diagnostic::new(Severity::Error, code, primary, message));
+    pub fn error(
+        &mut self,
+        code: DiagnosticCode,
+        primary: Option<AstNodeId>,
+        message: impl Into<String>,
+    ) {
+        self.push(Diagnostic::new(
+            Severity::Error,
+            code,
+            Label::new(primary, message),
+        ));
     }
 
-    pub fn warning(&mut self, code: DiagnosticCode, primary: Span, message: impl Into<String>) {
-        self.push(Diagnostic::new(Severity::Warning, code, primary, message));
+    pub fn warning(
+        &mut self,
+        code: DiagnosticCode,
+        primary: Option<AstNodeId>,
+        message: impl Into<String>,
+    ) {
+        self.push(Diagnostic::new(
+            Severity::Warning,
+            code,
+            Label::new(primary, message),
+        ));
     }
 
-    pub fn note(&mut self, code: DiagnosticCode, primary: Span, message: impl Into<String>) {
-        self.push(Diagnostic::new(Severity::Note, code, primary, message));
+    pub fn note(
+        &mut self,
+        code: DiagnosticCode,
+        primary: Option<AstNodeId>,
+        message: impl Into<String>,
+    ) {
+        self.push(Diagnostic::new(
+            Severity::Note,
+            code,
+            Label::new(primary, message),
+        ));
     }
 
     pub fn len(&self) -> usize {
@@ -205,6 +229,13 @@ impl Diagnostics {
 
     pub fn iter(&self) -> std::slice::Iter<'_, Diagnostic> {
         self.items.iter()
+    }
+
+    /// Captures source positions before the AST is released.
+    pub fn capture_positions(&mut self, mut locate: impl FnMut(AstNodeId) -> Option<Pos>) {
+        for diagnostic in &mut self.items {
+            diagnostic.capture_positions(&mut locate);
+        }
     }
 
     /// Sorts deterministically, removes exact duplicates, and returns the items.
@@ -232,102 +263,111 @@ impl IntoIterator for Diagnostics {
 
 fn diagnostic_order(a: &Diagnostic, b: &Diagnostic) -> Ordering {
     a.primary
-        .cmp(&b.primary)
+        .node
+        .map(AstNodeId::raw)
+        .cmp(&b.primary.node.map(AstNodeId::raw))
         .then(a.severity.cmp(&b.severity))
         .then(a.code.cmp(&b.code))
-        .then(a.message.cmp(&b.message))
+        .then(a.message().cmp(b.message()))
         .then(a.secondary.cmp(&b.secondary))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gane_parser::token::FileSet;
+    use gane_parser::{
+        parser::{Mode, parse_file},
+        token::FileSet,
+    };
 
     const UNDEFINED_NAME: DiagnosticCode = DiagnosticCode("E2001");
     const DUPLICATE_DECLARATION: DiagnosticCode = DiagnosticCode("E2002");
 
-    #[test]
-    fn finish_sorts_and_deduplicates() {
-        let mut files = FileSet::new();
-        let file = files.add_file("main.go", -1, 20);
-        let first = Span::point(file.pos(2));
-        let second = Span::point(file.pos(8));
-        let mut diagnostics = Diagnostics::default();
-        diagnostics.error(UNDEFINED_NAME, second, "missing");
-        diagnostics.error(UNDEFINED_NAME, first, "first");
-        diagnostics.error(UNDEFINED_NAME, first, "first");
-
-        let result = diagnostics.finish();
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].message, "first");
-        assert_eq!(result[1].position(&files).file_name, "main.go");
+    fn locate(file: &gane_parser::ast::File, id: AstNodeId) -> Option<Pos> {
+        gane_parser::ast::preorder(gane_parser::ast::NodeRef::File(file))
+            .find(|node| node.node_id() == id)
+            .map(|node| node.pos())
     }
 
-    #[test]
-    fn secondary_labels_and_positions_are_preserved() {
+    fn parsed_file() -> (FileSet, gane_parser::ast::File) {
         let mut files = FileSet::new();
-        let file = files.add_file("main.go", -1, 24);
-        file.set_lines_for_content(b"package p\nvar x int\n");
-        let primary = Span::new(file.pos(11), file.pos(12));
-        let related = Label::new(Span::point(file.pos(4)), "declared here");
-        let diagnostic =
-            Diagnostic::new(Severity::Error, DUPLICATE_DECLARATION, primary, "duplicate")
-                .with_secondary(related);
-
-        assert_eq!(diagnostic.secondary.len(), 1);
-        assert_eq!(diagnostic.position(&files).line, 2);
-        assert_eq!(diagnostic.position(&files).column, 2);
-    }
-
-    #[test]
-    fn invalid_position_is_safe() {
-        let files = FileSet::new();
-        assert!(
-            !Span::point(Pos::default())
-                .start_position(&files)
-                .is_valid()
+        let (file, errors) = parse_file(
+            &mut files,
+            "main.go",
+            b"package main\nvar value int\n",
+            Mode::default(),
         );
+        assert!(errors.is_none());
+        (files, file)
+    }
+
+    #[test]
+    fn primary_label_carries_the_diagnostic_message_and_anchor() {
+        let label = Label::new(Some(AstNodeId::INVALID), "missing name");
+        let diagnostic = Diagnostic::new(Severity::Error, UNDEFINED_NAME, label);
+
+        assert_eq!(diagnostic.message(), "missing name");
+        assert_eq!(diagnostic.primary.node, Some(AstNodeId::INVALID));
+        assert!(diagnostic.secondary.is_empty());
+    }
+
+    #[test]
+    fn captures_primary_and_secondary_positions_in_their_labels() {
+        let (files, file) = parsed_file();
+        let mut diagnostic = Diagnostic::new(
+            Severity::Error,
+            DUPLICATE_DECLARATION,
+            Label::new(Some(file.decls[0].node_id()), "duplicate declaration"),
+        )
+        .with_secondary(Label::new(
+            Some(file.name.node_id()),
+            "previous declaration is here",
+        ));
+        diagnostic.capture_positions(|id| locate(&file, id));
+
+        assert_eq!(diagnostic.position(&files).line, 2);
+        assert_eq!(
+            diagnostic.display_with(&files).to_string(),
+            "error[E2002]: duplicate declaration\n --> main.go:2:1\n  = note: previous declaration is here\n     --> main.go:1:9\n"
+        );
+    }
+
+    #[test]
+    fn collection_captures_positions_sorts_and_deduplicates() {
+        let (files, file) = parsed_file();
+        let mut diagnostics = Diagnostics::default();
+        diagnostics.error(UNDEFINED_NAME, Some(file.decls[0].node_id()), "missing");
+        diagnostics.error(UNDEFINED_NAME, Some(file.name.node_id()), "first");
+        diagnostics.error(UNDEFINED_NAME, Some(file.name.node_id()), "first");
+        diagnostics.capture_positions(|id| locate(&file, id));
+
+        let diagnostics = diagnostics.finish();
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0].message(), "first");
+        assert_eq!(diagnostics[0].position(&files).column, 9);
+    }
+
+    #[test]
+    fn diagnostics_without_an_anchor_render_an_invalid_position() {
+        let files = FileSet::new();
+        let diagnostic =
+            Diagnostic::new(Severity::Error, UNDEFINED_NAME, Label::new(None, "missing"));
+
+        assert!(!diagnostic.position(&files).is_valid());
     }
 
     #[test]
     fn sink_receives_diagnostics() {
-        fn report(sink: &mut dyn DiagnosticSink, span: Span) {
+        fn report(sink: &mut dyn DiagnosticSink) {
             sink.emit(Diagnostic::new(
                 Severity::Error,
                 UNDEFINED_NAME,
-                span,
-                "missing",
+                Label::new(None, "missing"),
             ));
         }
 
         let mut diagnostics = Diagnostics::default();
-        report(&mut diagnostics, Span::point(Pos::default()));
+        report(&mut diagnostics);
         assert_eq!(diagnostics.len(), 1);
-    }
-
-    #[test]
-    fn display_renders_summary_and_source_aware_labels() {
-        let mut files = FileSet::new();
-        let file = files.add_file("main.go", -1, 24);
-        file.set_lines_for_content(b"var x int\nvar x string\n");
-        let first = Span::point(file.pos(4));
-        let second = Span::point(file.pos(14));
-        let diagnostic = Diagnostic::new(
-            Severity::Error,
-            DUPLICATE_DECLARATION,
-            second,
-            "duplicate declaration of `x`",
-        )
-        .with_secondary(Label::new(first, "previous declaration is here"));
-
-        assert_eq!(
-            diagnostic.to_string(),
-            "error[E2002]: duplicate declaration of `x`"
-        );
-        assert_eq!(
-            diagnostic.display_with(&files).to_string(),
-            "error[E2002]: duplicate declaration of `x`\n --> main.go:2:5\n  = note: previous declaration is here\n     --> main.go:1:5\n"
-        );
     }
 }

@@ -51,7 +51,7 @@ HIR 不负责：
 
 lowering 的公开输入必须同时包含 package AST、`AnalysisResult` 和经过验证的 `TargetSpec`。AST 提供待遍历的语法结构，`AnalysisResult` 只提供语义事实；lowering 不允许仅凭 AST 重做名字解析或类型推导。
 
-Go named type 的身份只存在于 sema。例如 `type UserID int` 的赋值规则由 sema 处理；进入 HIR 后，它使用与 underlying type 相同的机器表示。名称和 source span 可以作为调试信息保留，但不参与 HIR 类型相等性。
+Go named type 的身份只存在于 sema。例如 `type UserID int` 的赋值规则由 sema 处理；进入 HIR 后，它使用与 underlying type 相同的机器表示。名称和 source `AstNodeId` 可以作为调试信息保留，但不参与 HIR 类型相等性。
 
 HIR 的源语言功能范围以 sema 实际接受的集合为准，不能在 HIR 文档里另行承诺更大的 Go 子集。V0 明确接受：
 
@@ -131,7 +131,12 @@ verifier 只检查类型图能否形成有限布局，不查询具体字节 offs
 文档中的基础名称约定如下：
 
 ```rust
+use gane_parser::token::AstNodeId;
+
 pub type Symbol = String;
+
+// parser 分配的语法身份；None 表示合成的 HIR 实体。
+pub type SourceOrigin = Option<AstNodeId>;
 
 pub enum Endianness { Little, Big }
 
@@ -226,7 +231,7 @@ Array 和 struct 在 V0 中只作为内存对象存在，不作为普通 SSA agg
 pub struct StackSlot {
     pub typ: TypeId,
     pub name: Option<Symbol>,
-    pub span: Span,
+    pub origin: SourceOrigin,
 }
 
 pub struct HirSignature {
@@ -368,7 +373,7 @@ HIR 不使用递归 Place/lvalue 树。
 pub struct ValueDef {
     pub typ: TypeId,
     pub origin: ValueOrigin,
-    pub span: Span,
+    pub source: SourceOrigin,
 }
 
 pub enum ValueOrigin {
@@ -379,7 +384,7 @@ pub enum ValueOrigin {
 pub struct Instruction {
     pub results: Vec<ValueId>,
     pub kind: InstructionKind,
-    pub span: Span,
+    pub source: SourceOrigin,
 }
 ```
 

@@ -11,8 +11,9 @@
 //! - Go pointer fields become `Box<T>` (singly-owned subtrees) or `Option<T>`
 //!   (nil-able).
 //!
-//! Syntax trees may be constructed directly, but they are typically produced
-//! from Go source code by the parser.
+//! Syntax trees are produced by the parser (or a future controlled AST
+//! builder). Their node identities are assigned by the parse session and are
+//! required by semantic analysis.
 //!
 //! All nodes contain position information marking the beginning of the
 //! corresponding source text segment; it is accessible via the `pos` accessor
@@ -24,7 +25,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::token::{NO_POS, Pos, Token};
+use crate::token::{AstNodeId, NO_POS, Pos, Token};
 
 // ----------------------------------------------------------------------------
 // Channel direction
@@ -80,6 +81,7 @@ pub struct CommentCommand {
 /// [`Field::commands`].
 #[derive(Clone, Debug)]
 pub struct Field {
+    pub(crate) node_id: AstNodeId,
     pub commands: Vec<CommentCommand>,
     pub names: Vec<Ident>,     // field/method/(type) parameter names; or empty
     pub typ: Option<Expr>,     // field/method/parameter type; or nil
@@ -115,6 +117,7 @@ impl Field {
 /// curly braces, or square brackets.
 #[derive(Clone, Debug)]
 pub struct FieldList {
+    pub(crate) node_id: AstNodeId,
     pub opening: Pos,     // position of opening parenthesis/brace/bracket, if any
     pub list: Vec<Field>, // field list
     pub closing: Pos,     // position of closing parenthesis/brace/bracket, if any
@@ -166,6 +169,7 @@ impl FieldList {
 /// syntax errors for which a correct expression node cannot be created.
 #[derive(Clone, Debug)]
 pub struct BadExpr {
+    pub(crate) node_id: AstNodeId,
     pub from: Pos, // position range of bad expression
     pub to: Pos,
 }
@@ -173,6 +177,7 @@ pub struct BadExpr {
 /// An Ident node represents an identifier.
 #[derive(Clone, Debug)]
 pub struct Ident {
+    pub(crate) node_id: AstNodeId,
     pub name_pos: Pos, // identifier position
     pub name: String,  // identifier name
 }
@@ -181,6 +186,7 @@ pub struct Ident {
 /// parameter list or the "..." length in an array type.
 #[derive(Clone, Debug)]
 pub struct Ellipsis {
+    pub(crate) node_id: AstNodeId,
     pub ellipsis: Pos,     // position of "..."
     pub elt: Option<Expr>, // ellipsis element type (parameter lists only); or nil
 }
@@ -195,6 +201,7 @@ pub struct Ellipsis {
 /// present in the source.
 #[derive(Clone, Debug)]
 pub struct BasicLit {
+    pub(crate) node_id: AstNodeId,
     pub value_pos: Pos, // literal position
     pub value_end: Pos, // position immediately after the literal
     pub kind: Token,    // token.INT, token.FLOAT, token.IMAG, token.CHAR, or token.STRING
@@ -204,6 +211,7 @@ pub struct BasicLit {
 /// A FuncLit node represents a function literal.
 #[derive(Clone, Debug)]
 pub struct FuncLit {
+    pub(crate) node_id: AstNodeId,
     pub typ: Box<FuncType>,   // function type
     pub body: Box<BlockStmt>, // function body
 }
@@ -211,6 +219,7 @@ pub struct FuncLit {
 /// A CompositeLit node represents a composite literal.
 #[derive(Clone, Debug)]
 pub struct CompositeLit {
+    pub(crate) node_id: AstNodeId,
     pub typ: Option<Expr>, // literal type; or nil
     pub lbrace: Pos,       // position of "{"
     pub elts: Vec<Expr>,   // list of composite elements
@@ -221,6 +230,7 @@ pub struct CompositeLit {
 /// A ParenExpr node represents a parenthesized expression.
 #[derive(Clone, Debug)]
 pub struct ParenExpr {
+    pub(crate) node_id: AstNodeId,
     pub lparen: Pos, // position of "("
     pub x: Expr,     // parenthesized expression
     pub rparen: Pos, // position of ")"
@@ -229,6 +239,7 @@ pub struct ParenExpr {
 /// A SelectorExpr node represents an expression followed by a selector.
 #[derive(Clone, Debug)]
 pub struct SelectorExpr {
+    pub(crate) node_id: AstNodeId,
     pub x: Expr,    // expression
     pub sel: Ident, // field selector
 }
@@ -236,6 +247,7 @@ pub struct SelectorExpr {
 /// An IndexExpr node represents an expression followed by an index.
 #[derive(Clone, Debug)]
 pub struct IndexExpr {
+    pub(crate) node_id: AstNodeId,
     pub x: Expr,     // expression
     pub lbrack: Pos, // position of "["
     pub index: Expr, // index expression
@@ -245,6 +257,7 @@ pub struct IndexExpr {
 /// An IndexListExpr node represents an expression followed by multiple indices.
 #[derive(Clone, Debug)]
 pub struct IndexListExpr {
+    pub(crate) node_id: AstNodeId,
     pub x: Expr,            // expression
     pub lbrack: Pos,        // position of "["
     pub indices: Vec<Expr>, // index expressions
@@ -254,6 +267,7 @@ pub struct IndexListExpr {
 /// A SliceExpr node represents an expression followed by slice indices.
 #[derive(Clone, Debug)]
 pub struct SliceExpr {
+    pub(crate) node_id: AstNodeId,
     pub x: Expr,            // expression
     pub lbrack: Pos,        // position of "["
     pub low: Option<Expr>,  // begin of slice range; or nil
@@ -266,6 +280,7 @@ pub struct SliceExpr {
 /// A TypeAssertExpr node represents an expression followed by a type assertion.
 #[derive(Clone, Debug)]
 pub struct TypeAssertExpr {
+    pub(crate) node_id: AstNodeId,
     pub x: Expr,           // expression
     pub lparen: Pos,       // position of "("
     pub typ: Option<Expr>, // asserted type; nil means type switch X.(type)
@@ -275,6 +290,7 @@ pub struct TypeAssertExpr {
 /// A CallExpr node represents an expression followed by an argument list.
 #[derive(Clone, Debug)]
 pub struct CallExpr {
+    pub(crate) node_id: AstNodeId,
     pub fun: Expr,       // function expression
     pub lparen: Pos,     // position of "("
     pub args: Vec<Expr>, // function arguments
@@ -286,6 +302,7 @@ pub struct CallExpr {
 /// Semantically it could be a unary "*" expression, or a pointer type.
 #[derive(Clone, Debug)]
 pub struct StarExpr {
+    pub(crate) node_id: AstNodeId,
     pub star: Pos, // position of "*"
     pub x: Expr,   // operand
 }
@@ -294,6 +311,7 @@ pub struct StarExpr {
 /// Unary "*" expressions are represented via [`StarExpr`] nodes.
 #[derive(Clone, Debug)]
 pub struct UnaryExpr {
+    pub(crate) node_id: AstNodeId,
     pub op_pos: Pos, // position of Op
     pub op: Token,   // operator
     pub x: Expr,     // operand
@@ -302,6 +320,7 @@ pub struct UnaryExpr {
 /// A BinaryExpr node represents a binary expression.
 #[derive(Clone, Debug)]
 pub struct BinaryExpr {
+    pub(crate) node_id: AstNodeId,
     pub x: Expr,     // left operand
     pub op_pos: Pos, // position of Op
     pub op: Token,   // operator
@@ -311,6 +330,7 @@ pub struct BinaryExpr {
 /// A KeyValueExpr node represents (key : value) pairs in composite literals.
 #[derive(Clone, Debug)]
 pub struct KeyValueExpr {
+    pub(crate) node_id: AstNodeId,
     pub key: Expr,
     pub colon: Pos, // position of ":"
     pub value: Expr,
@@ -322,6 +342,7 @@ pub struct KeyValueExpr {
 /// An ArrayType node represents an array or slice type.
 #[derive(Clone, Debug)]
 pub struct ArrayType {
+    pub(crate) node_id: AstNodeId,
     pub lbrack: Pos,       // position of "["
     pub len: Option<Expr>, // Ellipsis node for [...]T array types, nil for slice types
     pub elt: Expr,         // element type
@@ -330,6 +351,7 @@ pub struct ArrayType {
 /// A StructType node represents a struct type.
 #[derive(Clone, Debug)]
 pub struct StructType {
+    pub(crate) node_id: AstNodeId,
     pub struct_: Pos,              // position of "struct" keyword
     pub fields: Option<FieldList>, // list of field declarations
     pub incomplete: bool,          // true if (source) fields are missing in the Fields list
@@ -340,6 +362,7 @@ pub struct StructType {
 /// A FuncType node represents a function type.
 #[derive(Clone, Debug)]
 pub struct FuncType {
+    pub(crate) node_id: AstNodeId,
     pub func: Pos, // position of "func" keyword (NO_POS if there is no "func")
     pub type_params: Option<FieldList>, // type parameters; or nil
     pub params: Option<FieldList>, // (incoming) parameters; non-nil
@@ -349,6 +372,7 @@ pub struct FuncType {
 /// An InterfaceType node represents an interface type.
 #[derive(Clone, Debug)]
 pub struct InterfaceType {
+    pub(crate) node_id: AstNodeId,
     pub interface: Pos,             // position of "interface" keyword
     pub methods: Option<FieldList>, // list of embedded interfaces, methods, or types
     pub incomplete: bool, // true if (source) methods or types are missing in the Methods list
@@ -357,6 +381,7 @@ pub struct InterfaceType {
 /// A MapType node represents a map type.
 #[derive(Clone, Debug)]
 pub struct MapType {
+    pub(crate) node_id: AstNodeId,
     pub map: Pos, // position of "map" keyword
     pub key: Expr,
     pub value: Expr,
@@ -365,6 +390,7 @@ pub struct MapType {
 /// A ChanType node represents a channel type.
 #[derive(Clone, Debug)]
 pub struct ChanType {
+    pub(crate) node_id: AstNodeId,
     pub begin: Pos,   // position of "chan" keyword or "<-" (whichever comes first)
     pub arrow: Pos,   // position of "<-" (NO_POS if there is no "<-")
     pub dir: ChanDir, // channel direction
@@ -637,6 +663,7 @@ impl fmt::Display for Ident {
 /// Useful for ASTs generated by code other than the Go parser.
 pub fn new_ident(name: impl Into<String>) -> Ident {
     Ident {
+        node_id: AstNodeId::INVALID,
         name_pos: NO_POS,
         name: name.into(),
     }
@@ -657,6 +684,7 @@ pub fn is_exported(name: &str) -> bool {
 /// syntax errors for which no correct statement nodes can be created.
 #[derive(Clone, Debug)]
 pub struct BadStmt {
+    pub(crate) node_id: AstNodeId,
     pub from: Pos, // position range of bad statement
     pub to: Pos,
 }
@@ -664,6 +692,7 @@ pub struct BadStmt {
 /// A DeclStmt node represents a declaration in a statement list.
 #[derive(Clone, Debug)]
 pub struct DeclStmt {
+    pub(crate) node_id: AstNodeId,
     pub decl: Decl, // *GenDecl with CONST, TYPE, or VAR token
 }
 
@@ -672,6 +701,7 @@ pub struct DeclStmt {
 /// of the immediately following (explicit or implicit) semicolon.
 #[derive(Clone, Debug)]
 pub struct EmptyStmt {
+    pub(crate) node_id: AstNodeId,
     pub semicolon: Pos, // position of following ";"
     pub implicit: bool, // if set, ";" was omitted in the source
 }
@@ -679,6 +709,7 @@ pub struct EmptyStmt {
 /// A LabeledStmt node represents a labeled statement.
 #[derive(Clone, Debug)]
 pub struct LabeledStmt {
+    pub(crate) node_id: AstNodeId,
     pub label: Ident,
     pub colon: Pos, // position of ":"
     pub stmt: Stmt,
@@ -687,12 +718,14 @@ pub struct LabeledStmt {
 /// An ExprStmt node represents a (stand-alone) expression in a statement list.
 #[derive(Clone, Debug)]
 pub struct ExprStmt {
+    pub(crate) node_id: AstNodeId,
     pub x: Expr, // expression
 }
 
 /// A SendStmt node represents a send statement.
 #[derive(Clone, Debug)]
 pub struct SendStmt {
+    pub(crate) node_id: AstNodeId,
     pub chan_: Expr,
     pub arrow: Pos, // position of "<-"
     pub value: Expr,
@@ -701,6 +734,7 @@ pub struct SendStmt {
 /// An IncDecStmt node represents an increment or decrement statement.
 #[derive(Clone, Debug)]
 pub struct IncDecStmt {
+    pub(crate) node_id: AstNodeId,
     pub x: Expr,
     pub tok_pos: Pos, // position of Tok
     pub tok: Token,   // INC or DEC
@@ -709,6 +743,7 @@ pub struct IncDecStmt {
 /// An AssignStmt node represents an assignment or a short variable declaration.
 #[derive(Clone, Debug)]
 pub struct AssignStmt {
+    pub(crate) node_id: AstNodeId,
     pub lhs: Vec<Expr>,
     pub tok_pos: Pos, // position of Tok
     pub tok: Token,   // assignment token, DEFINE
@@ -718,6 +753,7 @@ pub struct AssignStmt {
 /// A GoStmt node represents a go statement.
 #[derive(Clone, Debug)]
 pub struct GoStmt {
+    pub(crate) node_id: AstNodeId,
     pub go_: Pos, // position of "go" keyword
     pub call: Box<CallExpr>,
 }
@@ -725,6 +761,7 @@ pub struct GoStmt {
 /// A DeferStmt node represents a defer statement.
 #[derive(Clone, Debug)]
 pub struct DeferStmt {
+    pub(crate) node_id: AstNodeId,
     pub defer_: Pos, // position of "defer" keyword
     pub call: Box<CallExpr>,
 }
@@ -732,6 +769,7 @@ pub struct DeferStmt {
 /// A ReturnStmt node represents a return statement.
 #[derive(Clone, Debug)]
 pub struct ReturnStmt {
+    pub(crate) node_id: AstNodeId,
     pub return_: Pos,       // position of "return" keyword
     pub results: Vec<Expr>, // result expressions
 }
@@ -740,6 +778,7 @@ pub struct ReturnStmt {
 /// or fallthrough statement.
 #[derive(Clone, Debug)]
 pub struct BranchStmt {
+    pub(crate) node_id: AstNodeId,
     pub tok_pos: Pos,         // position of Tok
     pub tok: Token,           // keyword token (BREAK, CONTINUE, GOTO, FALLTHROUGH)
     pub label: Option<Ident>, // label name; or nil
@@ -748,6 +787,7 @@ pub struct BranchStmt {
 /// A BlockStmt node represents a braced statement list.
 #[derive(Clone, Debug)]
 pub struct BlockStmt {
+    pub(crate) node_id: AstNodeId,
     pub lbrace: Pos, // position of "{"
     pub list: Vec<Stmt>,
     pub rbrace: Pos, // position of "}", if any (may be absent due to syntax error)
@@ -756,6 +796,7 @@ pub struct BlockStmt {
 /// An IfStmt node represents an if statement.
 #[derive(Clone, Debug)]
 pub struct IfStmt {
+    pub(crate) node_id: AstNodeId,
     pub if_: Pos,           // position of "if" keyword
     pub init: Option<Stmt>, // initialization statement; or nil
     pub cond: Expr,         // condition
@@ -766,6 +807,7 @@ pub struct IfStmt {
 /// A CaseClause represents a case of an expression or type switch statement.
 #[derive(Clone, Debug)]
 pub struct CaseClause {
+    pub(crate) node_id: AstNodeId,
     pub case: Pos,       // position of "case" or "default" keyword
     pub list: Vec<Expr>, // list of expressions or types; empty means default case
     pub colon: Pos,      // position of ":"
@@ -775,6 +817,7 @@ pub struct CaseClause {
 /// A SwitchStmt node represents an expression switch statement.
 #[derive(Clone, Debug)]
 pub struct SwitchStmt {
+    pub(crate) node_id: AstNodeId,
     pub switch: Pos,          // position of "switch" keyword
     pub init: Option<Stmt>,   // initialization statement; or nil
     pub tag: Option<Expr>,    // tag expression; or nil
@@ -784,6 +827,7 @@ pub struct SwitchStmt {
 /// A TypeSwitchStmt node represents a type switch statement.
 #[derive(Clone, Debug)]
 pub struct TypeSwitchStmt {
+    pub(crate) node_id: AstNodeId,
     pub switch: Pos,          // position of "switch" keyword
     pub init: Option<Stmt>,   // initialization statement; or nil
     pub assign: Stmt,         // x := y.(type) or y.(type)
@@ -793,6 +837,7 @@ pub struct TypeSwitchStmt {
 /// A CommClause node represents a case of a select statement.
 #[derive(Clone, Debug)]
 pub struct CommClause {
+    pub(crate) node_id: AstNodeId,
     pub case: Pos,          // position of "case" or "default" keyword
     pub comm: Option<Stmt>, // send or receive statement; nil means default case
     pub colon: Pos,         // position of ":"
@@ -802,6 +847,7 @@ pub struct CommClause {
 /// A SelectStmt node represents a select statement.
 #[derive(Clone, Debug)]
 pub struct SelectStmt {
+    pub(crate) node_id: AstNodeId,
     pub select: Pos,          // position of "select" keyword
     pub body: Box<BlockStmt>, // CommClauses only
 }
@@ -809,6 +855,7 @@ pub struct SelectStmt {
 /// A ForStmt represents a for statement.
 #[derive(Clone, Debug)]
 pub struct ForStmt {
+    pub(crate) node_id: AstNodeId,
     pub for_: Pos,          // position of "for" keyword
     pub init: Option<Stmt>, // initialization statement; or nil
     pub cond: Option<Expr>, // condition; or nil
@@ -819,6 +866,7 @@ pub struct ForStmt {
 /// A RangeStmt represents a for statement with a range clause.
 #[derive(Clone, Debug)]
 pub struct RangeStmt {
+    pub(crate) node_id: AstNodeId,
     pub for_: Pos,           // position of "for" keyword
     pub key: Option<Expr>,   // Key may be nil
     pub value: Option<Expr>, // Value may be nil
@@ -1072,6 +1120,7 @@ impl RangeStmt {
 /// ported; compiler commands are in [`ImportSpec::commands`].
 #[derive(Clone, Debug)]
 pub struct ImportSpec {
+    pub(crate) node_id: AstNodeId,
     pub commands: Vec<CommentCommand>,
     pub name: Option<Ident>, // local package name (including "."); or nil
     pub path: BasicLit,      // import path
@@ -1081,6 +1130,7 @@ pub struct ImportSpec {
 /// (ConstSpec or VarSpec production).
 #[derive(Clone, Debug)]
 pub struct ValueSpec {
+    pub(crate) node_id: AstNodeId,
     pub commands: Vec<CommentCommand>,
     pub names: Vec<Ident>, // value names (len(Names) > 0)
     pub typ: Option<Expr>, // value type; or nil
@@ -1090,6 +1140,7 @@ pub struct ValueSpec {
 /// A TypeSpec node represents a type declaration (TypeSpec production).
 #[derive(Clone, Debug)]
 pub struct TypeSpec {
+    pub(crate) node_id: AstNodeId,
     pub commands: Vec<CommentCommand>,
     pub name: Ident,                    // type name
     pub type_params: Option<FieldList>, // type parameters; or nil
@@ -1149,6 +1200,7 @@ impl TypeSpec {
 /// syntax errors for which a correct declaration node cannot be created.
 #[derive(Clone, Debug)]
 pub struct BadDecl {
+    pub(crate) node_id: AstNodeId,
     pub from: Pos, // position range of bad declaration
     pub to: Pos,
 }
@@ -1166,6 +1218,7 @@ pub struct BadDecl {
 /// | token.VAR    | [Spec::ValueSpec]   |
 #[derive(Clone, Debug)]
 pub struct GenDecl {
+    pub(crate) node_id: AstNodeId,
     pub commands: Vec<CommentCommand>,
     pub tok_pos: Pos, // position of Tok
     pub tok: Token,   // IMPORT, CONST, TYPE, or VAR
@@ -1177,6 +1230,7 @@ pub struct GenDecl {
 /// A FuncDecl node represents a function declaration.
 #[derive(Clone, Debug)]
 pub struct FuncDecl {
+    pub(crate) node_id: AstNodeId,
     pub commands: Vec<CommentCommand>,
     pub recv: Option<FieldList>, // receiver (methods); or nil (functions)
     pub name: Ident,             // function/method name
@@ -1233,6 +1287,7 @@ impl FuncDecl {
 /// package clause are stored in [`File::commands`].
 #[derive(Clone, Debug)]
 pub struct File {
+    pub(crate) node_id: AstNodeId,
     pub commands: Vec<CommentCommand>,
     pub package: Pos,     // position of "package" keyword
     pub name: Ident,      // package name
@@ -1267,6 +1322,7 @@ impl File {
 /// A Package node represents a set of source files collectively building a Go package.
 #[derive(Clone, Debug)]
 pub struct Package {
+    pub(crate) node_id: AstNodeId,
     pub name: String,
     pub files: BTreeMap<String, File>, // Go source files by filename
 }
@@ -1279,6 +1335,84 @@ impl Package {
         NO_POS
     }
 }
+
+// ----------------------------------------------------------------------------
+// Syntax-node identity
+
+macro_rules! impl_node_identity {
+    ($($typ:ty),* $(,)?) => {
+        $(
+            impl $typ {
+                /// Returns this node's parser-assigned identity.
+                pub fn node_id(&self) -> AstNodeId {
+                    self.node_id
+                }
+
+                #[allow(dead_code)]
+                pub(crate) fn set_node_id(&mut self, node_id: AstNodeId) {
+                    self.node_id = node_id;
+                }
+            }
+        )*
+    };
+}
+
+impl_node_identity!(
+    Field,
+    FieldList,
+    BadExpr,
+    Ident,
+    Ellipsis,
+    BasicLit,
+    FuncLit,
+    CompositeLit,
+    ParenExpr,
+    SelectorExpr,
+    IndexExpr,
+    IndexListExpr,
+    SliceExpr,
+    TypeAssertExpr,
+    CallExpr,
+    StarExpr,
+    UnaryExpr,
+    BinaryExpr,
+    KeyValueExpr,
+    ArrayType,
+    StructType,
+    FuncType,
+    InterfaceType,
+    MapType,
+    ChanType,
+    BadStmt,
+    DeclStmt,
+    EmptyStmt,
+    LabeledStmt,
+    ExprStmt,
+    SendStmt,
+    IncDecStmt,
+    AssignStmt,
+    GoStmt,
+    DeferStmt,
+    ReturnStmt,
+    BranchStmt,
+    BlockStmt,
+    IfStmt,
+    CaseClause,
+    SwitchStmt,
+    TypeSwitchStmt,
+    CommClause,
+    SelectStmt,
+    ForStmt,
+    RangeStmt,
+    ImportSpec,
+    ValueSpec,
+    TypeSpec,
+    BadDecl,
+    GenDecl,
+    FuncDecl,
+    File,
+    Package,
+);
 
 // ----------------------------------------------------------------------------
 // Node category enums
@@ -1381,6 +1515,19 @@ macro_rules! impl_pos_end_enum {
                         $( $cat::$v(x) => x.end(), )*
                     }
                 }
+
+                /// Returns the parser-assigned identity of the concrete node.
+                pub fn node_id(&self) -> AstNodeId {
+                    match self {
+                        $( $cat::$v(x) => x.node_id(), )*
+                    }
+                }
+
+                pub(crate) fn set_node_id(&mut self, node_id: AstNodeId) {
+                    match self {
+                        $( $cat::$v(x) => x.set_node_id(node_id), )*
+                    }
+                }
             }
         )*
     };
@@ -1397,6 +1544,342 @@ impl_pos_end_enum! {
           SelectStmt, ForStmt, RangeStmt;
     Spec: ImportSpec, ValueSpec, TypeSpec;
     Decl: BadDecl, GenDecl, FuncDecl;
+}
+
+macro_rules! assign_node_id {
+    ($files:expr, $node:expr) => {{
+        let node_id = $files.alloc_node();
+        $node.set_node_id(node_id);
+    }};
+}
+
+/// Assigns stable identities to every syntax node in `file`.
+///
+/// This is intentionally run after parsing, so the identity assignment is
+/// deterministic even through parser error recovery. It is crate-private:
+/// callers receive a fully identified AST only through parser entry points.
+pub(crate) fn assign_file_node_ids(file: &mut File, files: &mut crate::token::FileSet) {
+    assign_file_nodes(file, files);
+}
+
+/// Assigns identities to an expression returned by `parse_expr_from`.
+pub(crate) fn assign_expr_node_ids(expr: &mut Expr, files: &mut crate::token::FileSet) {
+    assign_expr_nodes(expr, files);
+}
+
+fn assign_file_nodes(file: &mut File, files: &mut crate::token::FileSet) {
+    assign_node_id!(files, file);
+    assign_ident_nodes(&mut file.name, files);
+    for decl in &mut file.decls {
+        assign_decl_nodes(decl, files);
+    }
+}
+
+#[allow(dead_code)]
+fn assign_package_nodes(package: &mut Package, files: &mut crate::token::FileSet) {
+    assign_node_id!(files, package);
+    for file in package.files.values_mut() {
+        assign_file_nodes(file, files);
+    }
+}
+
+fn assign_field_nodes(field: &mut Field, files: &mut crate::token::FileSet) {
+    assign_node_id!(files, field);
+    for name in &mut field.names {
+        assign_ident_nodes(name, files);
+    }
+    if let Some(typ) = &mut field.typ {
+        assign_expr_nodes(typ, files);
+    }
+    if let Some(tag) = &mut field.tag {
+        assign_basic_lit_nodes(tag, files);
+    }
+}
+
+fn assign_field_list_nodes(list: &mut FieldList, files: &mut crate::token::FileSet) {
+    assign_node_id!(files, list);
+    for field in &mut list.list {
+        assign_field_nodes(field, files);
+    }
+}
+
+fn assign_ident_nodes(ident: &mut Ident, files: &mut crate::token::FileSet) {
+    assign_node_id!(files, ident);
+}
+
+fn assign_basic_lit_nodes(literal: &mut BasicLit, files: &mut crate::token::FileSet) {
+    assign_node_id!(files, literal);
+}
+
+fn assign_expr_nodes(expr: &mut Expr, files: &mut crate::token::FileSet) {
+    assign_node_id!(files, expr);
+    match expr {
+        Expr::BadExpr(_) | Expr::Ident(_) | Expr::BasicLit(_) => {}
+        Expr::Ellipsis(node) => {
+            if let Some(element) = &mut node.elt {
+                assign_expr_nodes(element, files);
+            }
+        }
+        Expr::FuncLit(node) => {
+            assign_func_type_nodes(&mut node.typ, files);
+            assign_block_nodes(&mut node.body, files);
+        }
+        Expr::CompositeLit(node) => {
+            if let Some(typ) = &mut node.typ {
+                assign_expr_nodes(typ, files);
+            }
+            for element in &mut node.elts {
+                assign_expr_nodes(element, files);
+            }
+        }
+        Expr::ParenExpr(node) => assign_expr_nodes(&mut node.x, files),
+        Expr::SelectorExpr(node) => {
+            assign_expr_nodes(&mut node.x, files);
+            assign_ident_nodes(&mut node.sel, files);
+        }
+        Expr::IndexExpr(node) => {
+            assign_expr_nodes(&mut node.x, files);
+            assign_expr_nodes(&mut node.index, files);
+        }
+        Expr::IndexListExpr(node) => {
+            assign_expr_nodes(&mut node.x, files);
+            for index in &mut node.indices {
+                assign_expr_nodes(index, files);
+            }
+        }
+        Expr::SliceExpr(node) => {
+            assign_expr_nodes(&mut node.x, files);
+            for index in [&mut node.low, &mut node.high, &mut node.max] {
+                if let Some(index) = index {
+                    assign_expr_nodes(index, files);
+                }
+            }
+        }
+        Expr::TypeAssertExpr(node) => {
+            assign_expr_nodes(&mut node.x, files);
+            if let Some(typ) = &mut node.typ {
+                assign_expr_nodes(typ, files);
+            }
+        }
+        Expr::CallExpr(node) => {
+            assign_expr_nodes(&mut node.fun, files);
+            for argument in &mut node.args {
+                assign_expr_nodes(argument, files);
+            }
+        }
+        Expr::StarExpr(node) => assign_expr_nodes(&mut node.x, files),
+        Expr::UnaryExpr(node) => assign_expr_nodes(&mut node.x, files),
+        Expr::BinaryExpr(node) => {
+            assign_expr_nodes(&mut node.x, files);
+            assign_expr_nodes(&mut node.y, files);
+        }
+        Expr::KeyValueExpr(node) => {
+            assign_expr_nodes(&mut node.key, files);
+            assign_expr_nodes(&mut node.value, files);
+        }
+        Expr::ArrayType(node) => {
+            if let Some(length) = &mut node.len {
+                assign_expr_nodes(length, files);
+            }
+            assign_expr_nodes(&mut node.elt, files);
+        }
+        Expr::StructType(node) => {
+            if let Some(fields) = &mut node.fields {
+                assign_field_list_nodes(fields, files);
+            }
+        }
+        Expr::FuncType(node) => assign_func_type_nodes(node, files),
+        Expr::InterfaceType(node) => {
+            if let Some(methods) = &mut node.methods {
+                assign_field_list_nodes(methods, files);
+            }
+        }
+        Expr::MapType(node) => {
+            assign_expr_nodes(&mut node.key, files);
+            assign_expr_nodes(&mut node.value, files);
+        }
+        Expr::ChanType(node) => assign_expr_nodes(&mut node.value, files),
+    }
+}
+
+fn assign_func_type_nodes(typ: &mut FuncType, files: &mut crate::token::FileSet) {
+    assign_node_id!(files, typ);
+    for list in [&mut typ.type_params, &mut typ.params, &mut typ.results] {
+        if let Some(list) = list {
+            assign_field_list_nodes(list, files);
+        }
+    }
+}
+
+fn assign_stmt_nodes(statement: &mut Stmt, files: &mut crate::token::FileSet) {
+    assign_node_id!(files, statement);
+    match statement {
+        Stmt::BadStmt(_) | Stmt::EmptyStmt(_) => {}
+        Stmt::DeclStmt(node) => assign_decl_nodes(&mut node.decl, files),
+        Stmt::LabeledStmt(node) => {
+            assign_ident_nodes(&mut node.label, files);
+            assign_stmt_nodes(&mut node.stmt, files);
+        }
+        Stmt::ExprStmt(node) => assign_expr_nodes(&mut node.x, files),
+        Stmt::SendStmt(node) => {
+            assign_expr_nodes(&mut node.chan_, files);
+            assign_expr_nodes(&mut node.value, files);
+        }
+        Stmt::IncDecStmt(node) => assign_expr_nodes(&mut node.x, files),
+        Stmt::AssignStmt(node) => {
+            for expr in &mut node.lhs {
+                assign_expr_nodes(expr, files);
+            }
+            for expr in &mut node.rhs {
+                assign_expr_nodes(expr, files);
+            }
+        }
+        Stmt::GoStmt(node) => assign_call_nodes(&mut node.call, files),
+        Stmt::DeferStmt(node) => assign_call_nodes(&mut node.call, files),
+        Stmt::ReturnStmt(node) => {
+            for result in &mut node.results {
+                assign_expr_nodes(result, files);
+            }
+        }
+        Stmt::BranchStmt(node) => {
+            if let Some(label) = &mut node.label {
+                assign_ident_nodes(label, files);
+            }
+        }
+        Stmt::BlockStmt(node) => assign_block_nodes(node, files),
+        Stmt::IfStmt(node) => {
+            if let Some(init) = &mut node.init {
+                assign_stmt_nodes(init, files);
+            }
+            assign_expr_nodes(&mut node.cond, files);
+            assign_block_nodes(&mut node.body, files);
+            if let Some(else_) = &mut node.else_ {
+                assign_stmt_nodes(else_, files);
+            }
+        }
+        Stmt::CaseClause(node) => {
+            for expr in &mut node.list {
+                assign_expr_nodes(expr, files);
+            }
+            for statement in &mut node.body {
+                assign_stmt_nodes(statement, files);
+            }
+        }
+        Stmt::SwitchStmt(node) => {
+            if let Some(init) = &mut node.init {
+                assign_stmt_nodes(init, files);
+            }
+            if let Some(tag) = &mut node.tag {
+                assign_expr_nodes(tag, files);
+            }
+            assign_block_nodes(&mut node.body, files);
+        }
+        Stmt::TypeSwitchStmt(node) => {
+            if let Some(init) = &mut node.init {
+                assign_stmt_nodes(init, files);
+            }
+            assign_stmt_nodes(&mut node.assign, files);
+            assign_block_nodes(&mut node.body, files);
+        }
+        Stmt::CommClause(node) => {
+            if let Some(comm) = &mut node.comm {
+                assign_stmt_nodes(comm, files);
+            }
+            for statement in &mut node.body {
+                assign_stmt_nodes(statement, files);
+            }
+        }
+        Stmt::SelectStmt(node) => assign_block_nodes(&mut node.body, files),
+        Stmt::ForStmt(node) => {
+            if let Some(init) = &mut node.init {
+                assign_stmt_nodes(init, files);
+            }
+            if let Some(condition) = &mut node.cond {
+                assign_expr_nodes(condition, files);
+            }
+            if let Some(post) = &mut node.post {
+                assign_stmt_nodes(post, files);
+            }
+            assign_block_nodes(&mut node.body, files);
+        }
+        Stmt::RangeStmt(node) => {
+            if let Some(key) = &mut node.key {
+                assign_expr_nodes(key, files);
+            }
+            if let Some(value) = &mut node.value {
+                assign_expr_nodes(value, files);
+            }
+            assign_expr_nodes(&mut node.x, files);
+            assign_block_nodes(&mut node.body, files);
+        }
+    }
+}
+
+fn assign_call_nodes(call: &mut CallExpr, files: &mut crate::token::FileSet) {
+    assign_node_id!(files, call);
+    assign_expr_nodes(&mut call.fun, files);
+    for argument in &mut call.args {
+        assign_expr_nodes(argument, files);
+    }
+}
+
+fn assign_block_nodes(block: &mut BlockStmt, files: &mut crate::token::FileSet) {
+    assign_node_id!(files, block);
+    for statement in &mut block.list {
+        assign_stmt_nodes(statement, files);
+    }
+}
+
+fn assign_spec_nodes(spec: &mut Spec, files: &mut crate::token::FileSet) {
+    assign_node_id!(files, spec);
+    match spec {
+        Spec::ImportSpec(node) => {
+            if let Some(name) = &mut node.name {
+                assign_ident_nodes(name, files);
+            }
+            assign_basic_lit_nodes(&mut node.path, files);
+        }
+        Spec::ValueSpec(node) => {
+            for name in &mut node.names {
+                assign_ident_nodes(name, files);
+            }
+            if let Some(typ) = &mut node.typ {
+                assign_expr_nodes(typ, files);
+            }
+            for value in &mut node.values {
+                assign_expr_nodes(value, files);
+            }
+        }
+        Spec::TypeSpec(node) => {
+            assign_ident_nodes(&mut node.name, files);
+            if let Some(parameters) = &mut node.type_params {
+                assign_field_list_nodes(parameters, files);
+            }
+            assign_expr_nodes(&mut node.typ, files);
+        }
+    }
+}
+
+fn assign_decl_nodes(decl: &mut Decl, files: &mut crate::token::FileSet) {
+    assign_node_id!(files, decl);
+    match decl {
+        Decl::BadDecl(_) => {}
+        Decl::GenDecl(node) => {
+            for spec in &mut node.specs {
+                assign_spec_nodes(spec, files);
+            }
+        }
+        Decl::FuncDecl(node) => {
+            if let Some(receiver) = &mut node.recv {
+                assign_field_list_nodes(receiver, files);
+            }
+            assign_ident_nodes(&mut node.name, files);
+            assign_func_type_nodes(&mut node.typ, files);
+            if let Some(body) = &mut node.body {
+                assign_block_nodes(body, files);
+            }
+        }
+    }
 }
 
 /// Unparen returns the expression with any enclosing parentheses removed.
@@ -1429,8 +1912,10 @@ mod tests {
     fn unparen_removes_all_parens() {
         let x = new_ident("x");
         let e = Expr::ParenExpr(Box::new(ParenExpr {
+            node_id: AstNodeId::INVALID,
             lparen: Pos::from_int(1),
             x: Expr::ParenExpr(Box::new(ParenExpr {
+                node_id: AstNodeId::INVALID,
                 lparen: Pos::from_int(2),
                 x: Expr::Ident(x.clone()),
                 rparen: Pos::from_int(3),
@@ -1446,6 +1931,7 @@ mod tests {
     #[test]
     fn ident_pos_end() {
         let id = Ident {
+            node_id: AstNodeId::INVALID,
             name_pos: Pos::from_int(10),
             name: "foo".into(),
         };
@@ -1457,6 +1943,7 @@ mod tests {
     fn basic_lit_end_uses_value_end_when_valid() {
         // Heuristic fallback: value_pos + len(value).
         let lit = BasicLit {
+            node_id: AstNodeId::INVALID,
             value_pos: Pos::from_int(20),
             value_end: NO_POS,
             kind: Token::String,
@@ -1466,6 +1953,7 @@ mod tests {
 
         // Parser-provided value_end wins.
         let lit = BasicLit {
+            node_id: AstNodeId::INVALID,
             value_pos: Pos::from_int(20),
             value_end: Pos::from_int(26),
             kind: Token::String,
@@ -1477,6 +1965,7 @@ mod tests {
     #[test]
     fn enum_pos_end_delegation() {
         let id = Ident {
+            node_id: AstNodeId::INVALID,
             name_pos: Pos::from_int(5),
             name: "y".into(),
         };
@@ -1486,6 +1975,7 @@ mod tests {
 
         // ParenExpr: end = rparen + 1.
         let e = Expr::ParenExpr(Box::new(ParenExpr {
+            node_id: AstNodeId::INVALID,
             lparen: Pos::from_int(1),
             x: Expr::Ident(new_ident("y")),
             rparen: Pos::from_int(7),
@@ -1493,11 +1983,13 @@ mod tests {
         assert_eq!(e.end(), Pos::from_int(8));
 
         let s = Stmt::EmptyStmt(EmptyStmt {
+            node_id: AstNodeId::INVALID,
             semicolon: Pos::from_int(9),
             implicit: false,
         });
         assert_eq!(s.end(), Pos::from_int(10));
         let s = Stmt::EmptyStmt(EmptyStmt {
+            node_id: AstNodeId::INVALID,
             semicolon: Pos::from_int(9),
             implicit: true,
         });
@@ -1507,6 +1999,7 @@ mod tests {
     #[test]
     fn file_pos_end_falls_back_to_package_name() {
         let f = File {
+            node_id: AstNodeId::INVALID,
             commands: vec![],
             package: Pos::from_int(30),
             name: new_ident("p"),
