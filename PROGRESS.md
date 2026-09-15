@@ -9,7 +9,7 @@
 - [x] 补齐 sema 到 HIR 的边界测试
 先严格实现设计文档 2.1 的拒绝清单。目标是：只要 AnalysisResult 无 error，lowering 就不应遇到“AST 有、HIR 无法表达”的特性。同时确认 lowering 所需的语义事实都能从公开 API 获得：每个标识符的 def/use、表达式类型/常量、field selection、全局初始化结果等。缺哪个就先扩展gane_sema 的只读查询 API，绝不在 lowering 里重做名字解析或类型推导。
 
-- [ ] 完成纯 HIR 数据模型与构造 API
+- [x] 完成纯 HIR 数据模型与构造 API
 在 gane_hir 内先实现：
   - 强类型 ID（TypeId、ValueId、BlockId 等，0 为 invalid）
   - 私有构造的 TargetSpec

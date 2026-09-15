@@ -5,3 +5,4 @@ version.workspace = true
 authors.workspace = true
 
 [dependencies]
+gane_parser = { path = "../parser" }

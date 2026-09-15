@@ -33,6 +33,9 @@ dependencies = [
 [[package]]
 name = "gane_hir"
 version = "0.1.0"
+dependencies = [
+ "gane_parser",
+]
 
 [[package]]
 name = "gane_parser"

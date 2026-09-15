@@ -27,6 +27,11 @@ constants. Keep dependencies one-way: parser → sema → HIR → codegen. HIR
 lowering must not redo semantic lookup or inference. Prefer typed arena IDs and
 preserve source `Span` data in diagnostics and IR-facing structures.
 
+Each crate exposes its public API through `src/interface.rs`; `lib.rs` contains
+only module declarations and `pub use interface::*`. Keep implementation
+modules private unless a public module namespace is deliberate, and keep tests
+out of `lib.rs`.
+
 ## Agent Workflow and Change Authorization
 
 Before starting a task, read `PROGRESS.md` to establish the current milestone,
