@@ -33,7 +33,7 @@
   - [x] 函数、调用、return
   - [x] if 与 block parameter
   - [x] for、break、continue
-  - [ ] short-circuit && / ||
+  - [x] short-circuit && / ||
   - [ ] 指针、field/index、显式检查
   - [ ] array/struct、AggregateZero/Copy
   - [ ] global 与 extern

@@ -520,7 +520,7 @@ impl<'a> Lowerer<'a> {
             let condition = self.lower_expression(condition)?;
             self.terminate(
                 statement.node_id(),
-                header,
+                self.block,
                 Terminator::CondBranch {
                     condition,
                     then_target: body,
@@ -773,6 +773,9 @@ impl<'a> Lowerer<'a> {
                 )?[0])
             }
             ast::Expr::BinaryExpr(expression) => {
+                if matches!(expression.op, Token::LAnd | Token::LOr) {
+                    return self.lower_short_circuit(expression, result_type);
+                }
                 let left = self.lower_expression(&expression.x)?;
                 let right = self.lower_expression(&expression.y)?;
                 match expression.op {
@@ -825,6 +828,74 @@ impl<'a> Lowerer<'a> {
             }
             _ => Err(self.unsupported(expression.node_id(), "expression")),
         }
+    }
+
+    fn lower_short_circuit(
+        &mut self,
+        expression: &ast::BinaryExpr,
+        result_type: TypeId,
+    ) -> Result<ValueId, LowerError> {
+        let left = self.lower_expression(&expression.x)?;
+        let right_block = self.build(expression.node_id(), |builder, function, _| {
+            builder.create_block(function)
+        })?;
+        let short_block = self.build(expression.node_id(), |builder, function, _| {
+            builder.create_block(function)
+        })?;
+        let join = self.build(expression.node_id(), |builder, function, _| {
+            builder.create_block(function)
+        })?;
+        let result = self.build(expression.node_id(), |builder, function, _| {
+            builder.append_block_parameter(function, join, result_type, Some(expression.node_id()))
+        })?;
+
+        let (then_target, else_target, short_value) = match expression.op {
+            Token::LAnd => (right_block, short_block, false),
+            Token::LOr => (short_block, right_block, true),
+            _ => return Err(self.unsupported(expression.node_id(), "short-circuit operator")),
+        };
+        self.terminate(
+            expression.node_id(),
+            self.block,
+            Terminator::CondBranch {
+                condition: left,
+                then_target,
+                then_arguments: Vec::new(),
+                else_target,
+                else_arguments: Vec::new(),
+            },
+        )?;
+
+        self.block = right_block;
+        let right = self.lower_expression(&expression.y)?;
+        self.terminate(
+            expression.node_id(),
+            self.block,
+            Terminator::Branch {
+                target: join,
+                arguments: vec![right],
+            },
+        )?;
+
+        self.block = short_block;
+        let short = self.instruction(
+            expression.node_id(),
+            crate::InstructionKind::Const {
+                value: Constant::Bool(short_value),
+                typ: result_type,
+            },
+            [result_type],
+        )?[0];
+        self.terminate(
+            expression.node_id(),
+            short_block,
+            Terminator::Branch {
+                target: join,
+                arguments: vec![short],
+            },
+        )?;
+        self.block = join;
+        Ok(result)
     }
 
     fn lower_call(&mut self, call: &ast::CallExpr) -> Result<Vec<ValueId>, LowerError> {
@@ -1424,6 +1495,141 @@ func @1 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=u
 entry @1
 "#
         );
+    }
+
+    #[test]
+    fn lowers_short_circuit_to_cfg_with_boolean_join_parameters() {
+        let package = lower(
+            "package main\n\
+             func left() bool { return true }\n\
+             func right() bool { return false }\n\
+             func main() { var value bool; value = left() && right(); value = left() || right() }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+        assert_eq!(
+            package.to_string(),
+            r#"target "x86_64-unknown-linux-gnu" {
+  cpu = "generic"
+  features = ""
+  data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"
+  pointer_width = 64
+  endianness = Little
+}
+type !1
+type !2
+type !3
+type !4
+type !5
+type !6
+type !7
+type !1 = void
+type !2 = i1
+type !3 = i8
+type !4 = i16
+type !5 = i32
+type !6 = i64
+type !7 = ptr(addrspace=0, !2)
+func @1 "gane.left"() -> (!2) internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+  ^1():
+    %1 = const !2 true
+    return %1
+}
+func @2 "gane.right"() -> (!2) internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+  ^1():
+    %1 = const !2 false
+    return %1
+}
+func @3 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+  slot $1: !2
+  ^1():
+    %1 = stack_addr $1
+    %2 = call @1()
+    condbr %2, ^2(), ^3()
+  ^2():
+    %4 = call @2()
+    br ^4(%4)
+  ^3():
+    %5 = const !2 false
+    br ^4(%5)
+  ^4(%3: !2):
+    store %1, %3
+    %6 = call @1()
+    condbr %6, ^6(), ^5()
+  ^5():
+    %8 = call @2()
+    br ^7(%8)
+  ^6():
+    %9 = const !2 true
+    br ^7(%9)
+  ^7(%7: !2):
+    store %1, %7
+    return
+}
+entry @3
+"#
+        );
+    }
+
+    #[test]
+    fn nests_short_circuit_in_returns_conditions_and_loops() {
+        let package = lower(
+            "package main\n\
+             func left() bool { return true }\n\
+             func right() bool { return false }\n\
+             func choose() bool { return left() && right() }\n\
+             func main() {\n\
+                 var value bool\n\
+                 if value && (left() || right()) { value = false }\n\
+                 for value && (left() || right()) { continue }\n\
+             }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        let choose = package.function(crate::FunctionId::from_raw(3)).unwrap();
+        assert!(matches!(
+            choose.blocks.last().unwrap().terminator,
+            Terminator::Return { ref values } if values.len() == 1
+        ));
+
+        let main = package.function(package.entry()).unwrap();
+        assert!(
+            main.blocks
+                .iter()
+                .filter(|block| block.parameters.len() == 1)
+                .count()
+                >= 4
+        );
+        assert!(
+            main.blocks
+                .iter()
+                .filter(|block| block.parameters.len() == 1)
+                .all(|block| main.value(block.parameters[0]).unwrap().typ == package.types().i1())
+        );
+        assert!(main.blocks.iter().any(|block| matches!(
+            block.terminator,
+            Terminator::Branch { ref arguments, .. } if arguments.len() == 1
+        )));
+        assert!(main.blocks.iter().any(|block| matches!(
+            block.terminator,
+            Terminator::Branch { target, ref arguments }
+                if arguments.is_empty()
+                    && main.block(target).is_some_and(|target| matches!(
+                        target.terminator,
+                        Terminator::CondBranch { .. }
+                    ))
+        )));
+
+        let folded = lower(
+            "package main\nfunc main() { var value bool = true && false }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&folded).unwrap();
+        assert_eq!(folded.function(folded.entry()).unwrap().blocks.len(), 1);
     }
 
     #[test]
