@@ -8,6 +8,7 @@ pub use crate::ir::{
     InstructionKind, IntCastKind, Linkage, MemoryEffect, PassingMode, StackSlot, Terminator,
     TrapReason, UnaryOp, UnverifiedHirPackage, ValueDef, ValueOrigin, VerifiedHirPackage,
 };
+pub use crate::lower::{LowerError, lower_package};
 pub use crate::target::{Endianness, TargetSpec, TargetSpecError};
 pub use crate::types::{
     HirType, HirTypeKind, LayoutError, LayoutProvider, SourceOrigin, Symbol, TypeArena,

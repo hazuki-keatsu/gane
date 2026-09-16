@@ -39,6 +39,9 @@ then read the relevant design documents in `docs/` (for example,
 `docs/hir-design.md` for HIR work). Inspect the affected crate only after that.
 Treat existing worktree changes as user-owned.
 
+After completing and verifying a milestone, update its status in `PROGRESS.md`
+as part of the same change.
+
 Write or modify source code only when the user explicitly requests implementation
 or a code change. For questions, reviews, planning, and diagnosis, inspect and
 report findings without editing code. Never create a commit, amend a commit, or

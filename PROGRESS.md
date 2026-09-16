@@ -29,14 +29,14 @@
 
 - [ ] 实现 lowering，但从最小垂直切片开始
 不要一次性覆盖整份 V0。建议顺序：
-  1. 常量/局部变量/标量表达式
-  2. 函数、调用、return
-  3. if 与 block parameter
-  4. for、break、continue
-  5. short-circuit && / ||
-  6. 指针、field/index、显式检查
-  7. array/struct、AggregateZero/Copy
-  8. global 与 extern
+  - [x] 常量/局部变量/标量表达式
+  - [ ] 函数、调用、return
+  - [ ] if 与 block parameter
+  - [ ] for、break、continue
+  - [ ] short-circuit && / ||
+  - [ ] 指针、field/index、显式检查
+  - [ ] array/struct、AggregateZero/Copy
+  - [ ] global 与 extern
 第一批就可以支持 func main(){ var x int; x = 1 + 2 }，并把 golden HIR 固定下来。每增加一个语法结构，就同时增加：
   - source → HIR golden；
   - 验证器测试；
