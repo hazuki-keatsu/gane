@@ -1,16 +1,22 @@
 use crate::{
     BinaryOp, BlockId, BuildError, Callee, CallingConvention, ComparePredicate, Constant,
-    FunctionAttributes, FunctionId, HirBuilder, HirParameter, HirSignature, HirTypeKind, Linkage,
-    PassingMode, Terminator, TypeId, UnaryOp, UnverifiedHirPackage, ValueId,
+    FunctionAttributes, FunctionId, HirBuilder, HirParameter, HirSignature, HirTypeKind,
+    IntCastKind, Linkage, PassingMode, Terminator, TrapReason, TypeId, UnaryOp,
+    UnverifiedHirPackage, ValueId,
 };
 use gane_parser::{
     ast,
     token::{AstNodeId, Token},
 };
 use gane_sema::{
-    AnalysisResult, BasicType, ConstValue, ObjectId, ObjectKind, PackageInput, Severity, TypeKind,
+    AnalysisResult, BasicType, ConstValue, ObjectId, ObjectKind, PackageInput, SelectionKind,
+    Severity, TypeKind,
 };
-use std::{collections::HashMap, error::Error, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    fmt,
+};
 
 #[derive(Debug)]
 pub enum LowerError {
@@ -102,8 +108,14 @@ pub fn lower_package(
 }
 
 #[derive(Clone, Copy)]
-struct Local {
+struct Place {
     pointer: ValueId,
+    typ: TypeId,
+}
+
+#[derive(Clone, Copy)]
+struct Local {
+    place: Place,
 }
 
 #[derive(Clone)]
@@ -128,6 +140,8 @@ struct Lowerer<'a> {
     functions: HashMap<ObjectId, LoweredFunction>,
     results: Vec<TypeId>,
     pointer_types: HashMap<TypeId, TypeId>,
+    type_map: HashMap<gane_sema::TypeId, TypeId>,
+    known_non_null: HashSet<ValueId>,
     loops: Vec<Loop>,
 }
 
@@ -144,6 +158,8 @@ impl<'a> Lowerer<'a> {
             functions: HashMap::new(),
             results: Vec::new(),
             pointer_types: HashMap::new(),
+            type_map: HashMap::new(),
+            known_non_null: HashSet::new(),
             loops: Vec::new(),
         }
     }
@@ -239,7 +255,7 @@ impl<'a> Lowerer<'a> {
     }
 
     fn function_signature(
-        &self,
+        &mut self,
         function: ObjectId,
         node: AstNodeId,
     ) -> Result<HirSignature, LowerError> {
@@ -258,28 +274,37 @@ impl<'a> Lowerer<'a> {
         if receiver.is_some() || *variadic {
             return Err(self.unsupported(node, "function signature"));
         }
-        let parameters = self
+        let parameter_objects = self
             .analysis
             .tuple(*params)
             .ok_or_else(|| self.missing(node, "function parameters"))?
             .vars
-            .iter()
-            .map(|object| {
-                self.lower_type(self.analysis.object(*object).typ, node)
-                    .map(|typ| HirParameter {
-                        typ,
-                        passing: PassingMode::Direct,
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let results = self
+            .clone();
+        let mut parameters = Vec::with_capacity(parameter_objects.len());
+        for object in parameter_objects {
+            let typ = self.lower_type(self.analysis.object(object).typ, node)?;
+            if self.is_aggregate(typ) {
+                return Err(self.unsupported(node, "aggregate parameter"));
+            }
+            parameters.push(HirParameter {
+                typ,
+                passing: PassingMode::Direct,
+            });
+        }
+        let result_objects = self
             .analysis
             .tuple(*results)
             .ok_or_else(|| self.missing(node, "function results"))?
             .vars
-            .iter()
-            .map(|object| self.lower_type(self.analysis.object(*object).typ, node))
-            .collect::<Result<Vec<_>, _>>()?;
+            .clone();
+        let mut results = Vec::with_capacity(result_objects.len());
+        for object in result_objects {
+            let typ = self.lower_type(self.analysis.object(object).typ, node)?;
+            if self.is_aggregate(typ) {
+                return Err(self.unsupported(node, "aggregate result"));
+            }
+            results.push(typ);
+        }
         if results.len() > 1 {
             return Err(self.unsupported(node, "multiple function results"));
         }
@@ -311,6 +336,7 @@ impl<'a> Lowerer<'a> {
             })?;
         self.results = function.signature.results.clone();
         self.locals.clear();
+        self.known_non_null.clear();
         self.loops.clear();
         self.initialize_parameters(object, declaration.node_id())?;
         if !self.lower_block(body)? {
@@ -344,12 +370,13 @@ impl<'a> Lowerer<'a> {
             .analysis
             .tuple(*params)
             .ok_or_else(|| self.missing(node, "function parameters"))?;
+        let parameter_objects = parameters.vars.clone();
         let entry_parameters = self
             .builder
             .entry_parameters(self.function)
             .map_err(|source| LowerError::Build { node, source })?;
-        for (object, value) in parameters.vars.iter().zip(entry_parameters) {
-            let parameter = self.analysis.object(*object);
+        for (object, value) in parameter_objects.into_iter().zip(entry_parameters) {
+            let parameter = self.analysis.object(object);
             let Some(name) = self.analysis.name(parameter.name) else {
                 continue;
             };
@@ -367,8 +394,10 @@ impl<'a> Lowerer<'a> {
                 crate::InstructionKind::StackAddr { slot },
                 [pointer_type],
             )?[0];
-            self.locals.insert(*object, Local { pointer });
-            self.store(parameter_node, pointer, value)?;
+            let place = Place { pointer, typ };
+            self.locals.insert(object, Local { place });
+            self.known_non_null.insert(pointer);
+            self.store(parameter_node, place, value)?;
         }
         Ok(())
     }
@@ -392,6 +421,7 @@ impl<'a> Lowerer<'a> {
             ast::Stmt::AssignStmt(statement) if statement.tok == Token::Assign => {
                 self.lower_assignment(statement).map(|_| false)
             }
+            ast::Stmt::IncDecStmt(statement) => self.lower_inc_dec(statement).map(|_| false),
             ast::Stmt::ExprStmt(statement) => self.lower_expression_statement(statement),
             ast::Stmt::ReturnStmt(statement) => self.lower_return(statement),
             ast::Stmt::IfStmt(statement) => self.lower_if(statement),
@@ -672,10 +702,12 @@ impl<'a> Lowerer<'a> {
                 crate::InstructionKind::StackAddr { slot },
                 [pointer_type],
             )?[0];
-            self.locals.insert(object, Local { pointer });
+            let place = Place { pointer, typ };
+            self.locals.insert(object, Local { place });
+            self.known_non_null.insert(pointer);
 
             if let Some(value) = values.get(index) {
-                self.store(spec.node_id(), pointer, *value)?;
+                self.store(spec.node_id(), place, *value)?;
             }
         }
         Ok(())
@@ -687,13 +719,7 @@ impl<'a> Lowerer<'a> {
             .iter()
             .map(|expression| match expression {
                 ast::Expr::Ident(identifier) if identifier.name == "_" => Ok(None),
-                ast::Expr::Ident(identifier) => {
-                    let object = self.use_of(identifier.node_id())?;
-                    self.locals.get(&object).copied().map(Some).ok_or_else(|| {
-                        self.unsupported(identifier.node_id(), "non-local assignment")
-                    })
-                }
-                _ => Err(self.unsupported(expression.node_id(), "assignment target")),
+                _ => self.lower_place(expression).map(Some),
             })
             .collect::<Result<Vec<_>, _>>()?;
         let values = statement
@@ -704,10 +730,38 @@ impl<'a> Lowerer<'a> {
 
         for (destination, value) in destinations.into_iter().zip(values) {
             if let Some(destination) = destination {
-                self.store(statement.node_id(), destination.pointer, value)?;
+                self.store(statement.node_id(), destination, value)?;
             }
         }
         Ok(())
+    }
+
+    fn lower_inc_dec(&mut self, statement: &ast::IncDecStmt) -> Result<(), LowerError> {
+        let place = self.lower_place(&statement.x)?;
+        let value = self.load(statement.x.node_id(), place)?;
+        let one = self.instruction(
+            statement.node_id(),
+            crate::InstructionKind::Const {
+                value: Constant::Integer(1),
+                typ: place.typ,
+            },
+            [place.typ],
+        )?[0];
+        let op = match statement.tok {
+            Token::Inc => BinaryOp::Add,
+            Token::Dec => BinaryOp::Sub,
+            _ => return Err(self.unsupported(statement.node_id(), "increment or decrement")),
+        };
+        let result = self.instruction(
+            statement.node_id(),
+            crate::InstructionKind::Binary {
+                op,
+                left: value,
+                right: one,
+            },
+            [place.typ],
+        )?[0];
+        self.store(statement.node_id(), place, result)
     }
 
     fn lower_expression(&mut self, expression: &ast::Expr) -> Result<ValueId, LowerError> {
@@ -738,22 +792,17 @@ impl<'a> Lowerer<'a> {
 
         match expression {
             ast::Expr::ParenExpr(expression) => self.lower_expression(&expression.x),
-            ast::Expr::Ident(identifier) => {
-                let object = self.use_of(identifier.node_id())?;
-                let local = self
-                    .locals
-                    .get(&object)
-                    .copied()
-                    .ok_or_else(|| self.unsupported(identifier.node_id(), "non-local value"))?;
-                Ok(self.instruction(
-                    identifier.node_id(),
-                    crate::InstructionKind::Load {
-                        pointer: local.pointer,
-                    },
-                    [result_type],
-                )?[0])
+            ast::Expr::Ident(_)
+            | ast::Expr::StarExpr(_)
+            | ast::Expr::SelectorExpr(_)
+            | ast::Expr::IndexExpr(_) => {
+                let place = self.lower_place(expression)?;
+                self.load(expression.node_id(), place)
             }
             ast::Expr::UnaryExpr(expression) => {
+                if expression.op == Token::And {
+                    return Ok(self.lower_place(&expression.x)?.pointer);
+                }
                 let operand = self.lower_expression(&expression.x)?;
                 let Some(operator) = (match expression.op {
                     Token::Add => return Ok(operand),
@@ -789,6 +838,22 @@ impl<'a> Lowerer<'a> {
                                     self.unsupported(expression.node_id(), "binary operator")
                                 );
                             }
+                        };
+                        Ok(self.instruction(
+                            expression.node_id(),
+                            crate::InstructionKind::Binary { op, left, right },
+                            [result_type],
+                        )?[0])
+                    }
+                    Token::Quo | Token::Rem => {
+                        self.guard_nonzero(expression.node_id(), right, result_type)?;
+                        let unsigned = self.analysis.is_basic_type(fact.typ, BasicType::Byte);
+                        let op = match (expression.op, unsigned) {
+                            (Token::Quo, false) => BinaryOp::SignedDiv,
+                            (Token::Quo, true) => BinaryOp::UnsignedDiv,
+                            (Token::Rem, false) => BinaryOp::SignedRem,
+                            (Token::Rem, true) => BinaryOp::UnsignedRem,
+                            _ => return Err(self.unsupported(expression.node_id(), "division")),
                         };
                         Ok(self.instruction(
                             expression.node_id(),
@@ -946,20 +1011,258 @@ impl<'a> Lowerer<'a> {
         Ok(predicate)
     }
 
-    fn lower_type(&self, typ: gane_sema::TypeId, node: AstNodeId) -> Result<TypeId, LowerError> {
-        if self.analysis.is_basic_type(typ, BasicType::Bool) {
-            Ok(self.builder.types().i1())
-        } else if self.analysis.is_basic_type(typ, BasicType::Byte) {
-            Ok(self.builder.types().i8())
-        } else if self.analysis.is_basic_type(typ, BasicType::Int) {
-            Ok(match self.target_width {
+    fn lower_place(&mut self, expression: &ast::Expr) -> Result<Place, LowerError> {
+        let semantic_type = self
+            .analysis
+            .type_and_value(expression.node_id())
+            .ok_or_else(|| self.missing(expression.node_id(), "expression type and value"))?
+            .typ;
+        let typ = self.lower_type(semantic_type, expression.node_id())?;
+        match expression {
+            ast::Expr::ParenExpr(expression) => self.lower_place(&expression.x),
+            ast::Expr::Ident(identifier) => {
+                let object = self.use_of(identifier.node_id())?;
+                self.locals
+                    .get(&object)
+                    .copied()
+                    .map(|local| local.place)
+                    .ok_or_else(|| self.unsupported(identifier.node_id(), "non-local place"))
+            }
+            ast::Expr::StarExpr(expression) => {
+                let pointer = self.lower_expression(&expression.x)?;
+                let place = Place { pointer, typ };
+                self.ensure_non_null(expression.node_id(), place)?;
+                Ok(place)
+            }
+            ast::Expr::SelectorExpr(expression) => {
+                let selection = self
+                    .analysis
+                    .selection(expression.node_id())
+                    .cloned()
+                    .ok_or_else(|| self.missing(expression.node_id(), "field selection"))?;
+                let SelectionKind::Field = selection.kind else {
+                    return Err(self.unsupported(expression.node_id(), "non-field selection"));
+                };
+                let [field] = selection.index.as_slice() else {
+                    return Err(self.unsupported(expression.node_id(), "multi-field selection"));
+                };
+                let base = if selection.indirect {
+                    let pointer = self.lower_expression(&expression.x)?;
+                    let receiver_type = self
+                        .analysis
+                        .type_and_value(expression.x.node_id())
+                        .ok_or_else(|| self.missing(expression.x.node_id(), "field receiver type"))?
+                        .typ;
+                    let pointee = self.analysis.deref_type(receiver_type).ok_or_else(|| {
+                        self.missing(expression.x.node_id(), "field receiver pointee")
+                    })?;
+                    Place {
+                        pointer,
+                        typ: self.lower_type(pointee, expression.x.node_id())?,
+                    }
+                } else {
+                    self.lower_place(&expression.x)?
+                };
+                self.ensure_non_null(expression.node_id(), base)?;
+                let pointer_type = self.pointer_type(typ);
+                let pointer = self.instruction(
+                    expression.node_id(),
+                    crate::InstructionKind::GepField {
+                        base: base.pointer,
+                        field: *field,
+                    },
+                    [pointer_type],
+                )?[0];
+                self.known_non_null.insert(pointer);
+                Ok(Place { pointer, typ })
+            }
+            ast::Expr::IndexExpr(expression) => self.lower_index_place(expression, typ),
+            _ => Err(self.unsupported(expression.node_id(), "assignment target")),
+        }
+    }
+
+    fn lower_index_place(
+        &mut self,
+        expression: &ast::IndexExpr,
+        element: TypeId,
+    ) -> Result<Place, LowerError> {
+        let base = self.lower_place(&expression.x)?;
+        self.ensure_non_null(expression.x.node_id(), base)?;
+        let length = match self.builder.types().get(base.typ) {
+            Some(crate::HirType {
+                kind: HirTypeKind::Array { length, .. },
+            }) => *length,
+            _ => return Err(self.unsupported(expression.x.node_id(), "indexing non-array place")),
+        };
+        let index_fact = self
+            .analysis
+            .type_and_value(expression.index.node_id())
+            .ok_or_else(|| self.missing(expression.index.node_id(), "index type"))?
+            .clone();
+        let index = self.lower_expression(&expression.index)?;
+        let index_type = self.lower_type(index_fact.typ, expression.index.node_id())?;
+        let failure = self.build(expression.node_id(), |builder, function, _| {
+            builder.create_block(function)
+        })?;
+        let access = self.build(expression.node_id(), |builder, function, _| {
+            builder.create_block(function)
+        })?;
+
+        if self.analysis.is_basic_type(index_fact.typ, BasicType::Int) {
+            let zero = self.integer_constant(expression.index.node_id(), index_type, 0)?;
+            let non_negative = self.instruction(
+                expression.index.node_id(),
+                crate::InstructionKind::Compare {
+                    predicate: ComparePredicate::SignedGreaterEqual,
+                    left: index,
+                    right: zero,
+                },
+                [self.builder.types().i1()],
+            )?[0];
+            let upper = self.build(expression.node_id(), |builder, function, _| {
+                builder.create_block(function)
+            })?;
+            self.terminate(
+                expression.node_id(),
+                self.block,
+                Terminator::CondBranch {
+                    condition: non_negative,
+                    then_target: upper,
+                    then_arguments: Vec::new(),
+                    else_target: failure,
+                    else_arguments: Vec::new(),
+                },
+            )?;
+            self.block = upper;
+        } else if !self.analysis.is_basic_type(index_fact.typ, BasicType::Byte) {
+            return Err(self.unsupported(expression.index.node_id(), "array index type"));
+        }
+
+        let normalized = self.normalize_index(expression.index.node_id(), index, index_type)?;
+        let index_type = self.pointer_integer_type(expression.index.node_id())?;
+        let length = self.integer_constant(expression.node_id(), index_type, length)?;
+        let in_range = self.instruction(
+            expression.node_id(),
+            crate::InstructionKind::Compare {
+                predicate: ComparePredicate::UnsignedLess,
+                left: normalized,
+                right: length,
+            },
+            [self.builder.types().i1()],
+        )?[0];
+        self.terminate(
+            expression.node_id(),
+            self.block,
+            Terminator::CondBranch {
+                condition: in_range,
+                then_target: access,
+                then_arguments: Vec::new(),
+                else_target: failure,
+                else_arguments: Vec::new(),
+            },
+        )?;
+        self.terminate(
+            expression.node_id(),
+            failure,
+            Terminator::Trap {
+                reason: TrapReason::BoundsError,
+            },
+        )?;
+        self.block = access;
+        let pointer_type = self.pointer_type(element);
+        let pointer = self.instruction(
+            expression.node_id(),
+            crate::InstructionKind::GepIndex {
+                base: base.pointer,
+                index: normalized,
+            },
+            [pointer_type],
+        )?[0];
+        self.known_non_null.insert(pointer);
+        Ok(Place {
+            pointer,
+            typ: element,
+        })
+    }
+
+    fn lower_type(
+        &mut self,
+        typ: gane_sema::TypeId,
+        node: AstNodeId,
+    ) -> Result<TypeId, LowerError> {
+        if let Some(hir_type) = self.type_map.get(&typ) {
+            return Ok(*hir_type);
+        }
+        let underlying = self.analysis.underlying_type(typ);
+        if let Some(hir_type) = self.type_map.get(&underlying).copied() {
+            self.type_map.insert(typ, hir_type);
+            return Ok(hir_type);
+        }
+        if let Some(hir_type) = self.type_map.iter().find_map(|(semantic, hir_type)| {
+            self.analysis
+                .identical_types(underlying, *semantic)
+                .then_some(*hir_type)
+        }) {
+            self.type_map.insert(underlying, hir_type);
+            self.type_map.insert(typ, hir_type);
+            return Ok(hir_type);
+        }
+        let result = match self.analysis.type_of(underlying).kind.clone() {
+            TypeKind::Basic(BasicType::Bool) => self.builder.types().i1(),
+            TypeKind::Basic(BasicType::Byte) => self.builder.types().i8(),
+            TypeKind::Basic(BasicType::Int) => match self.target_width {
                 32 => self.builder.types().i32(),
                 64 => self.builder.types().i64(),
                 _ => return Err(self.unsupported(node, "target pointer width")),
-            })
-        } else {
-            Err(self.unsupported(node, "type"))
+            },
+            TypeKind::Pointer { base } => {
+                let pointee = self.lower_type(base, node)?;
+                self.pointer_type(pointee)
+            }
+            TypeKind::Array { len, elem } => {
+                let result = self.builder.reserve_type();
+                self.type_map.insert(underlying, result);
+                self.type_map.insert(typ, result);
+                let length = self.array_length(len, node)?;
+                let element = self.lower_type(elem, node)?;
+                self.builder
+                    .define_type(result, HirTypeKind::Array { length, element })
+                    .map_err(|source| LowerError::Build { node, source })?;
+                return Ok(result);
+            }
+            TypeKind::Struct { fields } => {
+                let result = self.builder.reserve_type();
+                self.type_map.insert(underlying, result);
+                self.type_map.insert(typ, result);
+                let fields = fields
+                    .into_iter()
+                    .map(|field| self.lower_type(self.analysis.object(field).typ, node))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.builder
+                    .define_type(result, HirTypeKind::Struct { fields })
+                    .map_err(|source| LowerError::Build { node, source })?;
+                return Ok(result);
+            }
+            _ => return Err(self.unsupported(node, "type")),
+        };
+        self.type_map.insert(underlying, result);
+        self.type_map.insert(typ, result);
+        Ok(result)
+    }
+
+    fn array_length(&self, length: ConstValue, node: AstNodeId) -> Result<u64, LowerError> {
+        let ConstValue::Int(length) = length else {
+            return Err(LowerError::InvalidConstant { node });
+        };
+        let length = length
+            .to_i128()
+            .and_then(|length| u64::try_from(length).ok())
+            .filter(|length| *length != 0)
+            .ok_or(LowerError::InvalidConstant { node })?;
+        if self.target_width == 32 && length > u32::MAX as u64 {
+            return Err(LowerError::InvalidConstant { node });
         }
+        Ok(length)
     }
 
     fn lower_constant(
@@ -1006,14 +1309,158 @@ impl<'a> Lowerer<'a> {
         pointer
     }
 
-    fn store(
+    fn pointer_integer_type(&self, node: AstNodeId) -> Result<TypeId, LowerError> {
+        match self.target_width {
+            32 => Ok(self.builder.types().i32()),
+            64 => Ok(self.builder.types().i64()),
+            _ => Err(self.unsupported(node, "target pointer width")),
+        }
+    }
+
+    fn normalize_index(
         &mut self,
         node: AstNodeId,
-        pointer: ValueId,
-        value: ValueId,
-    ) -> Result<(), LowerError> {
-        self.instruction(node, crate::InstructionKind::Store { pointer, value }, [])?;
+        index: ValueId,
+        source: TypeId,
+    ) -> Result<ValueId, LowerError> {
+        let target = self.pointer_integer_type(node)?;
+        if source == target {
+            return Ok(index);
+        }
+        Ok(self.instruction(
+            node,
+            crate::InstructionKind::IntCast {
+                kind: IntCastKind::ZeroExtend,
+                operand: index,
+                target,
+            },
+            [target],
+        )?[0])
+    }
+
+    fn integer_constant(
+        &mut self,
+        node: AstNodeId,
+        typ: TypeId,
+        value: u64,
+    ) -> Result<ValueId, LowerError> {
+        Ok(self.instruction(
+            node,
+            crate::InstructionKind::Const {
+                value: Constant::Integer(value),
+                typ,
+            },
+            [typ],
+        )?[0])
+    }
+
+    fn ensure_non_null(&mut self, node: AstNodeId, place: Place) -> Result<(), LowerError> {
+        if self.known_non_null.contains(&place.pointer) {
+            return Ok(());
+        }
+        let pointer_type = self.pointer_type(place.typ);
+        let null = self.instruction(
+            node,
+            crate::InstructionKind::Const {
+                value: Constant::Null,
+                typ: pointer_type,
+            },
+            [pointer_type],
+        )?[0];
+        let non_null = self.instruction(
+            node,
+            crate::InstructionKind::Compare {
+                predicate: ComparePredicate::NotEqual,
+                left: place.pointer,
+                right: null,
+            },
+            [self.builder.types().i1()],
+        )?[0];
+        self.guard(node, non_null, TrapReason::NullDereference)?;
+        self.known_non_null.insert(place.pointer);
         Ok(())
+    }
+
+    fn guard_nonzero(
+        &mut self,
+        node: AstNodeId,
+        divisor: ValueId,
+        typ: TypeId,
+    ) -> Result<(), LowerError> {
+        let zero = self.integer_constant(node, typ, 0)?;
+        let non_zero = self.instruction(
+            node,
+            crate::InstructionKind::Compare {
+                predicate: ComparePredicate::NotEqual,
+                left: divisor,
+                right: zero,
+            },
+            [self.builder.types().i1()],
+        )?[0];
+        self.guard(node, non_zero, TrapReason::DivisionByZero)
+    }
+
+    fn guard(
+        &mut self,
+        node: AstNodeId,
+        condition: ValueId,
+        reason: TrapReason,
+    ) -> Result<(), LowerError> {
+        let success = self.build(node, |builder, function, _| builder.create_block(function))?;
+        let failure = self.build(node, |builder, function, _| builder.create_block(function))?;
+        self.terminate(
+            node,
+            self.block,
+            Terminator::CondBranch {
+                condition,
+                then_target: success,
+                then_arguments: Vec::new(),
+                else_target: failure,
+                else_arguments: Vec::new(),
+            },
+        )?;
+        self.terminate(node, failure, Terminator::Trap { reason })?;
+        self.block = success;
+        Ok(())
+    }
+
+    fn load(&mut self, node: AstNodeId, place: Place) -> Result<ValueId, LowerError> {
+        if self.is_aggregate(place.typ) {
+            return Err(self.unsupported(node, "aggregate value"));
+        }
+        self.ensure_non_null(node, place)?;
+        Ok(self.instruction(
+            node,
+            crate::InstructionKind::Load {
+                pointer: place.pointer,
+            },
+            [place.typ],
+        )?[0])
+    }
+
+    fn store(&mut self, node: AstNodeId, place: Place, value: ValueId) -> Result<(), LowerError> {
+        if self.is_aggregate(place.typ) {
+            return Err(self.unsupported(node, "aggregate assignment"));
+        }
+        self.ensure_non_null(node, place)?;
+        self.instruction(
+            node,
+            crate::InstructionKind::Store {
+                pointer: place.pointer,
+                value,
+            },
+            [],
+        )?;
+        Ok(())
+    }
+
+    fn is_aggregate(&self, typ: TypeId) -> bool {
+        matches!(
+            self.builder.types().get(typ),
+            Some(crate::HirType {
+                kind: HirTypeKind::Array { .. } | HirTypeKind::Struct { .. },
+            })
+        )
     }
 
     fn instruction(
@@ -1789,6 +2236,297 @@ entry @3
                 Err(LowerError::Unsupported { .. })
             ));
         }
+    }
+
+    #[test]
+    fn lowers_nested_struct_and_array_places_to_geps() {
+        let package = lower(
+            "package main\n\
+             type Row struct { values [2]int }\n\
+             type Matrix struct { row Row }\n\
+             func main() { var matrix Matrix; var index int; matrix.row.values[index] = 1; _ = matrix.row.values[index] }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        let function = package.function(package.entry()).unwrap();
+        let instructions = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            instructions
+                .iter()
+                .filter(|instruction| matches!(instruction.kind, InstructionKind::GepField { .. }))
+                .count(),
+            4
+        );
+        assert_eq!(
+            instructions
+                .iter()
+                .filter(|instruction| matches!(instruction.kind, InstructionKind::GepIndex { .. }))
+                .count(),
+            2
+        );
+        assert!(instructions.iter().any(|instruction| matches!(
+            instruction.kind,
+            InstructionKind::Compare {
+                predicate: ComparePredicate::SignedGreaterEqual,
+                ..
+            }
+        )));
+        assert!(function.blocks.iter().any(|block| matches!(
+            block.terminator,
+            Terminator::Trap {
+                reason: TrapReason::BoundsError
+            }
+        )));
+        for instruction in instructions
+            .iter()
+            .filter(|instruction| matches!(instruction.kind, InstructionKind::GepIndex { .. }))
+        {
+            let InstructionKind::GepIndex { index, .. } = instruction.kind else {
+                unreachable!();
+            };
+            assert_eq!(function.value(index).unwrap().typ, package.types().i64());
+        }
+    }
+
+    #[test]
+    fn lowers_local_struct_field_to_stable_hir() {
+        let package = lower(
+            "package main\ntype Pair struct { value int }\nfunc main() { var pair Pair; pair.value = 1 }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+        assert_eq!(
+            package.to_string(),
+            r#"target "x86_64-unknown-linux-gnu" {
+  cpu = "generic"
+  features = ""
+  data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"
+  pointer_width = 64
+  endianness = Little
+}
+type !1
+type !2
+type !3
+type !4
+type !5
+type !6
+type !7
+type !8
+type !9
+type !1 = void
+type !2 = i1
+type !3 = i8
+type !4 = i16
+type !5 = i32
+type !6 = i64
+type !7 = struct {!6}
+type !8 = ptr(addrspace=0, !7)
+type !9 = ptr(addrspace=0, !6)
+func @1 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+  slot $1: !7
+  ^1():
+    %1 = stack_addr $1
+    %2 = gep_field %1, 0
+    %3 = const !6 1
+    store %2, %3
+    return
+}
+entry @1
+"#
+        );
+    }
+
+    #[test]
+    fn normalizes_array_indexes_to_the_target_pointer_width() {
+        for (target, expected) in [
+            (TargetSpec::for_test_32(), HirTypeKind::I32),
+            (TargetSpec::for_test_64(), HirTypeKind::I64),
+        ] {
+            let package = lower(
+                "package main\nfunc main() { var values [2]int; var index byte; _ = values[index] }\n",
+                target,
+            )
+            .unwrap();
+            verify(&package).unwrap();
+            let function = package.function(package.entry()).unwrap();
+            let index = function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .find_map(|instruction| match instruction.kind {
+                    InstructionKind::GepIndex { index, .. } => Some(index),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(matches!(
+                package.types().get(function.value(index).unwrap().typ),
+                Some(crate::HirType { kind }) if *kind == expected
+            ));
+        }
+    }
+
+    #[test]
+    fn guards_pointer_dereferences_division_and_byte_indexes() {
+        let package = lower(
+            "package main\n\
+             type Pair struct { value int }\n\
+             func calculate(pair *Pair, divisor int, bytes *[2]int, index byte) int {\n\
+                 pair.value = pair.value / divisor\n\
+                 (*bytes)[index] = pair.value % divisor\n\
+                 return (*bytes)[index]\n\
+             }\n\
+             func byte_math(left byte, right byte) byte { return left / right % right }\n\
+             func main() {}\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        let calculate = package.function(crate::FunctionId::from_raw(1)).unwrap();
+        let instructions = calculate
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            calculate
+                .blocks
+                .iter()
+                .filter(|block| matches!(
+                    block.terminator,
+                    Terminator::Trap {
+                        reason: TrapReason::NullDereference
+                    }
+                ))
+                .count(),
+            5
+        );
+        assert_eq!(
+            calculate
+                .blocks
+                .iter()
+                .filter(|block| matches!(
+                    block.terminator,
+                    Terminator::Trap {
+                        reason: TrapReason::DivisionByZero
+                    }
+                ))
+                .count(),
+            2
+        );
+        assert_eq!(
+            calculate
+                .blocks
+                .iter()
+                .filter(|block| matches!(
+                    block.terminator,
+                    Terminator::Trap {
+                        reason: TrapReason::BoundsError
+                    }
+                ))
+                .count(),
+            2
+        );
+        assert_eq!(
+            instructions
+                .iter()
+                .filter(|instruction| matches!(
+                    instruction.kind,
+                    InstructionKind::IntCast {
+                        kind: IntCastKind::ZeroExtend,
+                        ..
+                    }
+                ))
+                .count(),
+            2
+        );
+        assert!(instructions.iter().any(|instruction| matches!(
+            instruction.kind,
+            InstructionKind::Binary {
+                op: BinaryOp::SignedDiv,
+                ..
+            }
+        )));
+        assert!(instructions.iter().any(|instruction| matches!(
+            instruction.kind,
+            InstructionKind::Binary {
+                op: BinaryOp::SignedRem,
+                ..
+            }
+        )));
+
+        let byte_math = package.function(crate::FunctionId::from_raw(2)).unwrap();
+        assert_eq!(
+            byte_math
+                .blocks
+                .iter()
+                .filter(|block| matches!(
+                    block.terminator,
+                    Terminator::Trap {
+                        reason: TrapReason::DivisionByZero
+                    }
+                ))
+                .count(),
+            2
+        );
+        assert!(
+            byte_math
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .any(|instruction| matches!(
+                    instruction.kind,
+                    InstructionKind::Binary {
+                        op: BinaryOp::UnsignedDiv,
+                        ..
+                    }
+                ))
+        );
+        assert!(
+            byte_math
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .any(|instruction| matches!(
+                    instruction.kind,
+                    InstructionKind::Binary {
+                        op: BinaryOp::UnsignedRem,
+                        ..
+                    }
+                ))
+        );
+    }
+
+    #[test]
+    fn caches_identical_arrays_and_supports_pointer_recursive_structs() {
+        let package = lower(
+            "package main\n\
+             type Node struct { next *Node; value int }\n\
+             func main() { var first [2]int; var second [2]int; var node Node; var pointer *Node; pointer = &node; first[0] = second[0]; pointer.next.value = first[0] }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        let function = package.function(package.entry()).unwrap();
+        assert_eq!(function.stack_slots[0].typ, function.stack_slots[1].typ);
+        assert!(package.types().iter().any(|(_, typ)| matches!(
+            typ.kind,
+            HirTypeKind::Struct { ref fields }
+                if fields.iter().any(|field| matches!(
+                    package.types().get(*field),
+                    Some(crate::HirType {
+                        kind: HirTypeKind::Ptr { pointee, .. }
+                    }) if *pointee == function.stack_slots[2].typ
+                ))
+        )));
     }
 
     #[test]
