@@ -385,11 +385,93 @@ impl<'a> Lowerer<'a> {
             }
             ast::Stmt::ExprStmt(statement) => self.lower_expression_statement(statement),
             ast::Stmt::ReturnStmt(statement) => self.lower_return(statement),
+            ast::Stmt::IfStmt(statement) => self.lower_if(statement),
             ast::Stmt::AssignStmt(statement) => {
                 Err(self.unsupported(statement.node_id(), "non-simple assignment"))
             }
             _ => Err(self.unsupported(statement.node_id(), "statement")),
         }
+    }
+
+    fn lower_if(&mut self, statement: &ast::IfStmt) -> Result<bool, LowerError> {
+        if statement.init.is_some() {
+            return Err(self.unsupported(statement.node_id(), "if initializer"));
+        }
+
+        let condition = self.lower_expression(&statement.cond)?;
+        let then_block = self.build(statement.node_id(), |builder, function, _| {
+            builder.create_block(function)
+        })?;
+        let else_block = self.build(statement.node_id(), |builder, function, _| {
+            builder.create_block(function)
+        })?;
+        self.terminate(
+            statement.node_id(),
+            self.block,
+            Terminator::CondBranch {
+                condition,
+                then_target: then_block,
+                then_arguments: Vec::new(),
+                else_target: else_block,
+                else_arguments: Vec::new(),
+            },
+        )?;
+
+        self.block = then_block;
+        let then_terminates = self.lower_block(&statement.body)?;
+        let then_end = self.block;
+
+        if statement.else_.is_none() {
+            if !then_terminates {
+                self.terminate(
+                    statement.node_id(),
+                    then_end,
+                    Terminator::Branch {
+                        target: else_block,
+                        arguments: Vec::new(),
+                    },
+                )?;
+            }
+            self.block = else_block;
+            return Ok(false);
+        }
+
+        self.block = else_block;
+        let else_terminates = match &statement.else_ {
+            Some(else_) => self.lower_statement(else_)?,
+            None => false,
+        };
+        let else_end = self.block;
+
+        if then_terminates && else_terminates {
+            return Ok(true);
+        }
+
+        let join = self.build(statement.node_id(), |builder, function, _| {
+            builder.create_block(function)
+        })?;
+        if !then_terminates {
+            self.terminate(
+                statement.node_id(),
+                then_end,
+                Terminator::Branch {
+                    target: join,
+                    arguments: Vec::new(),
+                },
+            )?;
+        }
+        if !else_terminates {
+            self.terminate(
+                statement.node_id(),
+                else_end,
+                Terminator::Branch {
+                    target: join,
+                    arguments: Vec::new(),
+                },
+            )?;
+        }
+        self.block = join;
+        Ok(false)
     }
 
     fn lower_expression_statement(
@@ -759,6 +841,17 @@ impl<'a> Lowerer<'a> {
             .map_err(|source| LowerError::Build { node, source })
     }
 
+    fn terminate(
+        &mut self,
+        node: AstNodeId,
+        block: BlockId,
+        terminator: Terminator,
+    ) -> Result<(), LowerError> {
+        self.builder
+            .set_terminator(self.function, block, terminator)
+            .map_err(|source| LowerError::Build { node, source })
+    }
+
     fn definition(&self, node: AstNodeId) -> Result<ObjectId, LowerError> {
         self.analysis
             .definition(node)
@@ -1098,6 +1191,151 @@ entry @2
     }
 
     #[test]
+    fn lowers_if_else_to_zero_parameter_join() {
+        let package = lower(
+            "package main\nfunc main() { var x int; if x == 0 { x = 1 } else { x = 2 } }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        assert_eq!(
+            package.to_string(),
+            r#"target "x86_64-unknown-linux-gnu" {
+  cpu = "generic"
+  features = ""
+  data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"
+  pointer_width = 64
+  endianness = Little
+}
+type !1
+type !2
+type !3
+type !4
+type !5
+type !6
+type !7
+type !1 = void
+type !2 = i1
+type !3 = i8
+type !4 = i16
+type !5 = i32
+type !6 = i64
+type !7 = ptr(addrspace=0, !6)
+func @1 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+  slot $1: !6
+  ^1():
+    %1 = stack_addr $1
+    %2 = load %1
+    %3 = const !6 0
+    %4 = cmp.eq %2, %3
+    condbr %4, ^2(), ^3()
+  ^2():
+    %5 = const !6 1
+    store %1, %5
+    br ^4()
+  ^3():
+    %6 = const !6 2
+    store %1, %6
+    br ^4()
+  ^4():
+    return
+}
+entry @1
+"#
+        );
+    }
+
+    #[test]
+    fn lowers_if_control_flow_and_preserves_stack_locals() {
+        let package = lower(
+            "package main\n\
+             func predicate() bool { return true }\n\
+             func main() {\n\
+                 var x int\n\
+                 if predicate() { var x int; x = 1 } else if x == 0 { x = 2 }\n\
+                 if x == 2 { return }\n\
+             }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        let main = package.function(package.entry()).unwrap();
+        assert_eq!(main.stack_slots.len(), 2);
+        assert_eq!(
+            main.blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .filter(|instruction| matches!(instruction.kind, InstructionKind::Call { .. }))
+                .count(),
+            1
+        );
+        let Terminator::CondBranch { condition, .. } = main.blocks[0].terminator else {
+            panic!("condition must terminate the entry block");
+        };
+        assert!(
+            main.blocks[0]
+                .instructions
+                .iter()
+                .any(|instruction| matches!(
+                    instruction.kind,
+                    InstructionKind::Call { .. } if instruction.results == [condition]
+                ))
+        );
+        assert!(main.blocks.iter().any(|block| matches!(
+            block.terminator,
+            Terminator::Branch { ref arguments, .. } if arguments.is_empty()
+        )));
+    }
+
+    #[test]
+    fn lowers_no_else_with_a_direct_false_edge_to_the_join() {
+        let package = lower(
+            "package main\nfunc choose(value bool) int { if value { return 1 }; return 2 }\nfunc main() {}\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        let choose = package.function(crate::FunctionId::from_raw(1)).unwrap();
+        assert_eq!(choose.blocks.len(), 3);
+        let Terminator::CondBranch { else_target, .. } = choose.blocks[0].terminator else {
+            panic!("if condition must branch");
+        };
+        assert_eq!(else_target, crate::BlockId::from_raw(3));
+        assert!(matches!(
+            choose.blocks[1].terminator,
+            Terminator::Return { .. }
+        ));
+        assert!(matches!(
+            choose.blocks[2].terminator,
+            Terminator::Return { .. }
+        ));
+    }
+
+    #[test]
+    fn omits_join_when_both_if_branches_return() {
+        let package = lower(
+            "package main\nfunc choose(value bool) int { if value { return 1 } else { return 2 } }\nfunc main() {}\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        let choose = package.function(crate::FunctionId::from_raw(1)).unwrap();
+        assert_eq!(choose.blocks.len(), 3);
+        assert!(matches!(
+            choose.blocks[1].terminator,
+            Terminator::Return { .. }
+        ));
+        assert!(matches!(
+            choose.blocks[2].terminator,
+            Terminator::Return { .. }
+        ));
+    }
+
+    #[test]
     fn rejects_unsupported_call_forms_and_signatures() {
         for source in [
             "package main\nfunc helper() {}\nfunc main() { (helper)() }\n",
@@ -1119,10 +1357,14 @@ entry @2
             ),
             Err(LowerError::SemanticErrors { .. })
         ));
-        for source in [
-            "package main\nfunc main() { if true {} }\n",
-            "package main\nvar x int\nfunc main() {}\n",
-        ] {
+        assert!(matches!(
+            lower(
+                "package main\nfunc main() { if x := true; x {} }\n",
+                TargetSpec::for_test_64(),
+            ),
+            Err(LowerError::SemanticErrors { .. })
+        ));
+        for source in ["package main\nvar x int\nfunc main() {}\n"] {
             assert!(matches!(
                 lower(source, TargetSpec::for_test_64()),
                 Err(LowerError::Unsupported { .. })

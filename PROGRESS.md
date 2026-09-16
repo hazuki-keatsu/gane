@@ -31,7 +31,7 @@
 不要一次性覆盖整份 V0。建议顺序：
   - [x] 常量/局部变量/标量表达式
   - [x] 函数、调用、return
-  - [ ] if 与 block parameter
+  - [x] if 与 block parameter
   - [ ] for、break、continue
   - [ ] short-circuit && / ||
   - [ ] 指针、field/index、显式检查
