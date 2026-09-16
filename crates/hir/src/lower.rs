@@ -112,6 +112,12 @@ struct LoweredFunction {
     signature: HirSignature,
 }
 
+#[derive(Clone, Copy)]
+struct Loop {
+    header: BlockId,
+    exit: Option<BlockId>,
+}
+
 struct Lowerer<'a> {
     analysis: &'a AnalysisResult,
     builder: HirBuilder,
@@ -122,6 +128,7 @@ struct Lowerer<'a> {
     functions: HashMap<ObjectId, LoweredFunction>,
     results: Vec<TypeId>,
     pointer_types: HashMap<TypeId, TypeId>,
+    loops: Vec<Loop>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -137,6 +144,7 @@ impl<'a> Lowerer<'a> {
             functions: HashMap::new(),
             results: Vec::new(),
             pointer_types: HashMap::new(),
+            loops: Vec::new(),
         }
     }
 
@@ -303,6 +311,7 @@ impl<'a> Lowerer<'a> {
             })?;
         self.results = function.signature.results.clone();
         self.locals.clear();
+        self.loops.clear();
         self.initialize_parameters(object, declaration.node_id())?;
         if !self.lower_block(body)? {
             if self.results.is_empty() {
@@ -386,6 +395,8 @@ impl<'a> Lowerer<'a> {
             ast::Stmt::ExprStmt(statement) => self.lower_expression_statement(statement),
             ast::Stmt::ReturnStmt(statement) => self.lower_return(statement),
             ast::Stmt::IfStmt(statement) => self.lower_if(statement),
+            ast::Stmt::ForStmt(statement) => self.lower_for(statement),
+            ast::Stmt::BranchStmt(statement) => self.lower_branch(statement),
             ast::Stmt::AssignStmt(statement) => {
                 Err(self.unsupported(statement.node_id(), "non-simple assignment"))
             }
@@ -472,6 +483,119 @@ impl<'a> Lowerer<'a> {
         }
         self.block = join;
         Ok(false)
+    }
+
+    fn lower_for(&mut self, statement: &ast::ForStmt) -> Result<bool, LowerError> {
+        if statement.init.is_some() {
+            return Err(self.unsupported(statement.node_id(), "three-clause for initializer"));
+        }
+        if statement.post.is_some() {
+            return Err(self.unsupported(statement.node_id(), "three-clause for post statement"));
+        }
+
+        let header = self.build(statement.node_id(), |builder, function, _| {
+            builder.create_block(function)
+        })?;
+        let body = self.build(statement.node_id(), |builder, function, _| {
+            builder.create_block(function)
+        })?;
+        let exit = if statement.cond.is_some() {
+            Some(self.build(statement.node_id(), |builder, function, _| {
+                builder.create_block(function)
+            })?)
+        } else {
+            None
+        };
+        self.terminate(
+            statement.node_id(),
+            self.block,
+            Terminator::Branch {
+                target: header,
+                arguments: Vec::new(),
+            },
+        )?;
+
+        self.block = header;
+        if let Some(condition) = &statement.cond {
+            let condition = self.lower_expression(condition)?;
+            self.terminate(
+                statement.node_id(),
+                header,
+                Terminator::CondBranch {
+                    condition,
+                    then_target: body,
+                    then_arguments: Vec::new(),
+                    else_target: exit.expect("conditional loop exit"),
+                    else_arguments: Vec::new(),
+                },
+            )?;
+        } else {
+            self.terminate(
+                statement.node_id(),
+                header,
+                Terminator::Branch {
+                    target: body,
+                    arguments: Vec::new(),
+                },
+            )?;
+        }
+
+        self.loops.push(Loop { header, exit });
+        self.block = body;
+        let body_terminates = self.lower_block(&statement.body)?;
+        if !body_terminates {
+            self.terminate(
+                statement.node_id(),
+                self.block,
+                Terminator::Branch {
+                    target: header,
+                    arguments: Vec::new(),
+                },
+            )?;
+        }
+
+        let loop_ = self.loops.pop().expect("active loop");
+        if let Some(exit) = loop_.exit {
+            self.block = exit;
+            Ok(false)
+        } else {
+            Ok(true)
+        }
+    }
+
+    fn lower_branch(&mut self, statement: &ast::BranchStmt) -> Result<bool, LowerError> {
+        if statement.label.is_some() {
+            return Err(self.unsupported(statement.node_id(), "labeled branch statement"));
+        }
+        let loop_ = self
+            .loops
+            .last()
+            .copied()
+            .ok_or_else(|| self.unsupported(statement.node_id(), "branch outside loop"))?;
+        let target = match statement.tok {
+            Token::Continue => loop_.header,
+            Token::Break => match loop_.exit {
+                Some(exit) => exit,
+                None => {
+                    let exit = self.build(statement.node_id(), |builder, function, _| {
+                        builder.create_block(function)
+                    })?;
+                    let loop_ = self.loops.last_mut().expect("active loop");
+                    loop_.exit = Some(exit);
+                    exit
+                }
+            },
+            _ => return Err(self.unsupported(statement.node_id(), "branch statement")),
+        };
+        self.terminate(
+            statement.node_id(),
+            self.block,
+            Terminator::Branch {
+                target,
+                arguments: Vec::new(),
+            },
+        )?;
+        Ok(true)
     }
 
     fn lower_expression_statement(
@@ -1244,6 +1368,119 @@ func @1 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=u
 entry @1
 "#
         );
+    }
+
+    #[test]
+    fn lowers_conditional_for_to_a_zero_parameter_loop_cfg() {
+        let package = lower(
+            "package main\nfunc main() { var x int; for x < 1 { x = x + 1 } }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        assert_eq!(
+            package.to_string(),
+            r#"target "x86_64-unknown-linux-gnu" {
+  cpu = "generic"
+  features = ""
+  data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"
+  pointer_width = 64
+  endianness = Little
+}
+type !1
+type !2
+type !3
+type !4
+type !5
+type !6
+type !7
+type !1 = void
+type !2 = i1
+type !3 = i8
+type !4 = i16
+type !5 = i32
+type !6 = i64
+type !7 = ptr(addrspace=0, !6)
+func @1 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+  slot $1: !6
+  ^1():
+    %1 = stack_addr $1
+    br ^2()
+  ^2():
+    %2 = load %1
+    %3 = const !6 1
+    %4 = cmp.slt %2, %3
+    condbr %4, ^3(), ^4()
+  ^3():
+    %5 = load %1
+    %6 = const !6 1
+    %7 = add %5, %6
+    store %1, %7
+    br ^2()
+  ^4():
+    return
+}
+entry @1
+"#
+        );
+    }
+
+    #[test]
+    fn lowers_break_continue_and_nested_loops() {
+        let package = lower(
+            "package main\nfunc main() { for { if true { continue }; break } }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+        let main = package.function(package.entry()).unwrap();
+        assert_eq!(main.blocks.len(), 6);
+        assert!(matches!(
+            main.blocks[3].terminator,
+            Terminator::Branch { target, ref arguments }
+                if target == crate::BlockId::from_raw(2) && arguments.is_empty()
+        ));
+        assert!(matches!(
+            main.blocks[4].terminator,
+            Terminator::Branch { target, ref arguments }
+                if target == crate::BlockId::from_raw(6) && arguments.is_empty()
+        ));
+
+        let package = lower(
+            "package main\nfunc main() { var ok bool; for ok { for { break }; continue } }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+        let main = package.function(package.entry()).unwrap();
+        assert!(matches!(
+            main.blocks[5].terminator,
+            Terminator::Branch { target, ref arguments }
+                if target == crate::BlockId::from_raw(7) && arguments.is_empty()
+        ));
+        assert!(matches!(
+            main.blocks[6].terminator,
+            Terminator::Branch { target, ref arguments }
+                if target == crate::BlockId::from_raw(2) && arguments.is_empty()
+        ));
+    }
+
+    #[test]
+    fn lowers_infinite_returning_loop_without_an_exit_block() {
+        let package = lower(
+            "package main\nfunc choose() int { for { return 1 } }\nfunc main() {}\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        let choose = package.function(crate::FunctionId::from_raw(1)).unwrap();
+        assert_eq!(choose.blocks.len(), 3);
+        assert!(matches!(
+            choose.blocks[2].terminator,
+            Terminator::Return { .. }
+        ));
     }
 
     #[test]

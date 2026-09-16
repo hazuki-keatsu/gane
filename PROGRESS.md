@@ -32,7 +32,7 @@
   - [x] 常量/局部变量/标量表达式
   - [x] 函数、调用、return
   - [x] if 与 block parameter
-  - [ ] for、break、continue
+  - [x] for、break、continue
   - [ ] short-circuit && / ||
   - [ ] 指针、field/index、显式检查
   - [ ] array/struct、AggregateZero/Copy

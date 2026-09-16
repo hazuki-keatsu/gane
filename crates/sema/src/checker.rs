@@ -138,7 +138,7 @@ struct Checker<'ast> {
 
 struct ControlContext {
     results: Vec<TypeId>,
-    loop_depth: u32,
+    loop_breaks: Vec<bool>,
 }
 
 #[derive(Clone)]
@@ -887,7 +887,7 @@ impl<'ast> Checker<'ast> {
             };
             let mut control = ControlContext {
                 results,
-                loop_depth: 0,
+                loop_breaks: Vec::new(),
             };
             self.info.scopes.insert(decl.name.node_id(), scope);
             let returns = self.check_block(body, scope, &mut control);
@@ -911,11 +911,17 @@ impl<'ast> Checker<'ast> {
             .scopes
             .child(parent, ScopeKind::Block, Some(block.node_id()));
         self.info.scopes.insert(block.node_id(), scope);
-        let mut returns = false;
+        let mut terminates = false;
         for statement in &block.list {
-            returns |= self.check_stmt(statement, scope, control);
+            let loop_breaks = control.loop_breaks.clone();
+            let statement_terminates = self.check_stmt(statement, scope, control);
+            if !terminates {
+                terminates = statement_terminates;
+            } else {
+                control.loop_breaks = loop_breaks;
+            }
         }
-        returns
+        terminates
     }
 
     fn check_stmt(
@@ -993,10 +999,10 @@ impl<'ast> Checker<'ast> {
                     self.unsupported(Some(post.node_id()), "three-clause for post statement");
                     self.check_stmt(post, for_scope, control);
                 }
-                control.loop_depth += 1;
-                let body_returns = self.check_block(&statement.body, for_scope, control);
-                control.loop_depth -= 1;
-                guaranteed_return = statement.cond.is_none() && body_returns;
+                control.loop_breaks.push(false);
+                self.check_block(&statement.body, for_scope, control);
+                let has_break = control.loop_breaks.pop().expect("active loop");
+                guaranteed_return = statement.cond.is_none() && !has_break;
             }
             ast::Stmt::LabeledStmt(statement) => {
                 self.unsupported(Some(statement.node_id()), "labeled statement");
@@ -1064,7 +1070,9 @@ impl<'ast> Checker<'ast> {
                     self.check_stmt(statement, scope, control);
                 }
             }
-            ast::Stmt::BranchStmt(statement) => self.check_branch(statement, control),
+            ast::Stmt::BranchStmt(statement) => {
+                guaranteed_return = self.check_branch(statement, control)
+            }
             ast::Stmt::EmptyStmt(_) | ast::Stmt::BadStmt(_) => {}
         }
         guaranteed_return
@@ -1093,19 +1101,29 @@ impl<'ast> Checker<'ast> {
         }
     }
 
-    fn check_branch(&mut self, statement: &ast::BranchStmt, control: &ControlContext) {
+    fn check_branch(&mut self, statement: &ast::BranchStmt, control: &mut ControlContext) -> bool {
         if statement.label.is_some() {
             self.unsupported(Some(statement.node_id()), "labeled branch statement");
-            return;
+            return false;
         }
         match statement.tok {
-            Token::Break | Token::Continue if control.loop_depth > 0 => {}
-            Token::Break | Token::Continue => self.diagnostics.error(
-                INVALID_BRANCH,
-                Some(statement.node_id()),
-                "break or continue is only valid inside a for loop",
-            ),
-            _ => self.unsupported(Some(statement.node_id()), "labeled branch statement"),
+            Token::Break if !control.loop_breaks.is_empty() => {
+                *control.loop_breaks.last_mut().expect("active loop") = true;
+                true
+            }
+            Token::Continue if !control.loop_breaks.is_empty() => true,
+            Token::Break | Token::Continue => {
+                self.diagnostics.error(
+                    INVALID_BRANCH,
+                    Some(statement.node_id()),
+                    "break or continue is only valid inside a for loop",
+                );
+                false
+            }
+            _ => {
+                self.unsupported(Some(statement.node_id()), "labeled branch statement");
+                false
+            }
         }
     }
 
@@ -2328,6 +2346,38 @@ mod tests {
              func choose(ok bool) int { if ok { return 1 } else { return 2 } }\n",
         );
         assert!(valid.diagnostics.is_empty());
+
+        let infinite = analyze("package main\nfunc choose() int { for {} }\nfunc main() {}\n");
+        assert!(
+            !infinite
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == MISSING_RETURN),
+            "{:?}",
+            infinite.diagnostics
+        );
+
+        let break_reaches_end = analyze(
+            "package main\nfunc choose() int { for { break; return 1 } }\nfunc main() {}\n",
+        );
+        assert!(
+            break_reaches_end
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == MISSING_RETURN)
+        );
+
+        let return_precedes_break = analyze(
+            "package main\nfunc choose() int { for { return 1; break } }\nfunc main() {}\n",
+        );
+        assert!(
+            !return_precedes_break
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == MISSING_RETURN),
+            "{:?}",
+            return_precedes_break.diagnostics
+        );
 
         let invalid_return = analyze("package main\nfunc helper() { return 1 }\n");
         assert!(
