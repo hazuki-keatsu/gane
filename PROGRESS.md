@@ -35,7 +35,7 @@
   - [x] for、break、continue
   - [x] short-circuit && / ||
   - [x] 指针、field/index、显式检查
-  - [ ] array/struct、AggregateZero/Copy
+  - [x] array/struct、AggregateZero/Copy
   - [ ] global 与 extern
 第一批就可以支持 func main(){ var x int; x = 1 + 2 }，并把 golden HIR 固定下来。每增加一个语法结构，就同时增加：
   - source → HIR golden；

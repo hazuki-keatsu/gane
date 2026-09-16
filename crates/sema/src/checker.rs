@@ -777,6 +777,17 @@ impl<'ast> Checker<'ast> {
         self.function_scopes.insert(signature, function_scope);
         let params = self.resolve_tuple(decl.typ.params.as_ref(), function_scope);
         let results = self.resolve_tuple(decl.typ.results.as_ref(), function_scope);
+        let parameter_types = self
+            .types
+            .tuple(params)
+            .map(|tuple| {
+                tuple
+                    .vars
+                    .iter()
+                    .map(|object| self.symbols.object(*object).typ)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let result_types = self
             .types
             .tuple(results)
@@ -788,6 +799,12 @@ impl<'ast> Checker<'ast> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        if parameter_types
+            .iter()
+            .any(|typ| self.is_aggregate_type(*typ))
+        {
+            self.unsupported(Some(decl.node_id()), "aggregate function parameter");
+        }
         if result_types.len() > 1 {
             self.unsupported(Some(decl.node_id()), "multiple function results");
         }
@@ -1290,14 +1307,17 @@ impl<'ast> Checker<'ast> {
                 let array = self.check_expr(&expr.x, scope);
                 let index = self.check_expr(&expr.index, scope);
                 self.require_integer(&index, Some(expr.index.node_id()));
-                match self.types.array_element(array.typ) {
-                    Some(typ) => TypeAndValue {
-                        typ,
-                        mode: ValueMode::Variable,
-                        constant: None,
-                    },
-                    None => {
-                        self.invalid_operation(Some(expr.node_id()), "indexing requires an array")
+                if is_composite_literal(&expr.x) {
+                    self.unsupported_value(Some(expr.node_id()), "composite literal indexing")
+                } else {
+                    match self.types.array_element(array.typ) {
+                        Some(typ) => TypeAndValue {
+                            typ,
+                            mode: ValueMode::Variable,
+                            constant: None,
+                        },
+                        None => self
+                            .invalid_operation(Some(expr.node_id()), "indexing requires an array"),
                     }
                 }
             }
@@ -1331,13 +1351,27 @@ impl<'ast> Checker<'ast> {
                 self.check_expr(&expr.value, scope);
                 self.invalid_value()
             }
-            ast::Expr::CompositeLit(expr) => {
-                self.unsupported(Some(expr.node_id()), "composite literal");
-                for element in &expr.elts {
-                    self.check_expr(element, scope);
+            ast::Expr::CompositeLit(expr) => match &expr.typ {
+                Some(typ) => {
+                    let typ = self.resolve_type_expr(typ, scope, false);
+                    if !expr.elts.is_empty() {
+                        self.unsupported(Some(expr.node_id()), "composite literal");
+                        for element in &expr.elts {
+                            self.check_expr(element, scope);
+                        }
+                        self.invalid_value()
+                    } else if self.is_aggregate_type(typ) {
+                        TypeAndValue {
+                            typ,
+                            mode: ValueMode::Value,
+                            constant: None,
+                        }
+                    } else {
+                        self.unsupported_value(Some(expr.node_id()), "composite literal")
+                    }
                 }
-                self.invalid_value()
-            }
+                None => self.unsupported_value(Some(expr.node_id()), "composite literal"),
+            },
             ast::Expr::FuncLit(_) => {
                 self.unsupported_value(Some(expr.node_id()), "function literal")
             }
@@ -1439,6 +1473,9 @@ impl<'ast> Checker<'ast> {
                 mode: ValueMode::Value,
                 constant: None,
             },
+            Token::And if is_composite_literal(&expr.x) => {
+                self.unsupported_value(Some(expr.node_id()), "address of composite literal")
+            }
             Token::And if operand.mode == ValueMode::Variable => TypeAndValue {
                 typ: self.types.alloc(TypeKind::Pointer { base: operand.typ }),
                 mode: ValueMode::Value,
@@ -1515,38 +1552,43 @@ impl<'ast> Checker<'ast> {
 
     fn check_selector(&mut self, expr: &ast::SelectorExpr, scope: ScopeId) -> TypeAndValue {
         let receiver = self.check_expr(&expr.x, scope);
-        let mut typ = receiver.typ;
-        let mut indirect = false;
-        if let Some(base) = self.types.deref(typ) {
-            typ = base;
-            indirect = true;
-        }
-        let TypeKind::Struct { fields } = &self.types.get(self.types.underlying(typ)).kind else {
-            return self
-                .invalid_operation(Some(expr.node_id()), "field selection requires a struct");
-        };
-        let name = self.symbols.intern(&expr.sel.name);
-        let Some((index, field)) = fields
-            .iter()
-            .enumerate()
-            .find(|(_, field)| self.symbols.object(**field).name == name)
-        else {
-            return self.invalid_operation(Some(expr.sel.node_id()), "unknown struct field");
-        };
-        let field = *field;
-        self.info.selections.insert(
-            expr.node_id(),
-            crate::types::Selection {
-                object: field,
-                kind: crate::types::SelectionKind::Field,
-                index: vec![index as u32],
-                indirect,
-            },
-        );
-        TypeAndValue {
-            typ: self.symbols.object(field).typ,
-            mode: ValueMode::Variable,
-            constant: None,
+        if is_composite_literal(&expr.x) {
+            self.unsupported_value(Some(expr.node_id()), "composite literal field selection")
+        } else {
+            let mut typ = receiver.typ;
+            let mut indirect = false;
+            if let Some(base) = self.types.deref(typ) {
+                typ = base;
+                indirect = true;
+            }
+            let TypeKind::Struct { fields } = &self.types.get(self.types.underlying(typ)).kind
+            else {
+                return self
+                    .invalid_operation(Some(expr.node_id()), "field selection requires a struct");
+            };
+            let name = self.symbols.intern(&expr.sel.name);
+            let Some((index, field)) = fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| self.symbols.object(**field).name == name)
+            else {
+                return self.invalid_operation(Some(expr.sel.node_id()), "unknown struct field");
+            };
+            let field = *field;
+            self.info.selections.insert(
+                expr.node_id(),
+                crate::types::Selection {
+                    object: field,
+                    kind: crate::types::SelectionKind::Field,
+                    index: vec![index as u32],
+                    indirect,
+                },
+            );
+            TypeAndValue {
+                typ: self.symbols.object(field).typ,
+                mode: ValueMode::Variable,
+                constant: None,
+            }
         }
     }
 
@@ -1920,6 +1962,13 @@ fn is_call_expression(mut expr: &ast::Expr) -> bool {
         expr = &paren.x;
     }
     matches!(expr, ast::Expr::CallExpr(_))
+}
+
+fn is_composite_literal(mut expr: &ast::Expr) -> bool {
+    while let ast::Expr::ParenExpr(paren) = expr {
+        expr = &paren.x;
+    }
+    matches!(expr, ast::Expr::CompositeLit(_))
 }
 
 #[cfg(test)]
@@ -2570,6 +2619,51 @@ mod tests {
             "package main\ntype Pair struct { value int }\nfunc main() { _ = Pair{value: 1} }",
         );
         for feature in ["key-value expression", "composite literal"] {
+            assert!(
+                reports_unsupported(&result, feature),
+                "{feature}: {:?}",
+                result.diagnostics
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_empty_aggregate_literals_and_rejects_other_aggregate_forms() {
+        let accepted = analyze(
+            "package main\n\
+             type Pair struct { value int }\n\
+             func main() {\n\
+                 var pair Pair = Pair{}\n\
+                 var values [2]int = [2]int{}\n\
+                 pair = Pair{}\n\
+                 values = [2]int{}\n\
+             }\n",
+        );
+        assert!(
+            accepted.diagnostics.is_empty(),
+            "{:?}",
+            accepted.diagnostics
+        );
+
+        for (feature, source) in [
+            (
+                "aggregate function parameter",
+                "package main\ntype Pair struct { value int }\nfunc take(pair Pair) {}\nfunc main() {}\n",
+            ),
+            (
+                "address of composite literal",
+                "package main\ntype Pair struct { value int }\nfunc main() { _ = &Pair{} }\n",
+            ),
+            (
+                "composite literal field selection",
+                "package main\ntype Pair struct { value int }\nfunc main() { _ = (Pair{}).value }\n",
+            ),
+            (
+                "composite literal indexing",
+                "package main\nfunc main() { _ = ([2]int{})[0] }\n",
+            ),
+        ] {
+            let result = analyze(source);
             assert!(
                 reports_unsupported(&result, feature),
                 "{feature}: {:?}",

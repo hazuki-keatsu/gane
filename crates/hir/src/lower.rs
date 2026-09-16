@@ -118,6 +118,13 @@ struct Local {
     place: Place,
 }
 
+#[derive(Clone, Copy)]
+enum Rvalue {
+    Scalar(ValueId),
+    AggregateCopy(Place),
+    AggregateZero(TypeId),
+}
+
 #[derive(Clone)]
 struct LoweredFunction {
     id: FunctionId,
@@ -678,7 +685,7 @@ impl<'a> Lowerer<'a> {
         let values = spec
             .values
             .iter()
-            .map(|expression| self.lower_expression(expression))
+            .map(|expression| self.lower_rvalue(expression))
             .collect::<Result<Vec<_>, _>>()?;
 
         for (index, identifier) in spec.names.iter().enumerate() {
@@ -707,7 +714,7 @@ impl<'a> Lowerer<'a> {
             self.known_non_null.insert(pointer);
 
             if let Some(value) = values.get(index) {
-                self.store(spec.node_id(), place, *value)?;
+                self.assign(spec.node_id(), place, *value)?;
             }
         }
         Ok(())
@@ -725,12 +732,20 @@ impl<'a> Lowerer<'a> {
         let values = statement
             .rhs
             .iter()
-            .map(|expression| self.lower_expression(expression))
+            .map(|expression| {
+                let value = self.lower_rvalue(expression)?;
+                match (statement.lhs.len() > 1, value) {
+                    (true, Rvalue::AggregateCopy(source)) => self
+                        .aggregate_snapshot(statement.node_id(), source)
+                        .map(Rvalue::AggregateCopy),
+                    (_, value) => Ok(value),
+                }
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         for (destination, value) in destinations.into_iter().zip(values) {
             if let Some(destination) = destination {
-                self.store(statement.node_id(), destination, value)?;
+                self.assign(statement.node_id(), destination, value)?;
             }
         }
         Ok(())
@@ -764,6 +779,29 @@ impl<'a> Lowerer<'a> {
         self.store(statement.node_id(), place, result)
     }
 
+    fn lower_rvalue(&mut self, expression: &ast::Expr) -> Result<Rvalue, LowerError> {
+        let semantic_type = self
+            .analysis
+            .type_and_value(expression.node_id())
+            .ok_or_else(|| self.missing(expression.node_id(), "expression type and value"))?
+            .typ;
+        let typ = self.lower_type(semantic_type, expression.node_id())?;
+        if !self.is_aggregate(typ) {
+            return self.lower_expression(expression).map(Rvalue::Scalar);
+        }
+        match expression {
+            ast::Expr::ParenExpr(expression) => self.lower_rvalue(&expression.x),
+            ast::Expr::Ident(_)
+            | ast::Expr::StarExpr(_)
+            | ast::Expr::SelectorExpr(_)
+            | ast::Expr::IndexExpr(_) => self.lower_place(expression).map(Rvalue::AggregateCopy),
+            ast::Expr::CompositeLit(literal) if literal.elts.is_empty() => {
+                Ok(Rvalue::AggregateZero(typ))
+            }
+            _ => Err(self.unsupported(expression.node_id(), "aggregate rvalue")),
+        }
+    }
+
     fn lower_expression(&mut self, expression: &ast::Expr) -> Result<ValueId, LowerError> {
         let fact = self
             .analysis
@@ -778,6 +816,9 @@ impl<'a> Lowerer<'a> {
             };
         }
         let result_type = self.lower_type(fact.typ, expression.node_id())?;
+        if self.is_aggregate(result_type) {
+            return Err(self.unsupported(expression.node_id(), "aggregate value"));
+        }
         if let Some(constant) = fact.constant {
             let constant = self.lower_constant(constant, fact.typ, expression.node_id())?;
             return Ok(self.instruction(
@@ -1448,6 +1489,82 @@ impl<'a> Lowerer<'a> {
             crate::InstructionKind::Store {
                 pointer: place.pointer,
                 value,
+            },
+            [],
+        )?;
+        Ok(())
+    }
+
+    fn assign(
+        &mut self,
+        node: AstNodeId,
+        destination: Place,
+        value: Rvalue,
+    ) -> Result<(), LowerError> {
+        match value {
+            Rvalue::Scalar(value) => self.store(node, destination, value),
+            Rvalue::AggregateCopy(source) if source.typ == destination.typ => {
+                self.aggregate_copy(node, destination, source)
+            }
+            Rvalue::AggregateZero(typ) if typ == destination.typ => {
+                self.aggregate_zero(node, destination)
+            }
+            _ => Err(self.unsupported(node, "assignment type")),
+        }
+    }
+
+    fn aggregate_snapshot(&mut self, node: AstNodeId, source: Place) -> Result<Place, LowerError> {
+        let slot = self.build(node, |builder, function, _| {
+            builder.add_stack_slot(function, source.typ, None, Some(node))
+        })?;
+        let pointer_type = self.pointer_type(source.typ);
+        let pointer = self.instruction(
+            node,
+            crate::InstructionKind::StackAddr { slot },
+            [pointer_type],
+        )?[0];
+        let destination = Place {
+            pointer,
+            typ: source.typ,
+        };
+        self.known_non_null.insert(pointer);
+        self.aggregate_copy(node, destination, source)?;
+        Ok(destination)
+    }
+
+    fn aggregate_zero(&mut self, node: AstNodeId, destination: Place) -> Result<(), LowerError> {
+        if !self.is_aggregate(destination.typ) {
+            return Err(self.unsupported(node, "aggregate zero"));
+        }
+        self.ensure_non_null(node, destination)?;
+        self.instruction(
+            node,
+            crate::InstructionKind::AggregateZero {
+                destination: destination.pointer,
+                typ: destination.typ,
+            },
+            [],
+        )?;
+        Ok(())
+    }
+
+    fn aggregate_copy(
+        &mut self,
+        node: AstNodeId,
+        destination: Place,
+        source: Place,
+    ) -> Result<(), LowerError> {
+        if !self.is_aggregate(destination.typ) || destination.typ != source.typ {
+            return Err(self.unsupported(node, "aggregate copy"));
+        }
+        self.ensure_non_null(node, destination)?;
+        self.ensure_non_null(node, source)?;
+        self.instruction(
+            node,
+            crate::InstructionKind::AggregateCopy {
+                destination: destination.pointer,
+                source: source.pointer,
+                typ: destination.typ,
             },
             [],
         )?;
@@ -2227,15 +2344,20 @@ entry @3
 
     #[test]
     fn rejects_unsupported_call_forms_and_signatures() {
-        for source in [
-            "package main\nfunc helper() {}\nfunc main() { (helper)() }\n",
-            "package main\nfunc helper(value [1]int) {}\nfunc main() {}\n",
-        ] {
-            assert!(matches!(
-                lower(source, TargetSpec::for_test_64()),
-                Err(LowerError::Unsupported { .. })
-            ));
-        }
+        assert!(matches!(
+            lower(
+                "package main\nfunc helper() {}\nfunc main() { (helper)() }\n",
+                TargetSpec::for_test_64(),
+            ),
+            Err(LowerError::Unsupported { .. })
+        ));
+        assert!(matches!(
+            lower(
+                "package main\nfunc helper(value [1]int) {}\nfunc main() {}\n",
+                TargetSpec::for_test_64(),
+            ),
+            Err(LowerError::SemanticErrors { .. })
+        ));
     }
 
     #[test]
@@ -2341,6 +2463,220 @@ func @1 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=u
 entry @1
 "#
         );
+    }
+
+    #[test]
+    fn lowers_local_aggregate_copy_and_zero() {
+        let package = lower(
+            "package main\n\
+             type Pair struct { value int; values [2]int }\n\
+             func main() {\n\
+                 var source Pair\n\
+                 var copy Pair = source\n\
+                 copy = Pair{}\n\
+                 var input [2]int\n\
+                 var output [2]int = input\n\
+                 output = [2]int{}\n\
+             }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        let function = package.function(package.entry()).unwrap();
+        assert_eq!(function.stack_slots.len(), 4);
+        let instructions = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            instructions
+                .iter()
+                .filter(|instruction| matches!(
+                    instruction.kind,
+                    InstructionKind::AggregateCopy { .. }
+                ))
+                .count(),
+            2
+        );
+        assert_eq!(
+            instructions
+                .iter()
+                .filter(|instruction| matches!(
+                    instruction.kind,
+                    InstructionKind::AggregateZero { .. }
+                ))
+                .count(),
+            2
+        );
+        for instruction in instructions {
+            match instruction.kind {
+                InstructionKind::AggregateCopy {
+                    destination,
+                    source,
+                    typ,
+                } => {
+                    for pointer in [destination, source] {
+                        assert!(matches!(
+                            package.types().get(function.value(pointer).unwrap().typ),
+                            Some(crate::HirType {
+                                kind: HirTypeKind::Ptr { pointee, .. }
+                            }) if *pointee == typ
+                        ));
+                    }
+                }
+                InstructionKind::AggregateZero { destination, typ } => {
+                    assert!(matches!(
+                        package.types().get(function.value(destination).unwrap().typ),
+                        Some(crate::HirType {
+                            kind: HirTypeKind::Ptr { pointee, .. }
+                        }) if *pointee == typ
+                    ));
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            package.to_string(),
+            r#"target "x86_64-unknown-linux-gnu" {
+  cpu = "generic"
+  features = ""
+  data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"
+  pointer_width = 64
+  endianness = Little
+}
+type !1
+type !2
+type !3
+type !4
+type !5
+type !6
+type !7
+type !8
+type !9
+type !10
+type !1 = void
+type !2 = i1
+type !3 = i8
+type !4 = i16
+type !5 = i32
+type !6 = i64
+type !7 = struct {!6, !8}
+type !8 = array 2 x !6
+type !9 = ptr(addrspace=0, !7)
+type !10 = ptr(addrspace=0, !8)
+func @1 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+  slot $1: !7
+  slot $2: !7
+  slot $3: !8
+  slot $4: !8
+  ^1():
+    %1 = stack_addr $1
+    %2 = stack_addr $2
+    aggregate_copy %2, %1, !7
+    aggregate_zero %2, !7
+    %3 = stack_addr $3
+    %4 = stack_addr $4
+    aggregate_copy %4, %3, !8
+    aggregate_zero %4, !8
+    return
+}
+entry @1
+"#
+        );
+    }
+
+    #[test]
+    fn snapshots_aggregate_rhs_and_copies_through_aggregate_places() {
+        let package = lower(
+            "package main\n\
+             type Pair struct { value int }\n\
+             type Container struct { first Pair; entries [2]Pair }\n\
+             func main() {\n\
+                 var left Pair\n\
+                 var right Pair\n\
+                 left, right = right, left\n\
+                 var source Container\n\
+                 var destination Container\n\
+                 var pointer *Container\n\
+                 pointer = &destination\n\
+                 (*pointer).first = source.first\n\
+                 (*pointer).entries[0] = source.entries[1]\n\
+             }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        let function = package.function(package.entry()).unwrap();
+        assert_eq!(function.stack_slots.len(), 7);
+        let instructions = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .collect::<Vec<_>>();
+        let copies = instructions
+            .iter()
+            .filter_map(|instruction| match instruction.kind {
+                InstructionKind::AggregateCopy {
+                    destination,
+                    source,
+                    ..
+                } => Some((destination, source)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(copies.len(), 6);
+        assert_eq!(copies[0].0, copies[2].1);
+        assert_eq!(copies[1].0, copies[3].1);
+        assert!(
+            instructions
+                .iter()
+                .filter(|instruction| matches!(instruction.kind, InstructionKind::GepField { .. }))
+                .count()
+                >= 4
+        );
+        assert_eq!(
+            instructions
+                .iter()
+                .filter(|instruction| matches!(instruction.kind, InstructionKind::GepIndex { .. }))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn snapshots_an_aggregate_before_a_later_rhs_call() {
+        let package = lower(
+            "package main\n\
+             type Pair struct { value int }\n\
+             func reset(pair *Pair) int { *pair = Pair{}; return 0 }\n\
+             func main() {\n\
+                 var pair Pair\n\
+                 var number int\n\
+                 pair, number = pair, reset(&pair)\n\
+             }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        let main = package.function(package.entry()).unwrap();
+        let instructions = main.blocks[0].instructions.iter().collect::<Vec<_>>();
+        let copies = instructions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, instruction)| {
+                matches!(instruction.kind, InstructionKind::AggregateCopy { .. }).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        let call = instructions
+            .iter()
+            .position(|instruction| matches!(instruction.kind, InstructionKind::Call { .. }))
+            .unwrap();
+        assert_eq!(copies.len(), 2);
+        assert!(copies[0] < call && call < copies[1]);
     }
 
     #[test]
