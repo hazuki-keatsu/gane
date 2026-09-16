@@ -2,8 +2,8 @@ use crate::{
     id::{BlockId, FunctionId, GlobalId, StackSlotId, TypeId, ValueId},
     ir::{
         FunctionAttributes, HirBlock, HirFunction, HirGlobal, HirPackage, HirSignature,
-        Instruction, InstructionKind, Linkage, PassingMode, StackSlot, Terminator,
-        UnverifiedHirPackage, ValueDef, ValueOrigin,
+        Instruction, InstructionKind, StackSlot, Terminator, UnverifiedHirPackage, ValueDef,
+        ValueOrigin,
     },
     target::TargetSpec,
     types::{HirTypeKind, SourceOrigin, Symbol, TypeArena, TypeArenaError},
@@ -94,14 +94,12 @@ impl HirBuilder {
         &mut self,
         symbol: Symbol,
         signature: HirSignature,
-        linkage: Linkage,
         attributes: FunctionAttributes,
     ) -> FunctionId {
         let entry = BlockId::from_raw(1);
         let mut function = HirFunction {
             symbol,
             signature,
-            linkage,
             attributes,
             stack_slots: Vec::new(),
             values: Vec::new(),
@@ -116,13 +114,7 @@ impl HirBuilder {
             .signature
             .parameters
             .iter()
-            .map(|parameter| match parameter.passing {
-                PassingMode::Direct => parameter.typ,
-                PassingMode::IndirectByValue => self.add_type(HirTypeKind::Ptr {
-                    pointee: parameter.typ,
-                    address_space: 0,
-                }),
-            })
+            .map(|parameter| parameter.typ)
             .collect::<Vec<_>>();
         for typ in parameter_types {
             let index = function.blocks[0].parameters.len() as u32;

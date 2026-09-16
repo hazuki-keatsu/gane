@@ -10,7 +10,6 @@ pub struct HirGlobal {
     pub typ: TypeId,
     pub mutable: bool,
     pub initializer: GlobalInitializer,
-    pub linkage: Linkage,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,7 +22,6 @@ pub enum GlobalInitializer {
 pub struct HirFunction {
     pub symbol: Symbol,
     pub signature: HirSignature,
-    pub linkage: Linkage,
     pub attributes: FunctionAttributes,
     pub stack_slots: Vec<StackSlot>,
     pub values: Vec<ValueDef>,
@@ -49,48 +47,16 @@ impl HirFunction {
 pub struct HirSignature {
     pub parameters: Vec<HirParameter>,
     pub results: Vec<TypeId>,
-    pub calling_convention: CallingConvention,
 }
 
 #[derive(Clone, Debug)]
 pub struct HirParameter {
     pub typ: TypeId,
-    pub passing: PassingMode,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum CallingConvention {
-    #[default]
-    Gane,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum PassingMode {
-    #[default]
-    Direct,
-    IndirectByValue,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Linkage {
-    #[default]
-    Internal,
-    Exported,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FunctionAttributes {
     pub no_return: bool,
-    pub no_unwind: bool,
-    pub memory: MemoryEffect,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum MemoryEffect {
-    #[default]
-    Unknown,
-    ReadOnly,
-    ReadNone,
 }
 
 #[derive(Clone, Debug)]

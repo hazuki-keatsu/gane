@@ -1,7 +1,5 @@
 use crate::id::TypeId;
 use gane_parser::token::AstNodeId;
-use std::error::Error;
-use std::fmt;
 
 pub type Symbol = String;
 pub type SourceOrigin = Option<AstNodeId>;
@@ -39,15 +37,6 @@ pub struct TypeArena {
 pub enum TypeArenaError {
     InvalidTypeId(TypeId),
     TypeAlreadyDefined(TypeId),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LayoutError(String);
-
-pub trait LayoutProvider {
-    fn size_of(&self, typ: TypeId) -> Result<u64, LayoutError>;
-    fn align_of(&self, typ: TypeId) -> Result<u32, LayoutError>;
-    fn field_offset(&self, typ: TypeId, field: u32) -> Result<u64, LayoutError>;
 }
 
 impl TypeArena {
@@ -106,10 +95,6 @@ impl TypeArena {
         })
     }
 
-    pub fn len(&self) -> usize {
-        self.types.len()
-    }
-
     pub(crate) fn alloc(&mut self, kind: HirTypeKind) -> TypeId {
         self.types.push(Some(HirType { kind }));
         TypeId::from_raw(self.types.len() as u32)
@@ -144,17 +129,3 @@ impl TypeArena {
         })
     }
 }
-
-impl LayoutError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
-    }
-}
-
-impl fmt::Display for LayoutError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl Error for LayoutError {}

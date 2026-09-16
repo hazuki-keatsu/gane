@@ -1,8 +1,8 @@
 use crate::{
-    BinaryOp, BlockId, BuildError, Callee, CallingConvention, ComparePredicate, Constant,
-    FunctionAttributes, FunctionId, GlobalId, GlobalInitializer, HirBuilder, HirGlobal,
-    HirParameter, HirSignature, HirTypeKind, IntCastKind, Linkage, PassingMode, Terminator,
-    TrapReason, TypeId, UnaryOp, UnverifiedHirPackage, ValueId,
+    BinaryOp, BlockId, BuildError, Callee, ComparePredicate, Constant, FunctionAttributes,
+    FunctionId, GlobalId, GlobalInitializer, HirBuilder, HirGlobal, HirParameter, HirSignature,
+    HirTypeKind, IntCastKind, Terminator, TrapReason, TypeId, UnaryOp, UnverifiedHirPackage,
+    ValueId,
 };
 use gane_parser::{
     ast,
@@ -114,11 +114,6 @@ struct Place {
 }
 
 #[derive(Clone, Copy)]
-struct Local {
-    place: Place,
-}
-
-#[derive(Clone, Copy)]
 enum Rvalue {
     Scalar(ValueId),
     AggregateCopy(Place),
@@ -143,7 +138,7 @@ struct Lowerer<'a> {
     function: FunctionId,
     block: BlockId,
     target_width: u8,
-    locals: HashMap<ObjectId, Local>,
+    locals: HashMap<ObjectId, Place>,
     globals: HashMap<ObjectId, GlobalId>,
     functions: HashMap<ObjectId, LoweredFunction>,
     results: Vec<TypeId>,
@@ -203,7 +198,6 @@ impl<'a> Lowerer<'a> {
                         let function = self.builder.declare_function(
                             format!("gane.{}", declaration.name.name),
                             signature.clone(),
-                            Linkage::Internal,
                             FunctionAttributes::default(),
                         );
                         if object == main_object {
@@ -295,10 +289,7 @@ impl<'a> Lowerer<'a> {
             if self.is_aggregate(typ) {
                 return Err(self.unsupported(node, "aggregate parameter"));
             }
-            parameters.push(HirParameter {
-                typ,
-                passing: PassingMode::Direct,
-            });
+            parameters.push(HirParameter { typ });
         }
         let result_objects = self
             .analysis
@@ -320,7 +311,6 @@ impl<'a> Lowerer<'a> {
         Ok(HirSignature {
             parameters,
             results,
-            calling_convention: CallingConvention::Gane,
         })
     }
 
@@ -392,7 +382,6 @@ impl<'a> Lowerer<'a> {
                     typ,
                     mutable: true,
                     initializer,
-                    linkage: Linkage::Internal,
                 });
                 self.globals.insert(object, global);
             }
@@ -440,7 +429,7 @@ impl<'a> Lowerer<'a> {
                 [pointer_type],
             )?[0];
             let place = Place { pointer, typ };
-            self.locals.insert(object, Local { place });
+            self.locals.insert(object, place);
             self.known_non_null.insert(pointer);
             self.store(parameter_node, place, value)?;
         }
@@ -748,7 +737,7 @@ impl<'a> Lowerer<'a> {
                 [pointer_type],
             )?[0];
             let place = Place { pointer, typ };
-            self.locals.insert(object, Local { place });
+            self.locals.insert(object, place);
             self.known_non_null.insert(pointer);
 
             if let Some(value) = values.get(index) {
@@ -1102,7 +1091,7 @@ impl<'a> Lowerer<'a> {
             ast::Expr::Ident(identifier) => {
                 let object = self.use_of(identifier.node_id())?;
                 if let Some(local) = self.locals.get(&object) {
-                    return Ok(local.place);
+                    return Ok(*local);
                 }
                 let global = self
                     .globals
@@ -1732,7 +1721,7 @@ type !4 = i16
 type !5 = i32
 type !6 = i64
 type !7 = ptr(addrspace=0, !6)
-func @1 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+func @1 "gane.main"() -> () [no_return=false] entry ^1 {
   slot $1: !6
   ^1():
     %1 = stack_addr $1
@@ -1893,7 +1882,7 @@ type !4 = i16
 type !5 = i32
 type !6 = i64
 type !7 = ptr(addrspace=0, !6)
-func @1 "gane.add"(direct !6, direct !6) -> (!6) internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+func @1 "gane.add"(!6, !6) -> (!6) [no_return=false] entry ^1 {
   slot $1: !6
   slot $2: !6
   ^1(%1: !6, %2: !6):
@@ -1908,7 +1897,7 @@ func @1 "gane.add"(direct !6, direct !6) -> (!6) internal [no_return=false, no_u
     %8 = load %3
     return %8
 }
-func @2 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+func @2 "gane.main"() -> () [no_return=false] entry ^1 {
   slot $1: !6
   ^1():
     %1 = stack_addr $1
@@ -1920,7 +1909,7 @@ func @2 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=u
     call @3(%5)
     return
 }
-func @3 "gane.sink"(direct !6) -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+func @3 "gane.sink"(!6) -> () [no_return=false] entry ^1 {
   slot $1: !6
   ^1(%1: !6):
     %2 = stack_addr $1
@@ -2030,7 +2019,7 @@ type !4 = i16
 type !5 = i32
 type !6 = i64
 type !7 = ptr(addrspace=0, !6)
-func @1 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+func @1 "gane.main"() -> () [no_return=false] entry ^1 {
   slot $1: !6
   ^1():
     %1 = stack_addr $1
@@ -2086,7 +2075,7 @@ type !4 = i16
 type !5 = i32
 type !6 = i64
 type !7 = ptr(addrspace=0, !6)
-func @1 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+func @1 "gane.main"() -> () [no_return=false] entry ^1 {
   slot $1: !6
   ^1():
     %1 = stack_addr $1
@@ -2144,17 +2133,17 @@ type !4 = i16
 type !5 = i32
 type !6 = i64
 type !7 = ptr(addrspace=0, !2)
-func @1 "gane.left"() -> (!2) internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+func @1 "gane.left"() -> (!2) [no_return=false] entry ^1 {
   ^1():
     %1 = const !2 true
     return %1
 }
-func @2 "gane.right"() -> (!2) internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+func @2 "gane.right"() -> (!2) [no_return=false] entry ^1 {
   ^1():
     %1 = const !2 false
     return %1
 }
-func @3 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+func @3 "gane.main"() -> () [no_return=false] entry ^1 {
   slot $1: !2
   ^1():
     %1 = stack_addr $1
@@ -2500,7 +2489,7 @@ type !6 = i64
 type !7 = struct {!6}
 type !8 = ptr(addrspace=0, !7)
 type !9 = ptr(addrspace=0, !6)
-func @1 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+func @1 "gane.main"() -> () [no_return=false] entry ^1 {
   slot $1: !7
   ^1():
     %1 = stack_addr $1
@@ -2615,7 +2604,7 @@ type !7 = struct {!6, !8}
 type !8 = array 2 x !6
 type !9 = ptr(addrspace=0, !7)
 type !10 = ptr(addrspace=0, !8)
-func @1 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+func @1 "gane.main"() -> () [no_return=false] entry ^1 {
   slot $1: !7
   slot $2: !7
   slot $3: !8
@@ -3001,11 +2990,11 @@ entry @1
             globals[2].1.initializer,
             crate::GlobalInitializer::Zero
         ));
-        assert!(globals.iter().all(|(_, global)| {
-            global.mutable
-                && global.linkage == Linkage::Internal
-                && global.symbol.starts_with("gane.")
-        }));
+        assert!(
+            globals
+                .iter()
+                .all(|(_, global)| { global.mutable && global.symbol.starts_with("gane.") })
+        );
 
         let count = crate::GlobalId::from_raw(1);
         let addresses = package
@@ -3041,10 +3030,10 @@ type !4 = i16
 type !5 = i32
 type !6 = i64
 type !7 = ptr(addrspace=0, !6)
-global @1 "gane.count": !6 internal mutable = 1
-global @2 "gane.ready": !2 internal mutable = zero
-global @3 "gane.none": !7 internal mutable = zero
-func @1 "gane.tick"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+global @1 "gane.count": !6 mutable = 1
+global @2 "gane.ready": !2 mutable = zero
+global @3 "gane.none": !7 mutable = zero
+func @1 "gane.tick"() -> () [no_return=false] entry ^1 {
   ^1():
     %1 = global_addr @1
     %2 = load %1
@@ -3053,7 +3042,7 @@ func @1 "gane.tick"() -> () internal [no_return=false, no_unwind=false, memory=u
     store %1, %4
     return
 }
-func @2 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+func @2 "gane.main"() -> () [no_return=false] entry ^1 {
   ^1():
     %1 = global_addr @1
     %2 = global_addr @1

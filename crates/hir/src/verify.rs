@@ -1,9 +1,8 @@
 use crate::ir::HirPackage;
 use crate::{
-    BinaryOp, BlockId, Callee, CallingConvention, ComparePredicate, Constant, FunctionId,
-    GlobalInitializer, HirFunction, HirParameter, HirTypeKind, Instruction, InstructionKind,
-    IntCastKind, PassingMode, Terminator, TypeId, UnaryOp, UnverifiedHirPackage, ValueId,
-    ValueOrigin,
+    BinaryOp, BlockId, Callee, ComparePredicate, Constant, FunctionId, GlobalInitializer,
+    HirFunction, HirParameter, HirTypeKind, Instruction, InstructionKind, IntCastKind, Terminator,
+    TypeId, UnaryOp, UnverifiedHirPackage, ValueId, ValueOrigin,
 };
 use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::fmt;
@@ -190,7 +189,7 @@ impl Verifier<'_> {
         for (index, global) in self.package.globals.iter().enumerate() {
             let location = format!("global @{}", index + 1);
             if !symbols.insert(global.symbol.as_str()) {
-                self.error(location.clone(), "duplicate linkage symbol");
+                self.error(location.clone(), "duplicate symbol");
             }
             self.non_void_type(global.typ, location.clone(), "global");
             match global.initializer {
@@ -202,10 +201,7 @@ impl Verifier<'_> {
         }
         for (index, function) in self.package.functions.iter().enumerate() {
             if !symbols.insert(function.symbol.as_str()) {
-                self.error(
-                    format!("function @{}", index + 1),
-                    "duplicate linkage symbol",
-                );
+                self.error(format!("function @{}", index + 1), "duplicate symbol");
             }
         }
     }
@@ -222,10 +218,8 @@ impl Verifier<'_> {
             return;
         };
         if entry.symbol != "gane.main"
-            || entry.signature.calling_convention != CallingConvention::Gane
             || !entry.signature.parameters.is_empty()
             || !entry.signature.results.is_empty()
-            || entry.linkage != crate::Linkage::Internal
         {
             self.error("package", "entry must be Gane ABI void gane.main()");
         }
@@ -233,12 +227,6 @@ impl Verifier<'_> {
 
     fn verify_function(&mut self, id: FunctionId, function: &HirFunction) {
         let prefix = format!("function @{}", id.raw());
-        if function.signature.calling_convention != CallingConvention::Gane {
-            self.error(
-                prefix.clone(),
-                "only the Gane calling convention is supported",
-            );
-        }
         if function
             .entry
             .raw()
@@ -322,14 +310,7 @@ impl Verifier<'_> {
     }
 
     fn verify_parameter(&mut self, parameter: &HirParameter, location: String) {
-        match parameter.passing {
-            PassingMode::Direct => self.scalar_type(parameter.typ, location, "direct parameter"),
-            PassingMode::IndirectByValue => {
-                if !self.is_aggregate(parameter.typ) {
-                    self.error(location, "indirect_by_value parameter must be aggregate");
-                }
-            }
-        }
+        self.scalar_type(parameter.typ, location, "function parameter");
     }
 
     fn verify_definitions(&mut self, function_id: FunctionId, function: &HirFunction) {
@@ -387,13 +368,7 @@ impl Verifier<'_> {
         } else {
             for (value, parameter) in entry.parameters.iter().zip(&function.signature.parameters) {
                 let actual = function.value(*value).map(|value| value.typ);
-                let valid = match parameter.passing {
-                    PassingMode::Direct => actual == Some(parameter.typ),
-                    PassingMode::IndirectByValue => {
-                        actual.is_some_and(|typ| self.points_to(typ, parameter.typ))
-                    }
-                };
-                if !valid {
+                if actual != Some(parameter.typ) {
                     self.error(
                         prefix.clone(),
                         "entry block parameter type does not match signature",
@@ -807,13 +782,7 @@ impl Verifier<'_> {
         }
         for (argument, parameter) in arguments.iter().zip(&callee.signature.parameters) {
             let actual = function.value(*argument).map(|value| value.typ);
-            let valid = match parameter.passing {
-                PassingMode::Direct => actual == Some(parameter.typ),
-                PassingMode::IndirectByValue => {
-                    actual.is_some_and(|typ| self.points_to(typ, parameter.typ))
-                }
-            };
-            if !valid {
+            if actual != Some(parameter.typ) {
                 self.error(
                     location.clone(),
                     "call argument type does not match signature",
@@ -1065,13 +1034,12 @@ fn targets(terminator: &Terminator) -> Vec<BlockId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FunctionAttributes, HirBuilder, HirGlobal, HirSignature, Linkage, StackSlot};
+    use crate::{FunctionAttributes, HirBuilder, HirGlobal, HirSignature, StackSlot};
 
     fn signature(parameters: Vec<HirParameter>, results: Vec<TypeId>) -> HirSignature {
         HirSignature {
             parameters,
             results,
-            calling_convention: CallingConvention::Gane,
         }
     }
 
@@ -1080,7 +1048,6 @@ mod tests {
         let main = builder.declare_function(
             "gane.main".into(),
             signature(vec![], vec![]),
-            Linkage::Internal,
             FunctionAttributes::default(),
         );
         builder.set_entry(main).unwrap();
@@ -1114,7 +1081,7 @@ mod tests {
 
         let errors = messages(&package);
         assert!(errors.contains("entry function is invalid"));
-        assert!(errors.contains("duplicate linkage symbol"));
+        assert!(errors.contains("duplicate symbol"));
     }
 
     #[test]
@@ -1126,7 +1093,6 @@ mod tests {
             typ: void,
             mutable: false,
             initializer: GlobalInitializer::Scalar(Constant::Integer(1)),
-            linkage: Linkage::Internal,
         });
         package.inner_mut().functions[0]
             .stack_slots
@@ -1158,7 +1124,6 @@ mod tests {
         let main = builder.declare_function(
             "gane.main".into(),
             signature(vec![], vec![]),
-            Linkage::Internal,
             FunctionAttributes::default(),
         );
         builder.set_entry(main).unwrap();
@@ -1192,7 +1157,6 @@ mod tests {
         let main = builder.declare_function(
             "gane.main".into(),
             signature(vec![], vec![]),
-            Linkage::Internal,
             FunctionAttributes::default(),
         );
         builder.set_entry(main).unwrap();
@@ -1215,7 +1179,6 @@ mod tests {
         let main = builder.declare_function(
             "gane.main".into(),
             signature(vec![], vec![]),
-            Linkage::Internal,
             FunctionAttributes::default(),
         );
         builder.set_entry(main).unwrap();
@@ -1267,7 +1230,6 @@ mod tests {
         let main = builder.declare_function(
             "gane.main".into(),
             signature(vec![], vec![]),
-            Linkage::Internal,
             FunctionAttributes::default(),
         );
         builder.set_entry(main).unwrap();
@@ -1357,7 +1319,6 @@ mod tests {
         let main = builder.declare_function(
             "gane.main".into(),
             signature(vec![], vec![]),
-            Linkage::Internal,
             FunctionAttributes::default(),
         );
         builder.set_entry(main).unwrap();
@@ -1456,7 +1417,6 @@ mod tests {
         let main = builder.declare_function(
             "gane.main".into(),
             signature(vec![], vec![]),
-            Linkage::Internal,
             FunctionAttributes::default(),
         );
         builder.set_entry(main).unwrap();
@@ -1539,7 +1499,6 @@ mod tests {
         let main = builder.declare_function(
             "gane.main".into(),
             signature(vec![], vec![]),
-            Linkage::Internal,
             FunctionAttributes::default(),
         );
         builder.set_entry(main).unwrap();
@@ -1590,18 +1549,8 @@ mod tests {
         let i32 = builder.types().i32();
         let callee = builder.declare_function(
             "gane.callee".into(),
-            signature(
-                vec![HirParameter {
-                    typ: i32,
-                    passing: PassingMode::Direct,
-                }],
-                vec![i32],
-            ),
-            Linkage::Internal,
-            FunctionAttributes {
-                no_return: true,
-                ..FunctionAttributes::default()
-            },
+            signature(vec![HirParameter { typ: i32 }], vec![i32]),
+            FunctionAttributes { no_return: true },
         );
         let callee_entry = builder.entry_block(callee).unwrap();
         builder
@@ -1610,7 +1559,6 @@ mod tests {
         let main = builder.declare_function(
             "gane.main".into(),
             signature(vec![], vec![]),
-            Linkage::Internal,
             FunctionAttributes::default(),
         );
         builder.set_entry(main).unwrap();

@@ -108,19 +108,9 @@ codegen 收到 verified HIR 后仍须确认当前 TargetMachine 导出的 triple
 
 源语言 `int` 在 lowering 时按 `pointer_width` 变成 `I32` 或 `I64`。HIR 不允许未确定宽度的 `Int`。
 
-Gane 不在 HIR crate 中重复实现完整 LLVM 布局算法。HIR 只定义一个不依赖 LLVM 的查询接口：
+Gane 不在 HIR crate 中重复实现完整 LLVM 布局算法，也不在没有 consumer 时预设布局查询接口。production codegen 直接以 LLVM TargetData 为 size、alignment、field offset 和 padding 的唯一事实来源；HIR 不缓存布局结果，也不直接链接 libLLVM。
 
-```rust
-pub trait LayoutProvider {
-    fn size_of(&self, typ: TypeId) -> Result<u64, LayoutError>;
-    fn align_of(&self, typ: TypeId) -> Result<u32, LayoutError>;
-    fn field_offset(&self, typ: TypeId, field: u32) -> Result<u64, LayoutError>;
-}
-```
-
-production codegen 使用 LLVM TargetData 实现该接口，作为真实物理 size、alignment、field offset 和 padding 的唯一事实来源。HIR 不缓存布局结果，也不直接链接 libLLVM。
-
-verifier 只检查类型图能否形成有限布局，不查询具体字节 offset。测试 interpreter 使用结构化 object/field/element 模型执行 `AggregateZero` 和 `AggregateCopy`，因此也不需要模拟真实字节布局。可另写交叉测试，确认 production `LayoutProvider` 与 LLVM 的布局一致。
+verifier 只检查类型图能否形成有限布局，不查询具体字节 offset。测试 interpreter 使用结构化 object/field/element 模型执行 `AggregateZero` 和 `AggregateCopy`，因此也不需要模拟真实字节布局。第一个需要布局的 consumer 出现时，再以它的错误模型定义最小查询接口。
 
 同一份 HIR 不能跨 target 复用。cross compilation 需要针对目标重新 lowering。普通 verifier 检查 pointer width 为 32/64、V0 endianness/地址空间约束以及 triple/data layout 非空；TargetMachine 与 data layout 的一致性由创建 `TargetSpec` 的 target 层和 codegen 入口共同检查。
 
@@ -170,7 +160,6 @@ pub fn verify_and_check_escape(
 pub struct HirFunction {
     pub symbol: Symbol,
     pub signature: HirSignature,
-    pub linkage: Linkage,
     pub attributes: FunctionAttributes,
     pub stack_slots: Vec<StackSlot>,
     pub values: Vec<ValueDef>,
@@ -185,7 +174,7 @@ pub struct HirBlock {
 }
 ```
 
-函数参数由 entry block parameters 表示。`Direct` 参数对应同类型 block parameter；`IndirectByValue` 参数对应 `Ptr<parameter.typ>` block parameter，且该 pointer 指向调用语义创建的 callee-private 副本。普通 block parameters 用于 CFG 汇合和循环回边。
+函数参数由 entry block parameters 表示，且两者类型一一相同。V0 参数仅支持 scalar；普通 block parameters 用于 CFG 汇合和循环回边。
 
 ## 5. 类型系统
 
@@ -211,7 +200,7 @@ pub enum HirTypeKind {
 - `I8`～`I64` 只表示位宽。signedness 由 operation opcode 决定，与 LLVM integer type 一致。
 - LLVM 为可寻址的 `I1` 分配目标规定的存储空间；Gane V0 不另设 `I8` bool。
 - `Ptr` 保留 address space；V0 只生成 address space `0`。
-- Array/struct 采用源码字段顺序，其物理布局由 `LayoutProvider` 查询。
+- Array/struct 采用源码字段顺序；其物理布局由 codegen 的 LLVM TargetData 查询。
 - V0 不包含浮点类型。加入浮点时必须同时定义常量、运算、比较、NaN 和 ABI 语义。
 
 `Void` 和各整数类型必须 canonical intern。任何能按照 sema 合法流入同一个 HIR operand position 的类型，lowering 都必须稳定映射到同一个 `TypeId`；例如两次独立出现但 sema 判为 identical 的 `[2]int` 必须共享 HIR type。两个 sema 判为不同的 named aggregate 可以保留不同 `TypeId`，即使它们布局相同；V0 不要求对来源不同的递归 aggregate 图求结构图同构。HIR operand 的类型匹配使用 `TypeId`，lowering 必须复用其 sema-type-equivalence-to-HIR-type 映射。printer 和布局缓存以 `TypeId` 为 key，允许存在来源不同但布局相同的 aggregate。
@@ -222,7 +211,7 @@ Array 和 struct 在 V0 中只作为内存对象存在，不作为普通 SSA agg
 
 - 可以创建 stack slot/global，并访问其字段或元素；
 - 不允许整体 aggregate load、普通 SSA 参数、直接返回或整体比较；
-- aggregate 形参使用第 7 节定义的 `IndirectByValue`；
+- aggregate 不能作为普通参数；
 - aggregate 显式写零使用 `AggregateZero`，赋值使用 `AggregateCopy`；stack slot 初始零值由第 6 节统一保证。
 
 ## 6. 基础定义
@@ -237,34 +226,20 @@ pub struct StackSlot {
 pub struct HirSignature {
     pub parameters: Vec<HirParameter>,
     pub results: Vec<TypeId>,
-    pub calling_convention: CallingConvention,
 }
 
 pub struct HirParameter {
     pub typ: TypeId,
-    pub passing: PassingMode,
 }
-
-pub enum PassingMode {
-    Direct,
-    IndirectByValue,
-}
-
-pub enum CallingConvention { Gane }
-pub enum Linkage { Internal, Exported }
 
 pub struct FunctionAttributes {
     pub no_return: bool,
-    pub no_unwind: bool,
-    pub memory: MemoryEffect,
 }
-
-pub enum MemoryEffect { Unknown, ReadOnly, ReadNone }
 ```
 
-每个 `StackSlot` 在函数入口处按 `slot.typ` 具有 Gane 零值；这属于 HIR 语义，不是 lowering 的可选约定。LLVM backend 必须生成相应初始化，不能把 alloca 的未初始化内容暴露为 LLVM `undef`。backend 可以在保持该语义的前提下依赖后续优化删除被首次赋值完全覆盖的初始化。`IndirectByValue` 参数所指的 callee-private 副本由调用语义初始化，不属于 `stack_slots` 的隐式输入。
+每个 `StackSlot` 在函数入口处按 `slot.typ` 具有 Gane 零值；这属于 HIR 语义，不是 lowering 的可选约定。LLVM backend 必须生成相应初始化，不能把 alloca 的未初始化内容暴露为 LLVM `undef`。backend 可以在保持该语义的前提下依赖后续优化删除被首次赋值完全覆盖的初始化。
 
-V0 不支持 variadic，且所有函数都使用 Gane calling convention。用户源码 annotation 不能直接产生会影响优化正确性的 attributes。
+V0 不支持 variadic；所有调用都固定为 package 内 Gane ABI，因而 HIR 不存储可变 calling convention 或 linkage。用户源码 annotation 不能直接产生会影响优化正确性的 attributes。
 
 全局声明：
 
@@ -274,7 +249,6 @@ pub struct HirGlobal {
     pub typ: TypeId,
     pub mutable: bool,
     pub initializer: GlobalInitializer,
-    pub linkage: Linkage,
 }
 
 pub enum GlobalInitializer {
@@ -315,15 +289,7 @@ pub enum TrapReason {
 
 ## 7. 调用和 aggregate 值语义
 
-`Direct` 参数的 call operand 类型必须等于参数类型。`IndirectByValue` 只用于 array/struct：call operand 必须是 `Ptr<parameter.typ>`，但调用的语义是被调用者获得一份私有副本，修改它不能改变调用者对象。
-
-```text
-caller object --pointer--> call IndirectByValue
-                              |
-                              +-- semantic copy --> callee private object
-```
-
-LLVM backend 可以使用 `byval` 实现该副本，也可以生成显式 memcpy；这是 codegen 决策，不得省略语义副本。
+call operand 类型必须等于 parameter 类型。V0 不传递 aggregate；将来支持 aggregate 参数时，必须先定义 copy/ABI 语义，再增加 passing mode。
 
 struct/array 赋值通过以下指令表达：
 
@@ -346,7 +312,7 @@ AggregateZero {
 }
 ```
 
-它把 aggregate 设为 Gane 零值，包括递归地清零整数、bool、pointer、array 和 struct 字段。只有 TargetMachine 明确保证该类型所有字段的零值都采用全零 bit pattern 时，backend 才能使用 `llvm.memset`；否则必须使用 typed zero/逐字段 store。使用 `memset` 时必须依据 production `LayoutProvider` 的实际 alloc size，不得自行计算大小。
+它把 aggregate 设为 Gane 零值，包括递归地清零整数、bool、pointer、array 和 struct 字段。只有 TargetMachine 明确保证该类型所有字段的零值都采用全零 bit pattern 时，backend 才能使用 `llvm.memset`；否则必须使用 typed zero/逐字段 store。使用 `memset` 时必须依据 LLVM TargetData 的实际 alloc size，不得自行计算大小。
 
 V0 禁止 aggregate 返回值；sema 必须在进入 HIR 前诊断。未来的 `sret` 需要独立 ABI 设计，不能伪装成普通 SSA aggregate result。
 
@@ -452,7 +418,7 @@ pub enum ComparePredicate {
 - `GepIndex` 只接受 `Ptr<Array>`，返回 `Ptr<Element>`。`&array[i]` 使用 array 地址；V0 不支持普通 `Ptr<Element>` 的指针算术。
 - `GepIndex` 的 index 统一为 pointer-width integer，其 bit pattern 按 unsigned 解释。lowering 在完成负数检查后，以 `IntCast` 规范化索引宽度，再做无符号上界比较；若 source 更宽，必须先证明值可表示，不能直接 truncate。Array length 必须能被目标 pointer-width unsigned integer 表示。
 - `Call` 只允许直接调用；V0 不支持函数值和函数指针。
-- entry block parameters 必须与 signature parameters 一一对应：`Direct(T)` 对应 `T`，`IndirectByValue(T)` 对应 `Ptr<T>`；entry block 不能有额外 parameter。
+- entry block parameters 必须与 signature parameters 一一对应且类型相同；entry block 不能有额外 parameter。
 - 调用 `no_return` callee 不产生 result，必须是 block 的最后一条 instruction，且该 block 以 `Unreachable` 终结；`no_return` function signature 不能声明 result。
 - 对可能为 null 的 pointer 执行 `Load`、`Store` 或 GEP 前，canonical lowering 必须生成 `pointer != null` 的显式分支，失败分支以 `Trap(NullDereference)` 终结。只有能够由来源证明非 null 的 `StackAddr`、`GlobalAddr` 等地址可以省略检查。
 
@@ -589,7 +555,7 @@ interpreter、codegen 和 JIT 的 API 只接受 `VerifiedHirPackage`。`verify_a
 8. verifier 先计算 entry 可达性；不可达 block 不允许跨 block 使用 value，只能使用自身参数和本 block 先前定义的 value。
 9. 每条 instruction 的 operand/result 数量和类型满足第 9 节完整类型矩阵。
 10. constant 与 `TypeId` 相容且能在目标位宽中表示。
-11. call 参数的 logical type、passing mode、结果顺序和 calling convention 与 callee signature 一致。
+11. call 参数类型和结果顺序与 callee signature 一致。
 12. 每个 function 的 entry block parameters 与 signature 完全匹配；普通 CFG block 只由 incoming edge 定义 parameters。
 13. return 的数量和类型与 signature 一致；V0 不允许 aggregate 或多结果返回。`no_return` function/call 满足第 9 节的 result、位置和 terminator 约束。
 14. `StackAddr` 结果类型是 `Ptr<slot.typ>`；普通 verifier 不重复执行第 12 节的跨函数 escape analysis。所有 stack slot 具有第 6 节规定的入口零值语义。
@@ -597,7 +563,7 @@ interpreter、codegen 和 JIT 的 API 只接受 `VerifiedHirPackage`。`verify_a
 16. 所有调用目标都是 package 内的 Gane ABI function；V0 不包含 extern、C ABI 或 variadic。
 17. `Trap` 只作为 terminator。verifier 不承诺通过值域分析证明 canonical guard；危险指令的 total semantics 由 backend/interpreter 和第 10 节 conformance tests 保证。
 18. package 不包含 sema poison type、未解析类型或不属于第 6 节白名单的 global initializer。
-19. global 和 function 的最终链接 symbol 全局唯一，内部 Gane symbol 也不得发生 mangling collision。
+19. global 和 function 的最终 symbol 全局唯一，Gane symbol 不得发生 mangling collision。
 20. `Void` 不能用于 SSA value、参数、block parameter、stack slot、global、array element 或 struct field；无返回值由空 results 表示。
 21. primitive types 已 canonical intern；类型图只通过 pointer 成环，所有 array/struct 均为非零有限尺寸。verifier 不检查不同 aggregate ID 的结构图同构；sema representation 映射稳定性由 lowering tests 检查。
 22. pointer 只能进行 `Equal/NotEqual` 比较；signed/unsigned ordering predicate 只接受 integer。

@@ -3,17 +3,14 @@
 pub use crate::builder::{BuildError, HirBuilder};
 pub use crate::id::{BlockId, FunctionId, GlobalId, StackSlotId, TypeId, ValueId};
 pub use crate::ir::{
-    BinaryOp, Callee, CallingConvention, ComparePredicate, Constant, FunctionAttributes,
-    GlobalInitializer, HirBlock, HirFunction, HirGlobal, HirParameter, HirSignature, Instruction,
-    InstructionKind, IntCastKind, Linkage, MemoryEffect, PassingMode, StackSlot, Terminator,
-    TrapReason, UnaryOp, UnverifiedHirPackage, ValueDef, ValueOrigin, VerifiedHirPackage,
+    BinaryOp, Callee, ComparePredicate, Constant, FunctionAttributes, GlobalInitializer, HirBlock,
+    HirFunction, HirGlobal, HirParameter, HirSignature, Instruction, InstructionKind, IntCastKind,
+    StackSlot, Terminator, TrapReason, UnaryOp, UnverifiedHirPackage, ValueDef, ValueOrigin,
+    VerifiedHirPackage,
 };
 pub use crate::lower::{LowerError, lower_package};
 pub use crate::target::{Endianness, TargetSpec, TargetSpecError};
-pub use crate::types::{
-    HirType, HirTypeKind, LayoutError, LayoutProvider, SourceOrigin, Symbol, TypeArena,
-    TypeArenaError,
-};
+pub use crate::types::{HirType, HirTypeKind, SourceOrigin, Symbol, TypeArena, TypeArenaError};
 pub use crate::verify::{HirDiagnostic, verify};
 
 #[cfg(test)]
@@ -24,7 +21,6 @@ mod tests {
         HirSignature {
             parameters,
             results: Vec::new(),
-            calling_convention: CallingConvention::Gane,
         }
     }
 
@@ -32,7 +28,6 @@ mod tests {
         builder.declare_function(
             "gane.main".to_owned(),
             signature(parameters),
-            Linkage::Internal,
             FunctionAttributes::default(),
         )
     }
@@ -79,16 +74,9 @@ mod tests {
             typ: i32,
             mutable: true,
             initializer: GlobalInitializer::Zero,
-            linkage: Linkage::Internal,
         });
         assert_eq!(global.raw(), 1);
-        let function = declare_function(
-            &mut builder,
-            vec![HirParameter {
-                typ: i32,
-                passing: PassingMode::Direct,
-            }],
-        );
+        let function = declare_function(&mut builder, vec![HirParameter { typ: i32 }]);
         builder.set_entry(function).unwrap();
         let entry = builder.entry_block(function).unwrap();
         assert_eq!(
@@ -235,37 +223,5 @@ mod tests {
             })
         );
         assert!(builder.finish().unwrap().types().get(node).is_some());
-    }
-
-    #[test]
-    fn indirect_parameters_use_pointer_entry_values() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
-        let i32 = builder.types().i32();
-        let pair = builder.add_type(HirTypeKind::Struct { fields: vec![i32] });
-        let function = declare_function(
-            &mut builder,
-            vec![HirParameter {
-                typ: pair,
-                passing: PassingMode::IndirectByValue,
-            }],
-        );
-        builder.set_entry(function).unwrap();
-        let entry = builder.entry_block(function).unwrap();
-        builder
-            .set_terminator(function, entry, Terminator::Return { values: Vec::new() })
-            .unwrap();
-
-        let package = builder.finish().unwrap();
-        let function = package.function(function).unwrap();
-        let parameter = function.values[0].typ;
-        assert!(matches!(
-            package.types().get(parameter),
-            Some(HirType {
-                kind: HirTypeKind::Ptr {
-                    pointee,
-                    address_space: 0,
-                },
-            }) if *pointee == pair
-        ));
     }
 }

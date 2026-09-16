@@ -1,8 +1,7 @@
 use crate::ir::HirPackage;
 use crate::{
     BinaryOp, Callee, ComparePredicate, Constant, GlobalInitializer, HirTypeKind, InstructionKind,
-    IntCastKind, Linkage, MemoryEffect, PassingMode, Terminator, UnaryOp, UnverifiedHirPackage,
-    VerifiedHirPackage,
+    IntCastKind, Terminator, UnaryOp, UnverifiedHirPackage, VerifiedHirPackage,
 };
 use std::fmt::{self, Write};
 
@@ -37,11 +36,10 @@ fn print_package(package: &HirPackage, f: &mut fmt::Formatter<'_>) -> fmt::Resul
     for (index, global) in package.globals.iter().enumerate() {
         write!(
             f,
-            "global @{} {:?}: !{} {} {}",
+            "global @{} {:?}: !{} {}",
             index + 1,
             global.symbol,
             global.typ.raw(),
-            linkage(global.linkage),
             if global.mutable {
                 "mutable"
             } else {
@@ -60,17 +58,14 @@ fn print_package(package: &HirPackage, f: &mut fmt::Formatter<'_>) -> fmt::Resul
             if parameter_index != 0 {
                 f.write_str(", ")?;
             }
-            write!(f, "{} !{}", passing(parameter.passing), parameter.typ.raw())?;
+            write!(f, "!{}", parameter.typ.raw())?;
         }
         f.write_str(") -> (")?;
         ids(f, function.signature.results.iter().map(|id| id.raw()), "!")?;
         writeln!(
             f,
-            ") {} [no_return={}, no_unwind={}, memory={}] entry ^{} {{",
-            linkage(function.linkage),
+            ") [no_return={}] entry ^{} {{",
             function.attributes.no_return,
-            function.attributes.no_unwind,
-            memory(function.attributes.memory),
             function.entry.raw()
         )?;
 
@@ -249,25 +244,6 @@ fn constant(value: Constant) -> String {
         Constant::Null => "null".into(),
     }
 }
-fn linkage(value: Linkage) -> &'static str {
-    match value {
-        Linkage::Internal => "internal",
-        Linkage::Exported => "exported",
-    }
-}
-fn passing(value: PassingMode) -> &'static str {
-    match value {
-        PassingMode::Direct => "direct",
-        PassingMode::IndirectByValue => "indirect_by_value",
-    }
-}
-fn memory(value: MemoryEffect) -> &'static str {
-    match value {
-        MemoryEffect::Unknown => "unknown",
-        MemoryEffect::ReadOnly => "readonly",
-        MemoryEffect::ReadNone => "readnone",
-    }
-}
 fn unary(value: UnaryOp) -> &'static str {
     match value {
         UnaryOp::Neg => "neg",
@@ -318,8 +294,8 @@ fn predicate_name(value: ComparePredicate) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::{
-        CallingConvention, Constant, FunctionAttributes, HirBuilder, HirSignature, InstructionKind,
-        Linkage, TargetSpec, Terminator,
+        Constant, FunctionAttributes, HirBuilder, HirSignature, InstructionKind, TargetSpec,
+        Terminator,
     };
 
     #[test]
@@ -331,9 +307,7 @@ mod tests {
             HirSignature {
                 parameters: vec![],
                 results: vec![],
-                calling_convention: CallingConvention::Gane,
             },
-            Linkage::Internal,
             FunctionAttributes::default(),
         );
         builder.set_entry(main).unwrap();
@@ -380,7 +354,7 @@ type !3 = i8
 type !4 = i16
 type !5 = i32
 type !6 = i64
-func @1 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+func @1 "gane.main"() -> () [no_return=false] entry ^1 {
   slot $1: !5
   ^1():
     %1 = const !5 7
