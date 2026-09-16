@@ -155,6 +155,13 @@ impl HirBuilder {
         Ok(self.function(function)?.entry)
     }
 
+    pub fn entry_parameters(&self, function: FunctionId) -> Result<Vec<ValueId>, BuildError> {
+        let function = self.function(function)?;
+        Ok(function.blocks[function.entry.raw() as usize - 1]
+            .parameters
+            .clone())
+    }
+
     pub fn add_stack_slot(
         &mut self,
         function: FunctionId,

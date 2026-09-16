@@ -30,7 +30,7 @@
 - [ ] 实现 lowering，但从最小垂直切片开始
 不要一次性覆盖整份 V0。建议顺序：
   - [x] 常量/局部变量/标量表达式
-  - [ ] 函数、调用、return
+  - [x] 函数、调用、return
   - [ ] if 与 block parameter
   - [ ] for、break、continue
   - [ ] short-circuit && / ||

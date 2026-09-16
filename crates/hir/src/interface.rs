@@ -91,6 +91,10 @@ mod tests {
         );
         builder.set_entry(function).unwrap();
         let entry = builder.entry_block(function).unwrap();
+        assert_eq!(
+            builder.entry_parameters(function).unwrap(),
+            vec![ValueId::from_raw(1)]
+        );
         let slot = builder
             .add_stack_slot(function, i32, Some("value".to_owned()), None)
             .unwrap();
