@@ -1,8 +1,8 @@
 use crate::{
     BinaryOp, BlockId, BuildError, Callee, CallingConvention, ComparePredicate, Constant,
-    FunctionAttributes, FunctionId, HirBuilder, HirParameter, HirSignature, HirTypeKind,
-    IntCastKind, Linkage, PassingMode, Terminator, TrapReason, TypeId, UnaryOp,
-    UnverifiedHirPackage, ValueId,
+    FunctionAttributes, FunctionId, GlobalId, GlobalInitializer, HirBuilder, HirGlobal,
+    HirParameter, HirSignature, HirTypeKind, IntCastKind, Linkage, PassingMode, Terminator,
+    TrapReason, TypeId, UnaryOp, UnverifiedHirPackage, ValueId,
 };
 use gane_parser::{
     ast,
@@ -144,6 +144,7 @@ struct Lowerer<'a> {
     block: BlockId,
     target_width: u8,
     locals: HashMap<ObjectId, Local>,
+    globals: HashMap<ObjectId, GlobalId>,
     functions: HashMap<ObjectId, LoweredFunction>,
     results: Vec<TypeId>,
     pointer_types: HashMap<TypeId, TypeId>,
@@ -162,6 +163,7 @@ impl<'a> Lowerer<'a> {
             block: BlockId::INVALID,
             target_width,
             locals: HashMap::new(),
+            globals: HashMap::new(),
             functions: HashMap::new(),
             results: Vec::new(),
             pointer_types: HashMap::new(),
@@ -188,7 +190,7 @@ impl<'a> Lowerer<'a> {
                     ast::Decl::GenDecl(declaration)
                         if matches!(declaration.tok, Token::Const | Token::Type) => {}
                     ast::Decl::GenDecl(declaration) if declaration.tok == Token::Var => {
-                        return Err(self.unsupported(declaration.node_id(), "global variable"));
+                        self.lower_global_declaration(declaration)?;
                     }
                     ast::Decl::GenDecl(declaration) => {
                         return Err(
@@ -357,6 +359,42 @@ impl<'a> Lowerer<'a> {
                 })?;
             } else {
                 return Err(self.unsupported(body.node_id(), "non-void function reaches end"));
+            }
+        }
+        Ok(())
+    }
+
+    fn lower_global_declaration(&mut self, declaration: &ast::GenDecl) -> Result<(), LowerError> {
+        for spec in &declaration.specs {
+            let ast::Spec::ValueSpec(spec) = spec else {
+                return Err(self.unsupported(spec.node_id(), "global variable declaration"));
+            };
+            for identifier in &spec.names {
+                let object = self.definition(identifier.node_id())?;
+                let typ =
+                    self.lower_type(self.analysis.object(object).typ, identifier.node_id())?;
+                let initializer = match self
+                    .analysis
+                    .global_initializer(object)
+                    .ok_or_else(|| self.missing(identifier.node_id(), "global initializer"))?
+                {
+                    gane_sema::GlobalInitializer::Zero => GlobalInitializer::Zero,
+                    gane_sema::GlobalInitializer::Scalar(value) => {
+                        GlobalInitializer::Scalar(self.lower_constant(
+                            value.clone(),
+                            self.analysis.object(object).typ,
+                            identifier.node_id(),
+                        )?)
+                    }
+                };
+                let global = self.builder.add_global(HirGlobal {
+                    symbol: format!("gane.{}", identifier.name),
+                    typ,
+                    mutable: true,
+                    initializer,
+                    linkage: Linkage::Internal,
+                });
+                self.globals.insert(object, global);
             }
         }
         Ok(())
@@ -1063,11 +1101,22 @@ impl<'a> Lowerer<'a> {
             ast::Expr::ParenExpr(expression) => self.lower_place(&expression.x),
             ast::Expr::Ident(identifier) => {
                 let object = self.use_of(identifier.node_id())?;
-                self.locals
+                if let Some(local) = self.locals.get(&object) {
+                    return Ok(local.place);
+                }
+                let global = self
+                    .globals
                     .get(&object)
                     .copied()
-                    .map(|local| local.place)
-                    .ok_or_else(|| self.unsupported(identifier.node_id(), "non-local place"))
+                    .ok_or_else(|| self.unsupported(identifier.node_id(), "non-local place"))?;
+                let pointer_type = self.pointer_type(typ);
+                let pointer = self.instruction(
+                    identifier.node_id(),
+                    crate::InstructionKind::GlobalAddr { global },
+                    [pointer_type],
+                )?[0];
+                self.known_non_null.insert(pointer);
+                Ok(Place { pointer, typ })
             }
             ast::Expr::StarExpr(expression) => {
                 let pointer = self.lower_expression(&expression.x)?;
@@ -2881,12 +2930,20 @@ entry @1
             ),
             Err(LowerError::SemanticErrors { .. })
         ));
-        for source in ["package main\nvar x int\nfunc main() {}\n"] {
-            assert!(matches!(
-                lower(source, TargetSpec::for_test_64()),
-                Err(LowerError::Unsupported { .. })
-            ));
-        }
+        assert!(
+            lower(
+                "package main\nvar x int\nfunc main() {}\n",
+                TargetSpec::for_test_64(),
+            )
+            .is_ok()
+        );
+        assert!(matches!(
+            lower(
+                "package main\nfunc foreign()\nfunc main() {}\n",
+                TargetSpec::for_test_64(),
+            ),
+            Err(LowerError::SemanticErrors { .. })
+        ));
 
         let source = "package main\nfunc main() {}\n";
         let mut first_files = FileSet::new();
@@ -2913,5 +2970,164 @@ entry @1
             lower_package(&second_input, &analysis, TargetSpec::for_test_64()),
             Err(LowerError::MissingSemanticFact { .. })
         ));
+    }
+
+    #[test]
+    fn lowers_scalar_globals_to_stable_hir_and_reuses_global_ids() {
+        let package = lower(
+            "package main\n\
+             const initial = 1\n\
+             var count int = initial\n\
+             var ready bool\n\
+             var none *int = nil\n\
+             func tick() { count++ }\n\
+             func main() { count = count + 1; tick(); _ = count }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        let globals = package.globals().collect::<Vec<_>>();
+        assert_eq!(globals.len(), 3);
+        assert!(matches!(
+            globals[0].1.initializer,
+            crate::GlobalInitializer::Scalar(Constant::Integer(1))
+        ));
+        assert!(matches!(
+            globals[1].1.initializer,
+            crate::GlobalInitializer::Zero
+        ));
+        assert!(matches!(
+            globals[2].1.initializer,
+            crate::GlobalInitializer::Zero
+        ));
+        assert!(globals.iter().all(|(_, global)| {
+            global.mutable
+                && global.linkage == Linkage::Internal
+                && global.symbol.starts_with("gane.")
+        }));
+
+        let count = crate::GlobalId::from_raw(1);
+        let addresses = package
+            .functions()
+            .flat_map(|(_, function)| &function.blocks)
+            .flat_map(|block| &block.instructions)
+            .filter_map(|instruction| match instruction.kind {
+                InstructionKind::GlobalAddr { global } => Some(global),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(addresses, vec![count, count, count, count]);
+        assert_eq!(
+            package.to_string(),
+            r#"target "x86_64-unknown-linux-gnu" {
+  cpu = "generic"
+  features = ""
+  data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128"
+  pointer_width = 64
+  endianness = Little
+}
+type !1
+type !2
+type !3
+type !4
+type !5
+type !6
+type !7
+type !1 = void
+type !2 = i1
+type !3 = i8
+type !4 = i16
+type !5 = i32
+type !6 = i64
+type !7 = ptr(addrspace=0, !6)
+global @1 "gane.count": !6 internal mutable = 1
+global @2 "gane.ready": !2 internal mutable = zero
+global @3 "gane.none": !7 internal mutable = zero
+func @1 "gane.tick"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+  ^1():
+    %1 = global_addr @1
+    %2 = load %1
+    %3 = const !6 1
+    %4 = add %2, %3
+    store %1, %4
+    return
+}
+func @2 "gane.main"() -> () internal [no_return=false, no_unwind=false, memory=unknown] entry ^1 {
+  ^1():
+    %1 = global_addr @1
+    %2 = global_addr @1
+    %3 = load %2
+    %4 = const !6 1
+    %5 = add %3, %4
+    store %1, %5
+    call @1()
+    %6 = global_addr @1
+    %7 = load %6
+    return
+}
+entry @2
+"#
+        );
+    }
+
+    #[test]
+    fn lowers_global_aggregate_places_copy_and_zero() {
+        let package = lower(
+            "package main\n\
+             type Pair struct { value int; values [2]int }\n\
+             var source Pair\n\
+             var destination Pair\n\
+             func update(index int) {\n\
+                 destination.value = source.values[index]\n\
+                 destination = source\n\
+                 source = Pair{}\n\
+             }\n\
+             func main() { update(0) }\n",
+            TargetSpec::for_test_64(),
+        )
+        .unwrap();
+        verify(&package).unwrap();
+
+        let update = package.function(crate::FunctionId::from_raw(1)).unwrap();
+        let instructions = update
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .collect::<Vec<_>>();
+        assert_eq!(package.globals().count(), 2);
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| matches!(instruction.kind, InstructionKind::GepField { .. }))
+        );
+        assert!(
+            instructions
+                .iter()
+                .any(|instruction| matches!(instruction.kind, InstructionKind::GepIndex { .. }))
+        );
+        assert!(
+            instructions.iter().any(|instruction| matches!(
+                instruction.kind,
+                InstructionKind::AggregateCopy { .. }
+            ))
+        );
+        assert!(
+            instructions.iter().any(|instruction| matches!(
+                instruction.kind,
+                InstructionKind::AggregateZero { .. }
+            ))
+        );
+        assert!(instructions.iter().any(|instruction| matches!(
+            instruction.kind,
+            InstructionKind::GlobalAddr { global }
+                if global == crate::GlobalId::from_raw(1) || global == crate::GlobalId::from_raw(2)
+        )));
+        assert!(!update.blocks.iter().any(|block| matches!(
+            block.terminator,
+            Terminator::Trap {
+                reason: TrapReason::NullDereference
+            }
+        )));
     }
 }
