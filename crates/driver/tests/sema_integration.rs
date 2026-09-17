@@ -30,7 +30,9 @@ fn semantic_errors_are_dumped_and_rendered_after_a_successful_parse() {
     fs::write(&input, b"package main\nfunc main() { missing }\n").expect("write fixture");
 
     let output = Command::new(env!("CARGO_BIN_EXE_gane_driver"))
+        .arg("single")
         .arg(&input)
+        .arg("--out-dir")
         .arg(&out)
         .output()
         .expect("run driver");
@@ -60,7 +62,9 @@ fn valid_program_is_lowered_emitted_and_interpreted() {
     .expect("write fixture");
 
     let output = Command::new(env!("CARGO_BIN_EXE_gane_driver"))
+        .arg("single")
         .arg(&input)
+        .arg("--out-dir")
         .arg(&out)
         .output()
         .expect("run driver");

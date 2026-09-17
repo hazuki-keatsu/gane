@@ -5,6 +5,7 @@ version.workspace = true
 authors.workspace = true
 
 [dependencies]
+clap = { workspace = true }
 gane_codegen = { path = "../codegen" }
 gane_ir = { path = "../ir" }
 gane_parser = { path= "../parser" }
