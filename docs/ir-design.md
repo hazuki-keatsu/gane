@@ -1,6 +1,6 @@
 ---
-version: v1.0
-date: 2026-09-11
+version: v1.1
+date: 2026-09-17
 author: hazuki-keatsu
 tag: ir
 state: v0
@@ -174,7 +174,7 @@ pub struct IrBlock {
 }
 ```
 
-函数参数由 entry block parameters 表示，且两者类型一一相同。V0 参数仅支持 scalar；普通 block parameters 用于 CFG 汇合和循环回边。
+函数参数由 entry block parameters 表示，且两者类型一一相同。entry block 不得是 `Branch` 或 `CondBranch` 的 target，因此其 parameters 只在函数调用时由参数定义。V0 参数仅支持 scalar；普通 block parameters 用于 CFG 汇合和循环回边。
 
 ## 5. 类型系统
 
@@ -284,6 +284,8 @@ pub enum TrapReason {
     ExplicitPanic,
 }
 ```
+
+`mutable` 是当前构造 API 保留的字段，不是 V0 的不可写承诺：production lowering 一律产生 `true`，而 verifier、interpreter 和 escape check 都不以它限制 `Store`。因此 V0 backend 必须把所有 global 视为可写，不能据此生成 LLVM `constant`。未来若需要 immutable global，必须先定义可写 alias 的禁止规则，并由 verifier 建立该不变量。
 
 `Constant` 的解释由 `Const` 指令携带的 `TypeId` 决定。V0 最大整数宽度为 64；verifier 必须检查 bool、integer、null 与目标类型相容，且 integer bit pattern 不含目标位宽以外的有效位。
 
@@ -422,7 +424,7 @@ pub enum ComparePredicate {
 - 调用 `no_return` callee 不产生 result，必须是 block 的最后一条 instruction，且该 block 以 `Unreachable` 终结；`no_return` function signature 不能声明 result。
 - 对可能为 null 的 pointer 执行 `Load`、`Store` 或 GEP 前，canonical lowering 必须生成 `pointer != null` 的显式分支，失败分支以 `Trap(NullDereference)` 终结。只有能够由来源证明非 null 的 `StackAddr`、`GlobalAddr` 等地址可以省略检查。
 
-所有指令自身具有完整、无 LLVM poison/UB 的 IR 语义，backend 不能把 canonical guard 当成正确性的唯一来源：null `Load/Store/GEP` 必须得到 `Trap(NullDereference)`，越界 `GepIndex` 必须得到 `Trap(BoundsError)`，整数危险操作遵循第 10 节。backend 可以利用支配它的显式 guard 消除重复检查；无法证明时必须生成本地防御检查。
+所有指令自身具有完整、无 LLVM poison/UB 的 IR 语义，backend 不能把 canonical guard 当成正确性的唯一来源：null `Load/Store/GEP` 必须得到 `Trap(NullDereference)`，越界 `GepIndex` 必须得到 `Trap(BoundsError)`，整数危险操作遵循第 10 节。V0 backend 不做值域分析、支配性 guard 识别或 guard elimination；它为每个危险 instruction 发出本地防御检查，即使 canonical lowering 已经生成等价 guard。重复检查是有意的正确性优先策略，后续优化必须另立设计。
 
 ## 10. 整数语义与显式检查
 
@@ -492,7 +494,7 @@ join(%result: i64):
   return %result
 ```
 
-循环变量同样通过 header block parameter 和回边 argument 传递。
+循环变量同样通过 header block parameter 和回边 argument 传递。function entry block 不得拥有 incoming edge；任何循环必须使用独立的 header block。这使 LLVM backend 能直接将 entry parameters 映射为 LLVM function parameters，且只为普通 block parameters 构造 phi。
 
 ## 12. no-std、entry ABI 与未来 FFI
 
@@ -556,7 +558,7 @@ interpreter、codegen 和 JIT 的 API 只接受 `VerifiedIrPackage`。`verify_an
 9. 每条 instruction 的 operand/result 数量和类型满足第 9 节完整类型矩阵。
 10. constant 与 `TypeId` 相容且能在目标位宽中表示。
 11. call 参数类型和结果顺序与 callee signature 一致。
-12. 每个 function 的 entry block parameters 与 signature 完全匹配；普通 CFG block 只由 incoming edge 定义 parameters。
+12. 每个 function 的 entry block parameters 与 signature 完全匹配，且 entry block 不是任何 `Branch` 或 `CondBranch` 的 target；普通 CFG block 只由 incoming edge 定义 parameters。
 13. return 的数量和类型与 signature 一致；V0 不允许 aggregate 或多结果返回。`no_return` function/call 满足第 9 节的 result、位置和 terminator 约束。
 14. `StackAddr` 结果类型是 `Ptr<slot.typ>`；普通 verifier 不重复执行第 12 节的跨函数 escape analysis。所有 stack slot 具有第 6 节规定的入口零值语义。
 15. `AggregateZero` 的目标以及 `AggregateCopy` 两端是相同 aggregate 类型的 pointer，且类型具有确定布局；copy 允许重叠。
@@ -569,7 +571,7 @@ interpreter、codegen 和 JIT 的 API 只接受 `VerifiedIrPackage`。`verify_an
 22. pointer 只能进行 `Equal/NotEqual` 比较；signed/unsigned ordering predicate 只接受 integer。
 23. Array length 能由目标 pointer-width unsigned integer 表示。
 
-verifier 必须包含反向测试：跨分支非法 use、错误 block argument、错误 GEP、错误 store/call、不可表示常量、symbol collision、非法递归/零尺寸类型和 `Void` value 都应被拒绝。escape violations 属于独立 escape check 的反向测试，不混入普通 verifier 测试集。
+verifier 必须包含反向测试：跨分支非法 use、跳转到 function entry、错误 block argument、错误 GEP、错误 store/call、不可表示常量、symbol collision、非法递归/零尺寸类型和 `Void` value 都应被拒绝。escape violations 属于独立 escape check 的反向测试，不混入普通 verifier 测试集。
 
 ## 15. 文本格式与实现阶段
 
@@ -589,8 +591,8 @@ IR 从阶段 1 起提供确定性的文本打印。相同输入和 target 必须
 3. 实现 `sema + AST -> raw IR`，只覆盖第 2 节的 V0 子集，建立 lowering golden tests；lowering 遇到缺失的 sema fact 必须返回 diagnostic，不能 panic 或自行推导。
 4. 在 raw IR 上实现独立 escape check，只有 verifier 与 escape check 均成功才产生 `VerifiedIrPackage`。
 5. 实现最小 interpreter；先覆盖纯整数、结构化局部内存、total dangerous operations 和控制流，不要求真实物理布局。
-6. 实现 host target 的 LLVM lowering、wrapper main、object 生成和链接，完成 AOT 闭环，并与 interpreter 做差分测试。
-7. 增加 array/struct、`AggregateZero` 和 `AggregateCopy` 的端到端测试。
+6. 实现 host target 的 LLVM IR lowering、wrapper main、结构化内存和 aggregate，写出 `.ll`，并以 `lli` 与 interpreter 做危险操作差分测试。
+7. LLVM IR 稳定后，单独实现 object 生成和链接，完成 AOT 可执行文件闭环。
 8. AOT 稳定后再评估可选 IR pass；局部提升优先使用 LLVM mem2reg/SROA。
 9. 最后添加 profile instrumentation 和函数级 JIT。
 
