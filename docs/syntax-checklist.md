@@ -8,9 +8,9 @@
 - **parser**：仓库的 `gane_parser` 是否有对应 token/AST 并能解析该类别。`[AST]` 表示有明确 AST 形状；这不表示每种合法/非法边界都已有回归测试。
 - **sema checkbox**：唯一可勾选的状态。`[x]` 表示当前 sema 接受并检查该项的当前子集；`[ ]` 表示它不支持、仅错误恢复遍历，或实现的语义尚不符合 Go 规则。
 
-因此，**不要因为 parser 能解析就勾选 sema**。实现新项时，应同步更新本项的限制、测试、`docs/sema-overview.md`，以及必要的 HIR 契约。
+因此，**不要因为 parser 能解析就勾选 sema**。实现新项时，应同步更新本项的限制、测试、`docs/sema-overview.md`，以及必要的 IR 契约。
 
-> 本项目是 Go-like 语言和 HIR V0 前端，不承诺完整 Go 兼容性。表中的 `[x]` 也只表示当前 Gane 语义，不自动等价于完整 Go 语义。
+> 本项目是 Go-like 语言和 IR V0 前端，不承诺完整 Go 兼容性。表中的 `[x]` 也只表示当前 Gane 语义，不自动等价于完整 Go 语义。
 
 ## 0. 源码表示与词法元素
 
@@ -324,8 +324,8 @@
 - [x] V0 global initializer 限制：bool/int/byte 常量或 nil pointer。
 - [x] V0 拒绝无函数体声明；不包含 extern ABI。
 - [ ] 新语法的完整 source span、definition/use/type/selection facts。
-- [ ] 任何新可执行语法的 HIR lowering 支持。
-- [ ] 任何新可执行语法的 HIR verifier、interpreter、LLVM backend 定义与测试。
+- [ ] 任何新可执行语法的 IR lowering 支持。
+- [ ] 任何新可执行语法的 IR verifier、interpreter、LLVM backend 定义与测试。
 - [ ] escape/alias/ownership 规则，以及未来 FFI 的 ABI metadata。
 - [ ] Go runtime、GC、goroutine、channel、panic/recover、reflection 的完整运行时模型。
 
@@ -338,7 +338,7 @@
 - [ ] sema 已为非法输入给出稳定 diagnostic，并有负向测试。
 - [ ] `SemanticInfo` 已补齐 lowering/工具需要的 facts。
 - [ ] 若功能跨文件或涉及 import，已覆盖至少两个 `PackageFile`。
-- [ ] 若功能进入可执行路径，HIR/codegen 契约与测试已同步。
+- [ ] 若功能进入可执行路径，IR/codegen 契约与测试已同步。
 - [ ] `cargo test --workspace` 通过。
 
 ## 7. 阅读实现的入口

@@ -1,10 +1,10 @@
 use crate::{
-    Callee, FunctionId, HirDiagnostic, HirFunction, InstructionKind, StackSlotId, Terminator,
-    UnverifiedHirPackage, ValueId, ValueOrigin,
+    Callee, FunctionId, InstructionKind, IrDiagnostic, IrFunction, StackSlotId, Terminator,
+    UnverifiedIrPackage, ValueId, ValueOrigin,
 };
 use std::collections::BTreeSet;
 
-pub(crate) fn check(package: &UnverifiedHirPackage) -> Result<(), Vec<HirDiagnostic>> {
+pub(crate) fn check(package: &UnverifiedIrPackage) -> Result<(), Vec<IrDiagnostic>> {
     let summaries = summaries(package);
     let mut diagnostics = Vec::new();
 
@@ -20,7 +20,7 @@ pub(crate) fn check(package: &UnverifiedHirPackage) -> Result<(), Vec<HirDiagnos
     }
 }
 
-fn summaries(package: &UnverifiedHirPackage) -> Vec<Vec<bool>> {
+fn summaries(package: &UnverifiedIrPackage) -> Vec<Vec<bool>> {
     let mut summaries = package
         .functions()
         .map(|(_, function)| vec![false; function.signature.parameters.len()])
@@ -54,11 +54,11 @@ fn summaries(package: &UnverifiedHirPackage) -> Vec<Vec<bool>> {
     }
 }
 
-fn is_pointer(package: &UnverifiedHirPackage, typ: crate::TypeId) -> bool {
+fn is_pointer(package: &UnverifiedIrPackage, typ: crate::TypeId) -> bool {
     package
         .types()
         .get(typ)
-        .is_some_and(|typ| matches!(typ.kind, crate::HirTypeKind::Ptr { .. }))
+        .is_some_and(|typ| matches!(typ.kind, crate::IrTypeKind::Ptr { .. }))
 }
 
 #[derive(Default)]
@@ -67,7 +67,7 @@ struct Taint {
     slots: BTreeSet<StackSlotId>,
 }
 
-fn propagate(function: &HirFunction, values: impl IntoIterator<Item = ValueId>) -> Taint {
+fn propagate(function: &IrFunction, values: impl IntoIterator<Item = ValueId>) -> Taint {
     // ponytail: flow-insensitive slot taint may reject after a clearing overwrite; add CFG-sensitive
     // memory state only when valid source programs need that precision.
     let mut taint = Taint {
@@ -128,11 +128,7 @@ fn extend_values(taint: &mut Taint, values: &[ValueId]) -> bool {
         .any(|value| taint.values.insert(value))
 }
 
-fn propagate_terminator(
-    function: &HirFunction,
-    terminator: &Terminator,
-    taint: &mut Taint,
-) -> bool {
+fn propagate_terminator(function: &IrFunction, terminator: &Terminator, taint: &mut Taint) -> bool {
     match terminator {
         Terminator::Branch { target, arguments } => {
             propagate_edge(function, *target, arguments, taint)
@@ -152,7 +148,7 @@ fn propagate_terminator(
 }
 
 fn propagate_edge(
-    function: &HirFunction,
+    function: &IrFunction,
     target: crate::BlockId,
     arguments: &[ValueId],
     taint: &mut Taint,
@@ -170,7 +166,7 @@ fn propagate_edge(
     extend_values(taint, &values)
 }
 
-fn escapes(function: &HirFunction, taint: &Taint, summaries: &[Vec<bool>]) -> bool {
+fn escapes(function: &IrFunction, taint: &Taint, summaries: &[Vec<bool>]) -> bool {
     function.blocks.iter().any(|block| {
         instructions_escape(function, &block.instructions, taint, summaries)
             || matches!(
@@ -181,7 +177,7 @@ fn escapes(function: &HirFunction, taint: &Taint, summaries: &[Vec<bool>]) -> bo
 }
 
 fn instructions_escape(
-    function: &HirFunction,
+    function: &IrFunction,
     instructions: &[crate::Instruction],
     taint: &Taint,
     summaries: &[Vec<bool>],
@@ -215,10 +211,10 @@ fn instructions_escape(
 
 fn report_escapes(
     function_id: FunctionId,
-    function: &HirFunction,
+    function: &IrFunction,
     taint: &Taint,
     summaries: &[Vec<bool>],
-    diagnostics: &mut Vec<HirDiagnostic>,
+    diagnostics: &mut Vec<IrDiagnostic>,
 ) {
     for (block_index, block) in function.blocks.iter().enumerate() {
         for (instruction_index, instruction) in block.instructions.iter().enumerate() {
@@ -232,11 +228,11 @@ fn report_escapes(
                 InstructionKind::Store { pointer, value } if taint.values.contains(value) => {
                     match storage(function, *pointer) {
                         Storage::Stack(_) => {}
-                        Storage::Global => diagnostics.push(HirDiagnostic::new(
+                        Storage::Global => diagnostics.push(IrDiagnostic::new(
                             location,
                             "stack-derived pointer stored in global",
                         )),
-                        Storage::Unknown => diagnostics.push(HirDiagnostic::new(
+                        Storage::Unknown => diagnostics.push(IrDiagnostic::new(
                             location,
                             "stack-derived pointer stored outside current stack",
                         )),
@@ -252,11 +248,11 @@ fn report_escapes(
                 {
                     match storage(function, *destination) {
                         Storage::Stack(_) => {}
-                        Storage::Global => diagnostics.push(HirDiagnostic::new(
+                        Storage::Global => diagnostics.push(IrDiagnostic::new(
                             location,
                             "stack-derived pointer copied into global",
                         )),
-                        Storage::Unknown => diagnostics.push(HirDiagnostic::new(
+                        Storage::Unknown => diagnostics.push(IrDiagnostic::new(
                             location,
                             "stack-derived pointer copied outside current stack",
                         )),
@@ -269,7 +265,7 @@ fn report_escapes(
                     taint.values.contains(argument) && parameter_escapes(summaries, *callee, index)
                 }) =>
                 {
-                    diagnostics.push(HirDiagnostic::new(
+                    diagnostics.push(IrDiagnostic::new(
                         location,
                         "stack-derived pointer passed to an escaping parameter",
                     ))
@@ -280,7 +276,7 @@ fn report_escapes(
         if let Terminator::Return { values } = &block.terminator
             && values.iter().any(|value| taint.values.contains(value))
         {
-            diagnostics.push(HirDiagnostic::new(
+            diagnostics.push(IrDiagnostic::new(
                 format!(
                     "function @{} block ^{} terminator",
                     function_id.raw(),
@@ -318,7 +314,7 @@ impl Storage {
     }
 }
 
-fn storage(function: &HirFunction, value: ValueId) -> Storage {
+fn storage(function: &IrFunction, value: ValueId) -> Storage {
     let Some(definition) = function.value(value) else {
         return Storage::Unknown;
     };
@@ -344,7 +340,7 @@ fn storage(function: &HirFunction, value: ValueId) -> Storage {
     }
 }
 
-fn stack_addresses(function: &HirFunction) -> Vec<ValueId> {
+fn stack_addresses(function: &IrFunction) -> Vec<ValueId> {
     function
         .blocks
         .iter()
@@ -357,22 +353,22 @@ fn stack_addresses(function: &HirFunction) -> Vec<ValueId> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Callee, Constant, FunctionAttributes, GlobalInitializer, HirBuilder, HirGlobal,
-        HirParameter, HirSignature, HirTypeKind, InstructionKind, TargetSpec, Terminator, TypeId,
-        UnverifiedHirPackage, verify, verify_and_check_escape,
+        Callee, Constant, FunctionAttributes, GlobalInitializer, InstructionKind, IrBuilder,
+        IrGlobal, IrParameter, IrSignature, IrTypeKind, TargetSpec, Terminator, TypeId,
+        UnverifiedIrPackage, verify, verify_and_check_escape,
     };
 
-    fn signature(parameters: Vec<HirParameter>, results: Vec<TypeId>) -> HirSignature {
-        HirSignature {
+    fn signature(parameters: Vec<IrParameter>, results: Vec<TypeId>) -> IrSignature {
+        IrSignature {
             parameters,
             results,
         }
     }
 
-    fn empty_main() -> UnverifiedHirPackage {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+    fn empty_main() -> UnverifiedIrPackage {
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i32 = builder.types().i32();
-        let pointer = builder.add_type(HirTypeKind::Ptr {
+        let pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: i32,
             address_space: 0,
         });
@@ -399,7 +395,7 @@ mod tests {
         builder.finish().unwrap()
     }
 
-    fn escape_messages(package: UnverifiedHirPackage) -> String {
+    fn escape_messages(package: UnverifiedIrPackage) -> String {
         verify(&package).unwrap();
         verify_and_check_escape(package)
             .unwrap_err()
@@ -416,18 +412,18 @@ mod tests {
 
     #[test]
     fn rejects_returning_stack_address_through_gep() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i32 = builder.types().i32();
         let i64 = builder.types().i64();
-        let array = builder.add_type(HirTypeKind::Array {
+        let array = builder.add_type(IrTypeKind::Array {
             length: 1,
             element: i32,
         });
-        let array_pointer = builder.add_type(HirTypeKind::Ptr {
+        let array_pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: array,
             address_space: 0,
         });
-        let pointer = builder.add_type(HirTypeKind::Ptr {
+        let pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: i32,
             address_space: 0,
         });
@@ -497,13 +493,13 @@ mod tests {
 
     #[test]
     fn rejects_stack_pointer_roundtrip_through_slot() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i32 = builder.types().i32();
-        let pointer = builder.add_type(HirTypeKind::Ptr {
+        let pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: i32,
             address_space: 0,
         });
-        let pointer_pointer = builder.add_type(HirTypeKind::Ptr {
+        let pointer_pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: pointer,
             address_space: 0,
         });
@@ -582,17 +578,17 @@ mod tests {
 
     #[test]
     fn rejects_storing_stack_pointer_in_global() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i32 = builder.types().i32();
-        let pointer = builder.add_type(HirTypeKind::Ptr {
+        let pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: i32,
             address_space: 0,
         });
-        let pointer_pointer = builder.add_type(HirTypeKind::Ptr {
+        let pointer_pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: pointer,
             address_space: 0,
         });
-        let global = builder.add_global(HirGlobal {
+        let global = builder.add_global(IrGlobal {
             symbol: "gane.global".into(),
             typ: pointer,
             mutable: true,
@@ -645,15 +641,15 @@ mod tests {
 
     #[test]
     fn rejects_stack_pointer_passed_to_escaping_parameter() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i32 = builder.types().i32();
-        let pointer = builder.add_type(HirTypeKind::Ptr {
+        let pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: i32,
             address_space: 0,
         });
         let callee = builder.declare_function(
             "gane.callee".into(),
-            signature(vec![HirParameter { typ: pointer }], vec![pointer]),
+            signature(vec![IrParameter { typ: pointer }], vec![pointer]),
             FunctionAttributes::default(),
         );
         let callee_entry = builder.entry_block(callee).unwrap();
@@ -706,20 +702,20 @@ mod tests {
 
     #[test]
     fn rejects_escaping_recursive_parameter_cycle() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i32 = builder.types().i32();
-        let pointer = builder.add_type(HirTypeKind::Ptr {
+        let pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: i32,
             address_space: 0,
         });
         let first = builder.declare_function(
             "gane.first".into(),
-            signature(vec![HirParameter { typ: pointer }], vec![]),
+            signature(vec![IrParameter { typ: pointer }], vec![]),
             FunctionAttributes::default(),
         );
         let second = builder.declare_function(
             "gane.second".into(),
-            signature(vec![HirParameter { typ: pointer }], vec![pointer]),
+            signature(vec![IrParameter { typ: pointer }], vec![pointer]),
             FunctionAttributes::default(),
         );
         let first_entry = builder.entry_block(first).unwrap();
@@ -801,20 +797,20 @@ mod tests {
 
     #[test]
     fn accepts_non_escaping_recursive_parameter_cycle() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i32 = builder.types().i32();
-        let pointer = builder.add_type(HirTypeKind::Ptr {
+        let pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: i32,
             address_space: 0,
         });
         let first = builder.declare_function(
             "gane.first".into(),
-            signature(vec![HirParameter { typ: pointer }], vec![]),
+            signature(vec![IrParameter { typ: pointer }], vec![]),
             FunctionAttributes::default(),
         );
         let second = builder.declare_function(
             "gane.second".into(),
-            signature(vec![HirParameter { typ: pointer }], vec![]),
+            signature(vec![IrParameter { typ: pointer }], vec![]),
             FunctionAttributes::default(),
         );
         let first_entry = builder.entry_block(first).unwrap();

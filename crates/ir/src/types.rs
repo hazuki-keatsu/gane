@@ -5,12 +5,12 @@ pub type Symbol = String;
 pub type SourceOrigin = Option<AstNodeId>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HirType {
-    pub kind: HirTypeKind,
+pub struct IrType {
+    pub kind: IrTypeKind,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum HirTypeKind {
+pub enum IrTypeKind {
     Void,
     I1,
     I8,
@@ -24,7 +24,7 @@ pub enum HirTypeKind {
 
 #[derive(Clone, Debug)]
 pub struct TypeArena {
-    types: Vec<Option<HirType>>,
+    types: Vec<Option<IrType>>,
     void: TypeId,
     i1: TypeId,
     i8: TypeId,
@@ -50,12 +50,12 @@ impl TypeArena {
             i32: TypeId::INVALID,
             i64: TypeId::INVALID,
         };
-        arena.void = arena.alloc(HirTypeKind::Void);
-        arena.i1 = arena.alloc(HirTypeKind::I1);
-        arena.i8 = arena.alloc(HirTypeKind::I8);
-        arena.i16 = arena.alloc(HirTypeKind::I16);
-        arena.i32 = arena.alloc(HirTypeKind::I32);
-        arena.i64 = arena.alloc(HirTypeKind::I64);
+        arena.void = arena.alloc(IrTypeKind::Void);
+        arena.i1 = arena.alloc(IrTypeKind::I1);
+        arena.i8 = arena.alloc(IrTypeKind::I8);
+        arena.i16 = arena.alloc(IrTypeKind::I16);
+        arena.i32 = arena.alloc(IrTypeKind::I32);
+        arena.i64 = arena.alloc(IrTypeKind::I64);
         arena
     }
 
@@ -83,20 +83,20 @@ impl TypeArena {
         self.i64
     }
 
-    pub fn get(&self, id: TypeId) -> Option<&HirType> {
+    pub fn get(&self, id: TypeId) -> Option<&IrType> {
         let index = id.raw().checked_sub(1)? as usize;
         self.types.get(index)?.as_ref()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (TypeId, &HirType)> {
+    pub fn iter(&self) -> impl Iterator<Item = (TypeId, &IrType)> {
         self.types.iter().enumerate().filter_map(|(index, typ)| {
             typ.as_ref()
                 .map(|typ| (TypeId::from_raw(index as u32 + 1), typ))
         })
     }
 
-    pub(crate) fn alloc(&mut self, kind: HirTypeKind) -> TypeId {
-        self.types.push(Some(HirType { kind }));
+    pub(crate) fn alloc(&mut self, kind: IrTypeKind) -> TypeId {
+        self.types.push(Some(IrType { kind }));
         TypeId::from_raw(self.types.len() as u32)
     }
 
@@ -105,7 +105,7 @@ impl TypeArena {
         TypeId::from_raw(self.types.len() as u32)
     }
 
-    pub(crate) fn define(&mut self, id: TypeId, kind: HirTypeKind) -> Result<(), TypeArenaError> {
+    pub(crate) fn define(&mut self, id: TypeId, kind: IrTypeKind) -> Result<(), TypeArenaError> {
         let index = id
             .raw()
             .checked_sub(1)
@@ -117,14 +117,14 @@ impl TypeArena {
         if slot.is_some() {
             return Err(TypeArenaError::TypeAlreadyDefined(id));
         }
-        *slot = Some(HirType { kind });
+        *slot = Some(IrType { kind });
         Ok(())
     }
 
     pub(crate) fn unfinished(&self) -> Option<TypeId> {
         self.types.iter().position(Option::is_none).map(|index| {
             TypeId::from_raw(
-                u32::try_from(index + 1).expect("HIR type arena cannot exceed u32 entries"),
+                u32::try_from(index + 1).expect("IR type arena cannot exceed u32 entries"),
             )
         })
     }

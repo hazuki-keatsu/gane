@@ -1,31 +1,31 @@
-//! Gane HIR's public API.
+//! Gane IR's public API.
 
-pub use crate::builder::{BuildError, HirBuilder};
+pub use crate::builder::{BuildError, IrBuilder};
 pub use crate::id::{BlockId, FunctionId, GlobalId, StackSlotId, TypeId, ValueId};
 pub use crate::interpreter::{InterpreterError, interpret};
 pub use crate::ir::{
-    BinaryOp, Callee, ComparePredicate, Constant, FunctionAttributes, GlobalInitializer, HirBlock,
-    HirFunction, HirGlobal, HirParameter, HirSignature, Instruction, InstructionKind, IntCastKind,
-    StackSlot, Terminator, TrapReason, UnaryOp, UnverifiedHirPackage, ValueDef, ValueOrigin,
-    VerifiedHirPackage,
+    BinaryOp, Callee, ComparePredicate, Constant, FunctionAttributes, GlobalInitializer,
+    Instruction, InstructionKind, IntCastKind, IrBlock, IrFunction, IrGlobal, IrParameter,
+    IrSignature, StackSlot, Terminator, TrapReason, UnaryOp, UnverifiedIrPackage, ValueDef,
+    ValueOrigin, VerifiedIrPackage,
 };
 pub use crate::lower::{LowerError, lower_package};
 pub use crate::target::{Endianness, TargetSpec, TargetSpecError};
-pub use crate::types::{HirType, HirTypeKind, SourceOrigin, Symbol, TypeArena, TypeArenaError};
-pub use crate::verify::{HirDiagnostic, verify, verify_and_check_escape};
+pub use crate::types::{IrType, IrTypeKind, SourceOrigin, Symbol, TypeArena, TypeArenaError};
+pub use crate::verify::{IrDiagnostic, verify, verify_and_check_escape};
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn signature(parameters: Vec<HirParameter>) -> HirSignature {
-        HirSignature {
+    fn signature(parameters: Vec<IrParameter>) -> IrSignature {
+        IrSignature {
             parameters,
             results: Vec::new(),
         }
     }
 
-    fn declare_function(builder: &mut HirBuilder, parameters: Vec<HirParameter>) -> FunctionId {
+    fn declare_function(builder: &mut IrBuilder, parameters: Vec<IrParameter>) -> FunctionId {
         builder.declare_function(
             "gane.main".to_owned(),
             signature(parameters),
@@ -35,7 +35,7 @@ mod tests {
 
     #[test]
     fn ids_are_invalid_at_zero_and_primitives_are_canonical() {
-        let builder = HirBuilder::new(TargetSpec::for_test_64());
+        let builder = IrBuilder::new(TargetSpec::for_test_64());
 
         assert_eq!(TypeId::INVALID.raw(), 0);
         assert_eq!(FunctionId::INVALID.raw(), 0);
@@ -68,16 +68,16 @@ mod tests {
 
     #[test]
     fn builder_records_value_origins_and_block_parameters() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i32 = builder.types().i32();
-        let global = builder.add_global(HirGlobal {
+        let global = builder.add_global(IrGlobal {
             symbol: "gane.global".to_owned(),
             typ: i32,
             mutable: true,
             initializer: GlobalInitializer::Zero,
         });
         assert_eq!(global.raw(), 1);
-        let function = declare_function(&mut builder, vec![HirParameter { typ: i32 }]);
+        let function = declare_function(&mut builder, vec![IrParameter { typ: i32 }]);
         builder.set_entry(function).unwrap();
         let entry = builder.entry_block(function).unwrap();
         assert_eq!(
@@ -87,7 +87,7 @@ mod tests {
         let slot = builder
             .add_stack_slot(function, i32, Some("value".to_owned()), None)
             .unwrap();
-        let pointer = builder.add_type(HirTypeKind::Ptr {
+        let pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: i32,
             address_space: 0,
         });
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn builder_requires_terminated_blocks_and_complete_types() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let unfinished = builder.reserve_type();
         let function = declare_function(&mut builder, Vec::new());
         builder.set_entry(function).unwrap();
@@ -171,7 +171,7 @@ mod tests {
             Err(BuildError::UnfinishedType(typ)) if typ == unfinished
         ));
 
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let function = declare_function(&mut builder, Vec::new());
         builder.set_entry(function).unwrap();
         let entry = builder.entry_block(function).unwrap();
@@ -186,16 +186,16 @@ mod tests {
 
     #[test]
     fn builder_seals_terminated_blocks_and_supports_pointer_recursion() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let node = builder.reserve_type();
-        let node_pointer = builder.add_type(HirTypeKind::Ptr {
+        let node_pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: node,
             address_space: 0,
         });
         builder
             .define_type(
                 node,
-                HirTypeKind::Struct {
+                IrTypeKind::Struct {
                     fields: vec![node_pointer],
                 },
             )

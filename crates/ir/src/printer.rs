@@ -1,23 +1,23 @@
-use crate::ir::HirPackage;
+use crate::ir::IrPackage;
 use crate::{
-    BinaryOp, Callee, ComparePredicate, Constant, GlobalInitializer, HirTypeKind, InstructionKind,
-    IntCastKind, Terminator, UnaryOp, UnverifiedHirPackage, VerifiedHirPackage,
+    BinaryOp, Callee, ComparePredicate, Constant, GlobalInitializer, InstructionKind, IntCastKind,
+    IrTypeKind, Terminator, UnaryOp, UnverifiedIrPackage, VerifiedIrPackage,
 };
 use std::fmt::{self, Write};
 
-impl fmt::Display for UnverifiedHirPackage {
+impl fmt::Display for UnverifiedIrPackage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         print_package(self.inner(), f)
     }
 }
 
-impl fmt::Display for VerifiedHirPackage {
+impl fmt::Display for VerifiedIrPackage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         print_package(self.inner(), f)
     }
 }
 
-fn print_package(package: &HirPackage, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+fn print_package(package: &IrPackage, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     writeln!(f, "target {:?} {{", package.target.triple())?;
     writeln!(f, "  cpu = {:?}", package.target.cpu())?;
     writeln!(f, "  features = {:?}", package.target.features())?;
@@ -103,27 +103,27 @@ fn print_package(package: &HirPackage, f: &mut fmt::Formatter<'_>) -> fmt::Resul
     writeln!(f, "entry @{}", package.entry.raw())
 }
 
-struct TypeDisplay<'a>(&'a HirTypeKind);
+struct TypeDisplay<'a>(&'a IrTypeKind);
 
 impl fmt::Display for TypeDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
-            HirTypeKind::Void => f.write_str("void"),
-            HirTypeKind::I1 => f.write_str("i1"),
-            HirTypeKind::I8 => f.write_str("i8"),
-            HirTypeKind::I16 => f.write_str("i16"),
-            HirTypeKind::I32 => f.write_str("i32"),
-            HirTypeKind::I64 => f.write_str("i64"),
-            HirTypeKind::Ptr {
+            IrTypeKind::Void => f.write_str("void"),
+            IrTypeKind::I1 => f.write_str("i1"),
+            IrTypeKind::I8 => f.write_str("i8"),
+            IrTypeKind::I16 => f.write_str("i16"),
+            IrTypeKind::I32 => f.write_str("i32"),
+            IrTypeKind::I64 => f.write_str("i64"),
+            IrTypeKind::Ptr {
                 pointee,
                 address_space,
             } => {
                 write!(f, "ptr(addrspace={address_space}, !{})", pointee.raw())
             }
-            HirTypeKind::Array { length, element } => {
+            IrTypeKind::Array { length, element } => {
                 write!(f, "array {length} x !{}", element.raw())
             }
-            HirTypeKind::Struct { fields } => {
+            IrTypeKind::Struct { fields } => {
                 f.write_str("struct {")?;
                 ids(f, fields.iter().map(|id| id.raw()), "!")?;
                 f.write_char('}')
@@ -294,17 +294,17 @@ fn predicate_name(value: ComparePredicate) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Constant, FunctionAttributes, HirBuilder, HirSignature, InstructionKind, TargetSpec,
+        Constant, FunctionAttributes, InstructionKind, IrBuilder, IrSignature, TargetSpec,
         Terminator,
     };
 
     #[test]
     fn package_text_is_stable_and_ignores_debug_metadata() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i32 = builder.types().i32();
         let main = builder.declare_function(
             "gane.main".into(),
-            HirSignature {
+            IrSignature {
                 parameters: vec![],
                 results: vec![],
             },

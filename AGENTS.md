@@ -4,8 +4,8 @@
 
 Gane is a Rust Cargo workspace. Each compiler layer has its own crate under
 `crates/`: `parser` builds Go-like ASTs, `diagnostics` owns spans and rendered
-diagnostics, `sema` performs package analysis, `hir` lowers AST plus semantic
-facts into verified HIR, `codegen` translates verified HIR into LLVM IR, and
+diagnostics, `sema` performs package analysis, `ir` lowers AST plus semantic
+facts into verified IR, `codegen` translates verified IR into LLVM IR, and
 `driver` is the CLI. Design notes live in `docs/`. Tests sit beside source or in
 `crates/*/tests/`; parser fixtures are in `crates/parser/src/parser/testdata/`.
 
@@ -23,7 +23,7 @@ facts into verified HIR, `codegen` translates verified HIR into LLVM IR, and
 Use Rust 2024 and standard `rustfmt` formatting (four-space indentation). Follow
 Rust naming: `UpperCamelCase` for types and enum variants, `snake_case` for
 functions, modules, variables, and test names, and `SCREAMING_SNAKE_CASE` for
-constants. Keep dependencies one-way: parser → sema → HIR → codegen. HIR
+constants. Keep dependencies one-way: parser → sema → IR → codegen. IR
 lowering must not redo semantic lookup or inference. Prefer typed arena IDs and
 preserve source `Span` data in diagnostics and IR-facing structures.
 
@@ -36,7 +36,7 @@ out of `lib.rs`.
 
 Before starting a task, read `PROGRESS.md` to establish the current milestone,
 then read the relevant design documents in `docs/` (for example,
-`docs/hir-design.md` for HIR work). Inspect the affected crate only after that.
+`docs/ir-design.md` for IR work). Inspect the affected crate only after that.
 Treat existing worktree changes as user-owned.
 
 After completing and verifying a milestone, update its status in `PROGRESS.md`
@@ -51,7 +51,7 @@ stage changes unless the user explicitly asks after reviewing the work.
 
 Add focused regression tests named by observable behavior, e.g.
 `rejects_function_declarations_without_a_body`. Include negative tests for
-unsupported syntax and invalid IR. Pair new lowering work with source-to-HIR
+unsupported syntax and invalid IR. Pair new lowering work with source-to-IR
 goldens and verifier tests.
 
 ## Commit & Pull Request Guidelines

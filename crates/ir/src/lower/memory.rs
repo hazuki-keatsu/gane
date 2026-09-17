@@ -197,8 +197,8 @@ impl<'a> Lowerer<'a> {
     pub(super) fn is_aggregate(&self, typ: TypeId) -> bool {
         matches!(
             self.builder.types().get(typ),
-            Some(crate::HirType {
-                kind: HirTypeKind::Array { .. } | HirTypeKind::Struct { .. },
+            Some(crate::IrType {
+                kind: IrTypeKind::Array { .. } | IrTypeKind::Struct { .. },
             })
         )
     }
@@ -217,7 +217,7 @@ impl<'a> Lowerer<'a> {
     pub(super) fn build<T>(
         &mut self,
         node: AstNodeId,
-        operation: impl FnOnce(&mut HirBuilder, FunctionId, BlockId) -> Result<T, BuildError>,
+        operation: impl FnOnce(&mut IrBuilder, FunctionId, BlockId) -> Result<T, BuildError>,
     ) -> Result<T, LowerError> {
         operation(&mut self.builder, self.function, self.block)
             .map_err(|source| LowerError::Build { node, source })

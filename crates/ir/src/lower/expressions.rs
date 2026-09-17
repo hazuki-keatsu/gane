@@ -366,8 +366,8 @@ impl<'a> Lowerer<'a> {
         let base = self.lower_place(&expression.x)?;
         self.ensure_non_null(expression.x.node_id(), base)?;
         let length = match self.builder.types().get(base.typ) {
-            Some(crate::HirType {
-                kind: HirTypeKind::Array { length, .. },
+            Some(crate::IrType {
+                kind: IrTypeKind::Array { length, .. },
             }) => *length,
             _ => return Err(self.unsupported(expression.x.node_id(), "indexing non-array place")),
         };

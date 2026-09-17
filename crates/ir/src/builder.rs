@@ -1,19 +1,18 @@
 use crate::{
     id::{BlockId, FunctionId, GlobalId, StackSlotId, TypeId, ValueId},
     ir::{
-        FunctionAttributes, HirBlock, HirFunction, HirGlobal, HirPackage, HirSignature,
-        Instruction, InstructionKind, StackSlot, Terminator, UnverifiedHirPackage, ValueDef,
-        ValueOrigin,
+        FunctionAttributes, Instruction, InstructionKind, IrBlock, IrFunction, IrGlobal, IrPackage,
+        IrSignature, StackSlot, Terminator, UnverifiedIrPackage, ValueDef, ValueOrigin,
     },
     target::TargetSpec,
-    types::{HirTypeKind, SourceOrigin, Symbol, TypeArena, TypeArenaError},
+    types::{IrTypeKind, SourceOrigin, Symbol, TypeArena, TypeArenaError},
 };
 use std::error::Error;
 use std::fmt;
 
 #[derive(Debug)]
-pub struct HirBuilder {
-    package: HirPackage,
+pub struct IrBuilder {
+    package: IrPackage,
     functions: Vec<FunctionBuildState>,
 }
 
@@ -52,10 +51,10 @@ pub enum BuildError {
     Type(TypeArenaError),
 }
 
-impl HirBuilder {
+impl IrBuilder {
     pub fn new(target: TargetSpec) -> Self {
         Self {
-            package: HirPackage {
+            package: IrPackage {
                 target,
                 types: TypeArena::new(),
                 globals: Vec::new(),
@@ -70,7 +69,7 @@ impl HirBuilder {
         &self.package.types
     }
 
-    pub fn add_type(&mut self, kind: HirTypeKind) -> TypeId {
+    pub fn add_type(&mut self, kind: IrTypeKind) -> TypeId {
         self.package.types.alloc(kind)
     }
 
@@ -78,14 +77,14 @@ impl HirBuilder {
         self.package.types.reserve()
     }
 
-    pub fn define_type(&mut self, id: TypeId, kind: HirTypeKind) -> Result<(), BuildError> {
+    pub fn define_type(&mut self, id: TypeId, kind: IrTypeKind) -> Result<(), BuildError> {
         self.package
             .types
             .define(id, kind)
             .map_err(BuildError::Type)
     }
 
-    pub fn add_global(&mut self, global: HirGlobal) -> GlobalId {
+    pub fn add_global(&mut self, global: IrGlobal) -> GlobalId {
         self.package.globals.push(global);
         GlobalId::from_raw(self.package.globals.len() as u32)
     }
@@ -93,17 +92,17 @@ impl HirBuilder {
     pub fn declare_function(
         &mut self,
         symbol: Symbol,
-        signature: HirSignature,
+        signature: IrSignature,
         attributes: FunctionAttributes,
     ) -> FunctionId {
         let entry = BlockId::from_raw(1);
-        let mut function = HirFunction {
+        let mut function = IrFunction {
             symbol,
             signature,
             attributes,
             stack_slots: Vec::new(),
             values: Vec::new(),
-            blocks: vec![HirBlock {
+            blocks: vec![IrBlock {
                 parameters: Vec::new(),
                 instructions: Vec::new(),
                 terminator: Terminator::Unreachable,
@@ -169,7 +168,7 @@ impl HirBuilder {
     pub fn create_block(&mut self, function: FunctionId) -> Result<BlockId, BuildError> {
         let block = {
             let function_data = self.function_mut(function)?;
-            function_data.blocks.push(HirBlock {
+            function_data.blocks.push(IrBlock {
                 parameters: Vec::new(),
                 instructions: Vec::new(),
                 terminator: Terminator::Unreachable,
@@ -263,7 +262,7 @@ impl HirBuilder {
         Ok(())
     }
 
-    pub fn finish(self) -> Result<UnverifiedHirPackage, BuildError> {
+    pub fn finish(self) -> Result<UnverifiedIrPackage, BuildError> {
         if let Some(typ) = self.package.types.unfinished() {
             return Err(BuildError::UnfinishedType(typ));
         }
@@ -280,10 +279,10 @@ impl HirBuilder {
                 }
             }
         }
-        Ok(UnverifiedHirPackage::from_inner(self.package))
+        Ok(UnverifiedIrPackage::from_inner(self.package))
     }
 
-    fn function(&self, id: FunctionId) -> Result<&HirFunction, BuildError> {
+    fn function(&self, id: FunctionId) -> Result<&IrFunction, BuildError> {
         let index = id
             .raw()
             .checked_sub(1)
@@ -294,7 +293,7 @@ impl HirBuilder {
             .ok_or(BuildError::InvalidFunction(id))
     }
 
-    fn function_mut(&mut self, id: FunctionId) -> Result<&mut HirFunction, BuildError> {
+    fn function_mut(&mut self, id: FunctionId) -> Result<&mut IrFunction, BuildError> {
         let index = id
             .raw()
             .checked_sub(1)

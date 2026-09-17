@@ -5,6 +5,6 @@ version.workspace = true
 authors.workspace = true
 
 [dependencies]
-gane_hir = { path = "../hir" }
+gane_ir = { path = "../ir" }
 gane_parser = { path= "../parser" }
 gane_sema = { path = "../sema" }

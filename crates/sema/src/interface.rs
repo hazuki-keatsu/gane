@@ -78,7 +78,7 @@ impl AnalysisResult {
         self.info.selections.get(&node)
     }
 
-    /// Returns the resolved HIR-facing initializer for a package variable.
+    /// Returns the resolved IR-facing initializer for a package variable.
     pub fn global_initializer(&self, object: ObjectId) -> Option<&GlobalInitializer> {
         self.global_initializers.get(&object)
     }

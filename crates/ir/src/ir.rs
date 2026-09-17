@@ -5,7 +5,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct HirGlobal {
+pub struct IrGlobal {
     pub symbol: Symbol,
     pub typ: TypeId,
     pub mutable: bool,
@@ -19,17 +19,17 @@ pub enum GlobalInitializer {
 }
 
 #[derive(Clone, Debug)]
-pub struct HirFunction {
+pub struct IrFunction {
     pub symbol: Symbol,
-    pub signature: HirSignature,
+    pub signature: IrSignature,
     pub attributes: FunctionAttributes,
     pub stack_slots: Vec<StackSlot>,
     pub values: Vec<ValueDef>,
-    pub blocks: Vec<HirBlock>,
+    pub blocks: Vec<IrBlock>,
     pub entry: BlockId,
 }
 
-impl HirFunction {
+impl IrFunction {
     pub fn stack_slot(&self, id: StackSlotId) -> Option<&StackSlot> {
         self.stack_slots.get(id.raw().checked_sub(1)? as usize)
     }
@@ -38,19 +38,19 @@ impl HirFunction {
         self.values.get(id.raw().checked_sub(1)? as usize)
     }
 
-    pub fn block(&self, id: BlockId) -> Option<&HirBlock> {
+    pub fn block(&self, id: BlockId) -> Option<&IrBlock> {
         self.blocks.get(id.raw().checked_sub(1)? as usize)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct HirSignature {
-    pub parameters: Vec<HirParameter>,
+pub struct IrSignature {
+    pub parameters: Vec<IrParameter>,
     pub results: Vec<TypeId>,
 }
 
 #[derive(Clone, Debug)]
-pub struct HirParameter {
+pub struct IrParameter {
     pub typ: TypeId,
 }
 
@@ -67,7 +67,7 @@ pub struct StackSlot {
 }
 
 #[derive(Clone, Debug)]
-pub struct HirBlock {
+pub struct IrBlock {
     pub parameters: Vec<ValueId>,
     pub instructions: Vec<Instruction>,
     pub terminator: Terminator,
@@ -251,19 +251,19 @@ pub enum TrapReason {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct HirPackage {
+pub(crate) struct IrPackage {
     pub(crate) target: TargetSpec,
     pub(crate) types: TypeArena,
-    pub(crate) globals: Vec<HirGlobal>,
-    pub(crate) functions: Vec<HirFunction>,
+    pub(crate) globals: Vec<IrGlobal>,
+    pub(crate) functions: Vec<IrFunction>,
     pub(crate) entry: FunctionId,
 }
 
 #[derive(Clone, Debug)]
-pub struct UnverifiedHirPackage(HirPackage);
+pub struct UnverifiedIrPackage(IrPackage);
 
 #[derive(Clone, Debug)]
-pub struct VerifiedHirPackage(HirPackage);
+pub struct VerifiedIrPackage(IrPackage);
 
 macro_rules! package_accessors {
     ($wrapper:ident) => {
@@ -280,15 +280,15 @@ macro_rules! package_accessors {
                 self.0.entry
             }
 
-            pub fn global(&self, id: GlobalId) -> Option<&HirGlobal> {
+            pub fn global(&self, id: GlobalId) -> Option<&IrGlobal> {
                 self.0.globals.get(id.raw().checked_sub(1)? as usize)
             }
 
-            pub fn function(&self, id: FunctionId) -> Option<&HirFunction> {
+            pub fn function(&self, id: FunctionId) -> Option<&IrFunction> {
                 self.0.functions.get(id.raw().checked_sub(1)? as usize)
             }
 
-            pub fn globals(&self) -> impl Iterator<Item = (GlobalId, &HirGlobal)> {
+            pub fn globals(&self) -> impl Iterator<Item = (GlobalId, &IrGlobal)> {
                 self.0
                     .globals
                     .iter()
@@ -296,7 +296,7 @@ macro_rules! package_accessors {
                     .map(|(index, global)| (GlobalId::from_raw(index as u32 + 1), global))
             }
 
-            pub fn functions(&self) -> impl Iterator<Item = (FunctionId, &HirFunction)> {
+            pub fn functions(&self) -> impl Iterator<Item = (FunctionId, &IrFunction)> {
                 self.0
                     .functions
                     .iter()
@@ -307,34 +307,34 @@ macro_rules! package_accessors {
     };
 }
 
-package_accessors!(UnverifiedHirPackage);
-package_accessors!(VerifiedHirPackage);
+package_accessors!(UnverifiedIrPackage);
+package_accessors!(VerifiedIrPackage);
 
-impl UnverifiedHirPackage {
-    pub(crate) fn from_inner(package: HirPackage) -> Self {
+impl UnverifiedIrPackage {
+    pub(crate) fn from_inner(package: IrPackage) -> Self {
         Self(package)
     }
 
-    pub(crate) fn inner(&self) -> &HirPackage {
+    pub(crate) fn inner(&self) -> &IrPackage {
         &self.0
     }
 
-    pub(crate) fn into_inner(self) -> HirPackage {
+    pub(crate) fn into_inner(self) -> IrPackage {
         self.0
     }
 
     #[cfg(test)]
-    pub(crate) fn inner_mut(&mut self) -> &mut HirPackage {
+    pub(crate) fn inner_mut(&mut self) -> &mut IrPackage {
         &mut self.0
     }
 }
 
-impl VerifiedHirPackage {
-    pub(crate) fn from_inner(package: HirPackage) -> Self {
+impl VerifiedIrPackage {
+    pub(crate) fn from_inner(package: IrPackage) -> Self {
         Self(package)
     }
 
-    pub(crate) fn inner(&self) -> &HirPackage {
+    pub(crate) fn inner(&self) -> &IrPackage {
         &self.0
     }
 }

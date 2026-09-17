@@ -2,43 +2,43 @@
 version: v1.0
 date: 2026-09-11
 author: hazuki-keatsu
-tag: hir
+tag: ir
 state: v0
 ---
 
-# Gane HIR 设计
+# Gane IR 设计
 
-**适用范围：** Gane 唯一的后端中间表示，以及 `sema -> HIR -> codegen` 的边界。
+**适用范围：** Gane 唯一的后端中间表示，以及 `sema -> IR -> codegen` 的边界。
 
 ## 1. 设计目标
 
-Gane 只维护一个面向后端的 HIR。它把已经完成名字解析和类型检查的 Go-like 程序表示为可验证的、强类型的 SSA 控制流图。
+Gane 只维护一个面向后端的 IR。它把已经完成名字解析和类型检查的 Go-like 程序表示为可验证的、强类型的 SSA 控制流图。
 
 ```text
-source -> parser -> sema -> V0 validation -> raw HIR -> verify/escape -> verified HIR -> LLVM IR -> AOT
+source -> parser -> sema -> V0 validation -> raw IR -> verify/escape -> verified IR -> LLVM IR -> AOT
                                                                                        \-> LLVM IR -> ORC JIT（后续）
 ```
 
-HIR 是 AOT 和 JIT 的共同输入。它需要：
+IR 是 AOT 和 JIT 的共同输入。它需要：
 
 - 消除 `if`、`for`、字段和索引寻址等 V0 源码结构；
 - 显式表示控制流、SSA value、内存访问、函数调用和失败路径；
 - 定义 no-std 程序仍然必须具备的 ABI 和错误行为；
 - 能局部、直接地 lowering 到 LLVM IR；
-- 通过 verifier 和 escape check 建立 codegen 可以信任的不变量，并用类型包装阻止未验证 HIR 进入 backend。
+- 通过 verifier 和 escape check 建立 codegen 可以信任的不变量，并用类型包装阻止未验证 IR 进入 backend。
 
-HIR 不负责：
+IR 不负责：
 
 - 名字解析、作用域、Go named type 身份、方法集和 interface 匹配；
 - GC、goroutine、channel、map、reflect 或 Go runtime 兼容；
 - V0 阶段的 JIT、OSR、deoptimization 和 safepoint；
 - 复制 LLVM IR 的全部能力。
 
-## 2. Sema 与 HIR 的契约
+## 2. Sema 与 IR 的契约
 
-只有不含 error diagnostic 的 sema 结果才能 lower 到 HIR。lowering 只查询 sema 提供的 definition、use、selection、type 和 constant facts，不重新进行名字查找或类型推导。
+只有不含 error diagnostic 的 sema 结果才能 lower 到 IR。lowering 只查询 sema 提供的 definition、use、selection、type 和 constant facts，不重新进行名字查找或类型推导。
 
-产生 raw HIR 前必须完成：
+产生 raw IR 前必须完成：
 
 - 标识符和字段解析；
 - named type 合法性及 underlying type 解析；
@@ -47,13 +47,13 @@ HIR 不负责：
 - 对当前语言子集之外特性的拒绝；
 - V0 全局初始化限制检查；
 
-保守的 stack-address escape check 在 raw HIR 上运行，因为此时地址、GEP、load/store 和调用传播已经显式化。只有同时通过普通 verifier 与 escape check 的 package 才能包装为 verified HIR，并交给 interpreter 或 codegen。raw HIR 只是构造期数据，不是合法的后端输入。
+保守的 stack-address escape check 在 raw IR 上运行，因为此时地址、GEP、load/store 和调用传播已经显式化。只有同时通过普通 verifier 与 escape check 的 package 才能包装为 verified IR，并交给 interpreter 或 codegen。raw IR 只是构造期数据，不是合法的后端输入。
 
 lowering 的公开输入必须同时包含 package AST、`AnalysisResult` 和经过验证的 `TargetSpec`。AST 提供待遍历的语法结构，`AnalysisResult` 只提供语义事实；lowering 不允许仅凭 AST 重做名字解析或类型推导。
 
-Go named type 的身份只存在于 sema。例如 `type UserID int` 的赋值规则由 sema 处理；进入 HIR 后，它使用与 underlying type 相同的机器表示。名称和 source `AstNodeId` 可以作为调试信息保留，但不参与 HIR 类型相等性。
+Go named type 的身份只存在于 sema。例如 `type UserID int` 的赋值规则由 sema 处理；进入 IR 后，它使用与 underlying type 相同的机器表示。名称和 source `AstNodeId` 可以作为调试信息保留，但不参与 IR 类型相等性。
 
-HIR 的源语言功能范围以 sema 实际接受的集合为准，不能在 HIR 文档里另行承诺更大的 Go 子集。V0 明确接受：
+IR 的源语言功能范围以 sema 实际接受的集合为准，不能在 IR 文档里另行承诺更大的 Go 子集。V0 明确接受：
 
 - `var` 局部声明和普通赋值；
 - 条件 `for` 和无限 `for`；
@@ -65,7 +65,7 @@ V0 明确拒绝 `:=`、复合赋值、三子句 `for`、if initializer、带标�
 
 ### 2.1 可执行的前端拒绝清单
 
-“进入 verified HIR 前拒绝”是测试契约，而不是文字约定。sema/V0 validation 和 raw HIR escape check 必须为下列输入建立 negative tests：
+“进入 verified IR 前拒绝”是测试契约，而不是文字约定。sema/V0 validation 和 raw IR escape check 必须为下列输入建立 negative tests：
 
 - 多返回值、aggregate 返回值和 aggregate 整体比较；
 - 返回 stack-derived pointer 或把它存入 global；
@@ -73,7 +73,7 @@ V0 明确拒绝 `:=`、复合赋值、三子句 `for`、if initializer、带标�
 - send、range、switch、type switch、select、defer、go statement；
 - short declaration、复合赋值、三子句 for、if initializer、带标签 branch；
 - 空 struct、零长度 array，以及按值递归的无限尺寸类型；
-- 所有 HIR V0 无法表示的 expression、statement、type 和 declaration。
+- 所有 IR V0 无法表示的 expression、statement、type 和 declaration。
 
 前端还必须为 `break label`/`continue label` 和 send operand 类型建立专门反向测试，防止它们被误当成无标签 branch 或普通 expression 而静默通过。
 
@@ -89,7 +89,7 @@ lowering 必须保持源语言规定的副作用顺序，尤其不能重排函�
 
 ## 3. TargetSpec 与布局
 
-每个 HIR package 绑定一个目标：
+每个 IR package 绑定一个目标：
 
 ```rust
 pub struct TargetSpec {
@@ -102,21 +102,21 @@ pub struct TargetSpec {
 }
 ```
 
-这些字段对 HIR consumer 只读，不能通过 struct literal 任意构造。production driver 必须先创建 LLVM TargetMachine，再由它导出的 canonical triple、data layout、pointer width、endianness、CPU 和 features 构造 `TargetSpec`。构造器只接受 32 或 64 位 pointer。测试使用显式的 `TargetSpec::for_test_32/64` fixture，不能手写互相矛盾的字段。
+这些字段对 IR consumer 只读，不能通过 struct literal 任意构造。production driver 必须先创建 LLVM TargetMachine，再由它导出的 canonical triple、data layout、pointer width、endianness、CPU 和 features 构造 `TargetSpec`。构造器只接受 32 或 64 位 pointer。测试使用显式的 `TargetSpec::for_test_32/64` fixture，不能手写互相矛盾的字段。
 
-codegen 收到 verified HIR 后仍须确认当前 TargetMachine 导出的 triple 和 data layout 与 package 完全一致；不一致是编译错误。由此 LLVM TargetMachine 是 target facts 的唯一来源，`TargetSpec` 只是其不可变快照，而不是第二套可独立配置的真值。
+codegen 收到 verified IR 后仍须确认当前 TargetMachine 导出的 triple 和 data layout 与 package 完全一致；不一致是编译错误。由此 LLVM TargetMachine 是 target facts 的唯一来源，`TargetSpec` 只是其不可变快照，而不是第二套可独立配置的真值。
 
-源语言 `int` 在 lowering 时按 `pointer_width` 变成 `I32` 或 `I64`。HIR 不允许未确定宽度的 `Int`。
+源语言 `int` 在 lowering 时按 `pointer_width` 变成 `I32` 或 `I64`。IR 不允许未确定宽度的 `Int`。
 
-Gane 不在 HIR crate 中重复实现完整 LLVM 布局算法，也不在没有 consumer 时预设布局查询接口。production codegen 直接以 LLVM TargetData 为 size、alignment、field offset 和 padding 的唯一事实来源；HIR 不缓存布局结果，也不直接链接 libLLVM。
+Gane 不在 IR crate 中重复实现完整 LLVM 布局算法，也不在没有 consumer 时预设布局查询接口。production codegen 直接以 LLVM TargetData 为 size、alignment、field offset 和 padding 的唯一事实来源；IR 不缓存布局结果，也不直接链接 libLLVM。
 
 verifier 只检查类型图能否形成有限布局，不查询具体字节 offset。测试 interpreter 使用结构化 object/field/element 模型执行 `AggregateZero` 和 `AggregateCopy`，因此也不需要模拟真实字节布局。第一个需要布局的 consumer 出现时，再以它的错误模型定义最小查询接口。
 
-同一份 HIR 不能跨 target 复用。cross compilation 需要针对目标重新 lowering。普通 verifier 检查 pointer width 为 32/64、V0 endianness/地址空间约束以及 triple/data layout 非空；TargetMachine 与 data layout 的一致性由创建 `TargetSpec` 的 target 层和 codegen 入口共同检查。
+同一份 IR 不能跨 target 复用。cross compilation 需要针对目标重新 lowering。普通 verifier 检查 pointer width 为 32/64、V0 endianness/地址空间约束以及 triple/data layout 非空；TargetMachine 与 data layout 的一致性由创建 `TargetSpec` 的 target 层和 codegen 入口共同检查。
 
 ## 4. ID 与 package 数据模型
 
-所有 ID 是紧凑整数索引。数值 `0` 永远表示 `INVALID`，合法 arena entry 从 `1` 开始。正常 HIR 不得包含任何 `INVALID` ID。
+所有 ID 是紧凑整数索引。数值 `0` 永远表示 `INVALID`，合法 arena entry 从 `1` 开始。正常 IR 不得包含任何 `INVALID` ID。
 
 文档中的基础名称约定如下：
 
@@ -125,7 +125,7 @@ use gane_parser::token::AstNodeId;
 
 pub type Symbol = String;
 
-// parser 分配的语法身份；None 表示合成的 HIR 实体。
+// parser 分配的语法身份；None 表示合成的 IR 实体。
 pub type SourceOrigin = Option<AstNodeId>;
 
 pub enum Endianness { Little, Big }
@@ -133,41 +133,41 @@ pub enum Endianness { Little, Big }
 // TypeId、GlobalId、FunctionId、BlockId、ValueId、StackSlotId
 // 均为独立的 newtype(u32)，不能互相隐式转换。
 
-pub struct HirType {
-    pub kind: HirTypeKind,
+pub struct IrType {
+    pub kind: IrTypeKind,
 }
 ```
 
 ```rust
-pub struct HirPackage {
+pub struct IrPackage {
     pub target: TargetSpec,
-    pub types: Vec<HirType>,
-    pub globals: Vec<HirGlobal>,
-    pub functions: Vec<HirFunction>,
+    pub types: Vec<IrType>,
+    pub globals: Vec<IrGlobal>,
+    pub functions: Vec<IrFunction>,
     pub entry: FunctionId,
 }
 
 // 构造器产生该类型；字段不对 backend 直接开放。
-pub struct UnverifiedHirPackage(HirPackage);
+pub struct UnverifiedIrPackage(IrPackage);
 
 // 只能由 verify_and_check_escape 成功构造。
-pub struct VerifiedHirPackage(HirPackage);
+pub struct VerifiedIrPackage(IrPackage);
 
 pub fn verify_and_check_escape(
-    package: UnverifiedHirPackage,
-) -> Result<VerifiedHirPackage, Vec<HirDiagnostic>>;
+    package: UnverifiedIrPackage,
+) -> Result<VerifiedIrPackage, Vec<IrDiagnostic>>;
 
-pub struct HirFunction {
+pub struct IrFunction {
     pub symbol: Symbol,
-    pub signature: HirSignature,
+    pub signature: IrSignature,
     pub attributes: FunctionAttributes,
     pub stack_slots: Vec<StackSlot>,
     pub values: Vec<ValueDef>,
-    pub blocks: Vec<HirBlock>,
+    pub blocks: Vec<IrBlock>,
     pub entry: BlockId,
 }
 
-pub struct HirBlock {
+pub struct IrBlock {
     pub parameters: Vec<ValueId>,
     pub instructions: Vec<Instruction>,
     pub terminator: Terminator,
@@ -178,10 +178,10 @@ pub struct HirBlock {
 
 ## 5. 类型系统
 
-HIR V0 类型为：
+IR V0 类型为：
 
 ```rust
-pub enum HirTypeKind {
+pub enum IrTypeKind {
     Void,
     I1,
     I8,
@@ -203,7 +203,7 @@ pub enum HirTypeKind {
 - Array/struct 采用源码字段顺序；其物理布局由 codegen 的 LLVM TargetData 查询。
 - V0 不包含浮点类型。加入浮点时必须同时定义常量、运算、比较、NaN 和 ABI 语义。
 
-`Void` 和各整数类型必须 canonical intern。任何能按照 sema 合法流入同一个 HIR operand position 的类型，lowering 都必须稳定映射到同一个 `TypeId`；例如两次独立出现但 sema 判为 identical 的 `[2]int` 必须共享 HIR type。两个 sema 判为不同的 named aggregate 可以保留不同 `TypeId`，即使它们布局相同；V0 不要求对来源不同的递归 aggregate 图求结构图同构。HIR operand 的类型匹配使用 `TypeId`，lowering 必须复用其 sema-type-equivalence-to-HIR-type 映射。printer 和布局缓存以 `TypeId` 为 key，允许存在来源不同但布局相同的 aggregate。
+`Void` 和各整数类型必须 canonical intern。任何能按照 sema 合法流入同一个 IR operand position 的类型，lowering 都必须稳定映射到同一个 `TypeId`；例如两次独立出现但 sema 判为 identical 的 `[2]int` 必须共享 IR type。两个 sema 判为不同的 named aggregate 可以保留不同 `TypeId`，即使它们布局相同；V0 不要求对来源不同的递归 aggregate 图求结构图同构。IR operand 的类型匹配使用 `TypeId`，lowering 必须复用其 sema-type-equivalence-to-IR-type 映射。printer 和布局缓存以 `TypeId` 为 key，允许存在来源不同但布局相同的 aggregate。
 
 递归类型通过“先分配 ID、后填充定义”构造。类型图只允许通过 `Ptr` 形成环，例如 `struct Node { next *Node }`；array/struct 的按值环会形成无限尺寸，必须由前端拒绝。构造器在填充结束前不能暴露 raw package，printer 先声明 type ID 再打印定义，因而必须支持前向引用。
 
@@ -223,12 +223,12 @@ pub struct StackSlot {
     pub origin: SourceOrigin,
 }
 
-pub struct HirSignature {
-    pub parameters: Vec<HirParameter>,
+pub struct IrSignature {
+    pub parameters: Vec<IrParameter>,
     pub results: Vec<TypeId>,
 }
 
-pub struct HirParameter {
+pub struct IrParameter {
     pub typ: TypeId,
 }
 
@@ -237,14 +237,14 @@ pub struct FunctionAttributes {
 }
 ```
 
-每个 `StackSlot` 在函数入口处按 `slot.typ` 具有 Gane 零值；这属于 HIR 语义，不是 lowering 的可选约定。LLVM backend 必须生成相应初始化，不能把 alloca 的未初始化内容暴露为 LLVM `undef`。backend 可以在保持该语义的前提下依赖后续优化删除被首次赋值完全覆盖的初始化。
+每个 `StackSlot` 在函数入口处按 `slot.typ` 具有 Gane 零值；这属于 IR 语义，不是 lowering 的可选约定。LLVM backend 必须生成相应初始化，不能把 alloca 的未初始化内容暴露为 LLVM `undef`。backend 可以在保持该语义的前提下依赖后续优化删除被首次赋值完全覆盖的初始化。
 
-V0 不支持 variadic；所有调用都固定为 package 内 Gane ABI，因而 HIR 不存储可变 calling convention 或 linkage。用户源码 annotation 不能直接产生会影响优化正确性的 attributes。
+V0 不支持 variadic；所有调用都固定为 package 内 Gane ABI，因而 IR 不存储可变 calling convention 或 linkage。用户源码 annotation 不能直接产生会影响优化正确性的 attributes。
 
 全局声明：
 
 ```rust
-pub struct HirGlobal {
+pub struct IrGlobal {
     pub symbol: Symbol,
     pub typ: TypeId,
     pub mutable: bool,
@@ -314,7 +314,7 @@ AggregateZero {
 
 它把 aggregate 设为 Gane 零值，包括递归地清零整数、bool、pointer、array 和 struct 字段。只有 TargetMachine 明确保证该类型所有字段的零值都采用全零 bit pattern 时，backend 才能使用 `llvm.memset`；否则必须使用 typed zero/逐字段 store。使用 `memset` 时必须依据 LLVM TargetData 的实际 alloc size，不得自行计算大小。
 
-V0 禁止 aggregate 返回值；sema 必须在进入 HIR 前诊断。未来的 `sret` 需要独立 ABI 设计，不能伪装成普通 SSA aggregate result。
+V0 禁止 aggregate 返回值；sema 必须在进入 IR 前诊断。未来的 `sret` 需要独立 ABI 设计，不能伪装成普通 SSA aggregate result。
 
 ## 8. SSA value 与内存
 
@@ -333,7 +333,7 @@ store %p, 1
 %item_p  = gep_index %array_p, %index
 ```
 
-HIR 不使用递归 Place/lvalue 树。
+IR 不使用递归 Place/lvalue 树。
 
 ```rust
 pub struct ValueDef {
@@ -354,7 +354,7 @@ pub struct Instruction {
 }
 ```
 
-初版 lowering 可以把所有源码局部变量放入 stack slot。HIR mem2reg 是可选优化；LLVM backend 应保证 alloca 位于 entry block，并优先使用 LLVM mem2reg/SROA。
+初版 lowering 可以把所有源码局部变量放入 stack slot。IR mem2reg 是可选优化；LLVM backend 应保证 alloca 位于 entry block，并优先使用 LLVM mem2reg/SROA。
 
 ## 9. 指令集
 
@@ -422,11 +422,11 @@ pub enum ComparePredicate {
 - 调用 `no_return` callee 不产生 result，必须是 block 的最后一条 instruction，且该 block 以 `Unreachable` 终结；`no_return` function signature 不能声明 result。
 - 对可能为 null 的 pointer 执行 `Load`、`Store` 或 GEP 前，canonical lowering 必须生成 `pointer != null` 的显式分支，失败分支以 `Trap(NullDereference)` 终结。只有能够由来源证明非 null 的 `StackAddr`、`GlobalAddr` 等地址可以省略检查。
 
-所有指令自身具有完整、无 LLVM poison/UB 的 HIR 语义，backend 不能把 canonical guard 当成正确性的唯一来源：null `Load/Store/GEP` 必须得到 `Trap(NullDereference)`，越界 `GepIndex` 必须得到 `Trap(BoundsError)`，整数危险操作遵循第 10 节。backend 可以利用支配它的显式 guard 消除重复检查；无法证明时必须生成本地防御检查。
+所有指令自身具有完整、无 LLVM poison/UB 的 IR 语义，backend 不能把 canonical guard 当成正确性的唯一来源：null `Load/Store/GEP` 必须得到 `Trap(NullDereference)`，越界 `GepIndex` 必须得到 `Trap(BoundsError)`，整数危险操作遵循第 10 节。backend 可以利用支配它的显式 guard 消除重复检查；无法证明时必须生成本地防御检查。
 
 ## 10. 整数语义与显式检查
 
-HIR 必须保持 Go V0 子集的整数语义，不能把 LLVM poison 暴露给语言层：
+IR 必须保持 Go V0 子集的整数语义，不能把 LLVM poison 暴露给语言层：
 
 - 加、减、乘和左移按位宽确定性截断；默认不添加 LLVM `nsw`/`nuw`。
 - integer division 向零截断。
@@ -453,9 +453,9 @@ access:
   %item = gep_index %array_ptr, %normalized
 ```
 
-HIR 不设置 producer-only 的 `BoundsCheck` 或 `DivCheck` 伪指令。`GepIndex`、division、remainder 和 shift 本身仍是 total operation：即使非 canonical producer 没有生成可证明的 guard，interpreter/backend 也必须产生第 9、10 节规定的结果或 trap，不能触发宿主 UB/LLVM poison。
+IR 不设置 producer-only 的 `BoundsCheck` 或 `DivCheck` 伪指令。`GepIndex`、division、remainder 和 shift 本身仍是 total operation：即使非 canonical producer 没有生成可证明的 guard，interpreter/backend 也必须产生第 9、10 节规定的结果或 trap，不能触发宿主 UB/LLVM poison。
 
-普通 verifier 不尝试从任意 `Compare + CondBranch` 证明后续 divisor、shift amount 或 index 的值域；那需要完整值域分析。lowering golden/conformance tests 负责确认 canonical producer 生成本节规定的 guard，interpreter 与 LLVM backend 直接实现 total instruction semantics，并以除零、`MIN/-1`、负 shift、超宽 shift、null 和越界的差分测试验证。LLVM backend 即使无法从 CFG 证明安全，也不能发出可能把合法 HIR 执行变成 LLVM poison/UB 的代码。
+普通 verifier 不尝试从任意 `Compare + CondBranch` 证明后续 divisor、shift amount 或 index 的值域；那需要完整值域分析。lowering golden/conformance tests 负责确认 canonical producer 生成本节规定的 guard，interpreter 与 LLVM backend 直接实现 total instruction semantics，并以除零、`MIN/-1`、负 shift、超宽 shift、null 和越界的差分测试验证。LLVM backend 即使无法从 CFG 证明安全，也不能发出可能把合法 IR 执行变成 LLVM poison/UB 的代码。
 
 ## 11. 控制流与 SSA
 
@@ -479,7 +479,7 @@ pub enum Terminator {
 
 V0 的 `Trap` 语义是立即异常终止当前程序，不执行恢复或用户清理逻辑。`TrapReason` 在 interpreter 和 debug build 中可用于诊断，但 release executable 不保证稳定 exit code 或保留 reason；hosted backend 可以调用内部 `__gane_trap(reason)` hook，freestanding backend 可以退化为目标 trap instruction。程序不得依赖不同 trap reason 的可观察差异。
 
-HIR 使用 block parameter 而不是 phi：
+IR 使用 block parameter 而不是 phi：
 
 ```text
 entry:
@@ -498,7 +498,7 @@ join(%result: i64):
 
 无标准库不代表没有 ABI。V0 规定：
 
-- 源语言入口仍是 `func main()`，HIR 内部符号为 mangled Gane ABI `void gane.main()`；
+- 源语言入口仍是 `func main()`，IR 内部符号为 mangled Gane ABI `void gane.main()`；
 - hosted codegen 自动生成 C ABI wrapper `i32 main()`，调用 `gane.main()` 并在正常结束后返回 `0`；
 - freestanding `_start`、初始化栈和退出/停机方式属于未来 target-specific 设计；
 - 没有隐式 heap allocation；`new`、`make` 和发生逃逸的局部地址由 sema 拒绝；
@@ -514,17 +514,17 @@ join(%result: i64):
 - 可以在当前函数内读写和传给内部调用；内部函数同样必须满足不逃逸规则；
 - stack-derived taint 必须穿过 `GepField`、`GepIndex`、stack slot 的 store/load 和函数参数传播。
 
-这些规则由独立的保守 escape check 负责，而不是普通 HIR verifier。它在 raw HIR 构造后运行，对内部调用图计算 noescape summary；递归调用组通过不动点迭代求解。无法证明不逃逸时一律拒绝，不自动提升到 heap。普通 verifier 与 escape check 均成功后才能构造 `VerifiedHirPackage`。
+这些规则由独立的保守 escape check 负责，而不是普通 IR verifier。它在 raw IR 构造后运行，对内部调用图计算 noescape summary；递归调用组通过不动点迭代求解。无法证明不逃逸时一律拒绝，不自动提升到 heap。普通 verifier 与 escape check 均成功后才能构造 `VerifiedIrPackage`。
 
-verifier 只检查 HIR 中直接可见的类型和 attribute 一致性，不声称重新完成跨函数 escape analysis。escape check 必须有返回局部地址、经临时 slot 传播、存 global、内部调用传播和递归调用的专项测试。
+verifier 只检查 IR 中直接可见的类型和 attribute 一致性，不声称重新完成跨函数 escape analysis。escape check 必须有返回局部地址、经临时 slot 传播、存 global、内部调用传播和递归调用的专项测试。
 
 ## 13. AOT 与未来 JIT
 
-`VerifiedHirPackage` 在构造完成后视为不可变输入。AOT baseline 与未来 JIT optimized pipeline 各自从同一份 verified HIR lowering，不共享已经被某一侧修改的 LLVM module：
+`VerifiedIrPackage` 在构造完成后视为不可变输入。AOT baseline 与未来 JIT optimized pipeline 各自从同一份 verified IR lowering，不共享已经被某一侧修改的 LLVM module：
 
 ```text
-Verified HIR -> baseline instrumentation/passes -> LLVM module -> AOT
-Verified HIR -> profile-guided passes           -> LLVM module -> ORC JIT
+Verified IR -> baseline instrumentation/passes -> LLVM module -> AOT
+Verified IR -> profile-guided passes           -> LLVM module -> ORC JIT
 ```
 
 V0 不实现 JIT。未来第一个版本只做函数级替换：
@@ -537,15 +537,15 @@ V0 不实现 JIT。未来第一个版本只做函数级替换：
 
 函数是否被源程序取地址与 JIT stub 是两件事；V0 禁止函数值，因此不存在 source-level address-taken function。
 
-JIT eligibility 是未来 codegen policy，不是 HIR 字段；不得为了标记 eligibility 反向扩展 HIR 基础语义。该策略应以独立配置或 side table 选择需要经过 stub 的函数。
+JIT eligibility 是未来 codegen policy，不是 IR 字段；不得为了标记 eligibility 反向扩展 IR 基础语义。该策略应以独立配置或 side table 选择需要经过 stub 的函数。
 
-OSR、deoptimization、safepoint 和代码回收必须另立设计，不能提前改变 HIR V0。
+OSR、deoptimization、safepoint 和代码回收必须另立设计，不能提前改变 IR V0。
 
 ## 14. Verifier 不变量
 
-interpreter、codegen 和 JIT 的 API 只接受 `VerifiedHirPackage`。`verify_and_check_escape(raw_package)` 至少执行以下普通 verifier 检查，并在其后执行第 12 节的 escape check：
+interpreter、codegen 和 JIT 的 API 只接受 `VerifiedIrPackage`。`verify_and_check_escape(raw_package)` 至少执行以下普通 verifier 检查，并在其后执行第 12 节的 escape check：
 
-1. 所有 ID 有效，`0`/`INVALID` 不出现在正常 HIR。
+1. 所有 ID 有效，`0`/`INVALID` 不出现在正常 IR。
 2. TargetSpec 的 pointer width 为 32/64，triple/data layout 非空；类型的私有构造保证其来源受控，codegen 另行匹配真实 TargetMachine。
 3. entry 唯一、存在，且是 Gane ABI `func main()` 对应的 `void()` 函数。
 4. 每个 block 恰有一个 terminator，所有跳转目标存在。
@@ -573,28 +573,28 @@ verifier 必须包含反向测试：跨分支非法 use、错误 block argument�
 
 ## 15. 文本格式与实现阶段
 
-HIR 从阶段 1 起提供确定性的文本打印。相同输入和 target 必须产生稳定输出：ID 按 arena 顺序编号，block/instruction 顺序不依赖 HashMap iteration，调试名称不能影响语义。
+IR 从阶段 1 起提供确定性的文本打印。相同输入和 target 必须产生稳定输出：ID 按 arena 顺序编号，block/instruction 顺序不依赖 HashMap iteration，调试名称不能影响语义。
 
 文本格式用于：
 
-- `--emit-hir` 调试；
+- `--emit-ir` 调试；
 - lowering golden tests；
 - verifier 错误定位；
 - interpreter/codegen 差分测试。
 
 实现顺序：
 
-1. 补齐第 2 节的 sema/V0 validation negative tests，保证无 error 的 sema 结果不含 HIR V0 无法表示的源码结构。
+1. 补齐第 2 节的 sema/V0 validation negative tests，保证无 error 的 sema 结果不含 IR V0 无法表示的源码结构。
 2. 定义 ID、类型、raw/verified package、受控 `TargetSpec` 和 builder，实现普通 verifier 与稳定 printer。
-3. 实现 `sema + AST -> raw HIR`，只覆盖第 2 节的 V0 子集，建立 lowering golden tests；lowering 遇到缺失的 sema fact 必须返回 diagnostic，不能 panic 或自行推导。
-4. 在 raw HIR 上实现独立 escape check，只有 verifier 与 escape check 均成功才产生 `VerifiedHirPackage`。
+3. 实现 `sema + AST -> raw IR`，只覆盖第 2 节的 V0 子集，建立 lowering golden tests；lowering 遇到缺失的 sema fact 必须返回 diagnostic，不能 panic 或自行推导。
+4. 在 raw IR 上实现独立 escape check，只有 verifier 与 escape check 均成功才产生 `VerifiedIrPackage`。
 5. 实现最小 interpreter；先覆盖纯整数、结构化局部内存、total dangerous operations 和控制流，不要求真实物理布局。
 6. 实现 host target 的 LLVM lowering、wrapper main、object 生成和链接，完成 AOT 闭环，并与 interpreter 做差分测试。
 7. 增加 array/struct、`AggregateZero` 和 `AggregateCopy` 的端到端测试。
-8. AOT 稳定后再评估可选 HIR pass；局部提升优先使用 LLVM mem2reg/SROA。
+8. AOT 稳定后再评估可选 IR pass；局部提升优先使用 LLVM mem2reg/SROA。
 9. 最后添加 profile instrumentation 和函数级 JIT。
 
-## 16. HIR V0 冻结范围
+## 16. IR V0 冻结范围
 
 V0 支持：
 
@@ -617,6 +617,6 @@ V0 明确不支持：
 
 V0 还拒绝空 struct、零长度 array、非零 aggregate global initializer、非 null pointer global initializer，以及不能由目标 pointer width 表示长度的 array。
 
-每增加一种语言特性，必须先规定其值表示、复制/生命周期规则、失败行为和 ABI，再扩展 HIR。
+每增加一种语言特性，必须先规定其值表示、复制/生命周期规则、失败行为和 ABI，再扩展 IR。
 
 V0 的解冻条件是：host executable 能稳定生成、链接和运行；第 2、10、14 节要求的 negative/conformance tests 完整；核心整数、控制流、内存和 aggregate 语义在 interpreter 与 LLVM backend 间通过差分测试。在此之前只允许修复规格矛盾和实现 bug，不增加新语言能力。

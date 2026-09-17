@@ -1,26 +1,26 @@
-use crate::ir::HirPackage;
+use crate::ir::IrPackage;
 use crate::{
     BinaryOp, BlockId, Callee, ComparePredicate, Constant, FunctionId, GlobalInitializer,
-    HirFunction, HirParameter, HirTypeKind, Instruction, InstructionKind, IntCastKind, Terminator,
-    TypeId, UnaryOp, UnverifiedHirPackage, ValueId, ValueOrigin, VerifiedHirPackage,
+    Instruction, InstructionKind, IntCastKind, IrFunction, IrParameter, IrTypeKind, Terminator,
+    TypeId, UnaryOp, UnverifiedIrPackage, ValueId, ValueOrigin, VerifiedIrPackage,
 };
 use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::fmt;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A verifier failure located in deterministic textual HIR coordinates.
-pub struct HirDiagnostic {
+/// A verifier failure located in deterministic textual IR coordinates.
+pub struct IrDiagnostic {
     location: String,
     message: String,
 }
 
-impl fmt::Display for HirDiagnostic {
+impl fmt::Display for IrDiagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.location, self.message)
     }
 }
 
-impl HirDiagnostic {
+impl IrDiagnostic {
     pub(crate) fn new(location: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             location: location.into(),
@@ -39,10 +39,10 @@ impl HirDiagnostic {
     }
 }
 
-impl std::error::Error for HirDiagnostic {}
+impl std::error::Error for IrDiagnostic {}
 
-/// Checks all ordinary HIR invariants without performing escape analysis.
-pub fn verify(package: &UnverifiedHirPackage) -> Result<(), Vec<HirDiagnostic>> {
+/// Checks all ordinary IR invariants without performing escape analysis.
+pub fn verify(package: &UnverifiedIrPackage) -> Result<(), Vec<IrDiagnostic>> {
     let mut verifier = Verifier {
         package: package.inner(),
         diagnostics: Vec::new(),
@@ -55,18 +55,18 @@ pub fn verify(package: &UnverifiedHirPackage) -> Result<(), Vec<HirDiagnostic>> 
     }
 }
 
-/// Checks ordinary HIR invariants and stack-address escape rules before producing backend input.
+/// Checks ordinary IR invariants and stack-address escape rules before producing backend input.
 pub fn verify_and_check_escape(
-    package: UnverifiedHirPackage,
-) -> Result<VerifiedHirPackage, Vec<HirDiagnostic>> {
+    package: UnverifiedIrPackage,
+) -> Result<VerifiedIrPackage, Vec<IrDiagnostic>> {
     verify(&package)?;
     crate::escape::check(&package)?;
-    Ok(VerifiedHirPackage::from_inner(package.into_inner()))
+    Ok(VerifiedIrPackage::from_inner(package.into_inner()))
 }
 
 struct Verifier<'a> {
-    package: &'a HirPackage,
-    diagnostics: Vec<HirDiagnostic>,
+    package: &'a IrPackage,
+    diagnostics: Vec<IrDiagnostic>,
 }
 
 impl Verifier<'_> {
@@ -81,12 +81,12 @@ impl Verifier<'_> {
 
     fn verify_types(&mut self) {
         let primitive = [
-            HirTypeKind::Void,
-            HirTypeKind::I1,
-            HirTypeKind::I8,
-            HirTypeKind::I16,
-            HirTypeKind::I32,
-            HirTypeKind::I64,
+            IrTypeKind::Void,
+            IrTypeKind::I1,
+            IrTypeKind::I8,
+            IrTypeKind::I16,
+            IrTypeKind::I32,
+            IrTypeKind::I64,
         ];
         for (index, expected) in primitive.iter().enumerate() {
             let id = TypeId::from_raw(index as u32 + 1);
@@ -102,7 +102,7 @@ impl Verifier<'_> {
                 self.error(format!("type !{}", id.raw()), "duplicate primitive type");
             }
             match &typ.kind {
-                HirTypeKind::Ptr {
+                IrTypeKind::Ptr {
                     pointee,
                     address_space,
                 } => {
@@ -110,11 +110,11 @@ impl Verifier<'_> {
                     if *address_space != 0 {
                         self.error(
                             format!("type !{}", id.raw()),
-                            "address space must be zero in HIR V0",
+                            "address space must be zero in IR V0",
                         );
                     }
                 }
-                HirTypeKind::Array { length, element } => {
+                IrTypeKind::Array { length, element } => {
                     self.type_exists(*element, format!("type !{}", id.raw()));
                     if *length == 0 {
                         self.error(
@@ -140,7 +140,7 @@ impl Verifier<'_> {
                         );
                     }
                 }
-                HirTypeKind::Struct { fields } => {
+                IrTypeKind::Struct { fields } => {
                     if fields.is_empty() {
                         self.error(
                             format!("type !{}", id.raw()),
@@ -185,10 +185,10 @@ impl Verifier<'_> {
             return true;
         }
         let cycle = match self.type_kind(id) {
-            Some(HirTypeKind::Array { element, .. }) => {
+            Some(IrTypeKind::Array { element, .. }) => {
                 self.has_value_cycle(*element, visiting, visited)
             }
-            Some(HirTypeKind::Struct { fields }) => fields
+            Some(IrTypeKind::Struct { fields }) => fields
                 .iter()
                 .any(|field| self.has_value_cycle(*field, visiting, visited)),
             _ => false,
@@ -241,7 +241,7 @@ impl Verifier<'_> {
         }
     }
 
-    fn verify_function(&mut self, id: FunctionId, function: &HirFunction) {
+    fn verify_function(&mut self, id: FunctionId, function: &IrFunction) {
         let prefix = format!("function @{}", id.raw());
         if function
             .entry
@@ -254,7 +254,7 @@ impl Verifier<'_> {
             return;
         }
         if function.signature.results.len() > 1 {
-            self.error(prefix.clone(), "HIR V0 functions have at most one result");
+            self.error(prefix.clone(), "IR V0 functions have at most one result");
         }
         if function.attributes.no_return && !function.signature.results.is_empty() {
             self.error(prefix.clone(), "no_return function cannot declare results");
@@ -325,11 +325,11 @@ impl Verifier<'_> {
         }
     }
 
-    fn verify_parameter(&mut self, parameter: &HirParameter, location: String) {
+    fn verify_parameter(&mut self, parameter: &IrParameter, location: String) {
         self.scalar_type(parameter.typ, location, "function parameter");
     }
 
-    fn verify_definitions(&mut self, function_id: FunctionId, function: &HirFunction) {
+    fn verify_definitions(&mut self, function_id: FunctionId, function: &IrFunction) {
         let prefix = format!("function @{}", function_id.raw());
         let mut seen = vec![false; function.values.len()];
         for (block_index, block_data) in function.blocks.iter().enumerate() {
@@ -396,7 +396,7 @@ impl Verifier<'_> {
 
     fn definition(
         &mut self,
-        function: &HirFunction,
+        function: &IrFunction,
         seen: &mut [bool],
         value: ValueId,
         expected: ValueOrigin,
@@ -432,7 +432,7 @@ impl Verifier<'_> {
     fn control_flow(
         &mut self,
         function_id: FunctionId,
-        function: &HirFunction,
+        function: &IrFunction,
     ) -> (Vec<bool>, Vec<BTreeSet<usize>>) {
         let count = function.blocks.len();
         let mut successors = vec![Vec::new(); count];
@@ -513,7 +513,7 @@ impl Verifier<'_> {
 
     fn verify_uses(
         &mut self,
-        function: &HirFunction,
+        function: &IrFunction,
         block: BlockId,
         position: usize,
         reachable: &[bool],
@@ -568,7 +568,7 @@ impl Verifier<'_> {
     fn verify_instruction(
         &mut self,
         function_id: FunctionId,
-        function: &HirFunction,
+        function: &IrFunction,
         block: BlockId,
         index: usize,
         instruction: &Instruction,
@@ -675,9 +675,7 @@ impl Verifier<'_> {
                 let pointee = value_type(*base)
                     .and_then(|typ| self.pointee(typ))
                     .and_then(|typ| match self.type_kind(typ) {
-                        Some(HirTypeKind::Struct { fields }) => {
-                            fields.get(*field as usize).copied()
-                        }
+                        Some(IrTypeKind::Struct { fields }) => fields.get(*field as usize).copied(),
                         _ => None,
                     });
                 self.pointer_result(
@@ -691,7 +689,7 @@ impl Verifier<'_> {
                 let pointee = value_type(*base)
                     .and_then(|typ| self.pointee(typ))
                     .and_then(|typ| match self.type_kind(typ) {
-                        Some(HirTypeKind::Array { element, .. }) => Some(*element),
+                        Some(IrTypeKind::Array { element, .. }) => Some(*element),
                         _ => None,
                     });
                 let index_type = value_type(*index);
@@ -774,7 +772,7 @@ impl Verifier<'_> {
     fn verify_call(
         &mut self,
         _function_id: FunctionId,
-        function: &HirFunction,
+        function: &IrFunction,
         block: BlockId,
         index: usize,
         callee_id: FunctionId,
@@ -822,7 +820,7 @@ impl Verifier<'_> {
 
     fn verify_terminator(
         &mut self,
-        function: &HirFunction,
+        function: &IrFunction,
         terminator: &Terminator,
         location: String,
     ) {
@@ -866,7 +864,7 @@ impl Verifier<'_> {
 
     fn verify_edge(
         &mut self,
-        function: &HirFunction,
+        function: &IrFunction,
         target: BlockId,
         arguments: &[ValueId],
         location: String,
@@ -947,40 +945,40 @@ impl Verifier<'_> {
             self.error(location, format!("{subject} must have scalar type"));
         }
     }
-    fn type_kind(&self, typ: TypeId) -> Option<&HirTypeKind> {
+    fn type_kind(&self, typ: TypeId) -> Option<&IrTypeKind> {
         self.package.types.get(typ).map(|typ| &typ.kind)
     }
     fn is_void(&self, typ: TypeId) -> bool {
-        matches!(self.type_kind(typ), Some(HirTypeKind::Void))
+        matches!(self.type_kind(typ), Some(IrTypeKind::Void))
     }
     fn is_i1(&self, typ: TypeId) -> bool {
-        matches!(self.type_kind(typ), Some(HirTypeKind::I1))
+        matches!(self.type_kind(typ), Some(IrTypeKind::I1))
     }
     fn is_integer(&self, typ: TypeId) -> bool {
         self.integer_width(typ).is_some()
     }
     fn integer_width(&self, typ: TypeId) -> Option<u32> {
         match self.type_kind(typ)? {
-            HirTypeKind::I8 => Some(8),
-            HirTypeKind::I16 => Some(16),
-            HirTypeKind::I32 => Some(32),
-            HirTypeKind::I64 => Some(64),
+            IrTypeKind::I8 => Some(8),
+            IrTypeKind::I16 => Some(16),
+            IrTypeKind::I32 => Some(32),
+            IrTypeKind::I64 => Some(64),
             _ => None,
         }
     }
     fn is_pointer(&self, typ: TypeId) -> bool {
-        matches!(self.type_kind(typ), Some(HirTypeKind::Ptr { .. }))
+        matches!(self.type_kind(typ), Some(IrTypeKind::Ptr { .. }))
     }
     fn pointee(&self, typ: TypeId) -> Option<TypeId> {
         match self.type_kind(typ)? {
-            HirTypeKind::Ptr { pointee, .. } => Some(*pointee),
+            IrTypeKind::Ptr { pointee, .. } => Some(*pointee),
             _ => None,
         }
     }
     fn is_aggregate(&self, typ: TypeId) -> bool {
         matches!(
             self.type_kind(typ),
-            Some(HirTypeKind::Array { .. } | HirTypeKind::Struct { .. })
+            Some(IrTypeKind::Array { .. } | IrTypeKind::Struct { .. })
         )
     }
     fn is_scalar(&self, typ: TypeId) -> bool {
@@ -990,7 +988,7 @@ impl Verifier<'_> {
         self.pointee(pointer) == Some(expected)
     }
     fn error(&mut self, location: impl Into<String>, message: impl Into<String>) {
-        self.diagnostics.push(HirDiagnostic {
+        self.diagnostics.push(IrDiagnostic {
             location: location.into(),
             message: message.into(),
         });
@@ -1050,17 +1048,17 @@ fn targets(terminator: &Terminator) -> Vec<BlockId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FunctionAttributes, HirBuilder, HirGlobal, HirSignature, StackSlot};
+    use crate::{FunctionAttributes, IrBuilder, IrGlobal, IrSignature, StackSlot};
 
-    fn signature(parameters: Vec<HirParameter>, results: Vec<TypeId>) -> HirSignature {
-        HirSignature {
+    fn signature(parameters: Vec<IrParameter>, results: Vec<TypeId>) -> IrSignature {
+        IrSignature {
             parameters,
             results,
         }
     }
 
-    fn empty_main() -> UnverifiedHirPackage {
-        let mut builder = HirBuilder::new(crate::TargetSpec::for_test_64());
+    fn empty_main() -> UnverifiedIrPackage {
+        let mut builder = IrBuilder::new(crate::TargetSpec::for_test_64());
         let main = builder.declare_function(
             "gane.main".into(),
             signature(vec![], vec![]),
@@ -1074,7 +1072,7 @@ mod tests {
         builder.finish().unwrap()
     }
 
-    fn messages(package: &UnverifiedHirPackage) -> String {
+    fn messages(package: &UnverifiedIrPackage) -> String {
         verify(package)
             .unwrap_err()
             .into_iter()
@@ -1104,7 +1102,7 @@ mod tests {
     fn rejects_void_uses_and_invalid_global_initializer() {
         let mut package = empty_main();
         let void = package.types().void();
-        package.inner_mut().globals.push(HirGlobal {
+        package.inner_mut().globals.push(IrGlobal {
             symbol: "gane.bad".into(),
             typ: void,
             mutable: false,
@@ -1126,13 +1124,13 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_primitive_and_by_value_recursion() {
-        let mut builder = HirBuilder::new(crate::TargetSpec::for_test_64());
-        builder.add_type(HirTypeKind::I32);
+        let mut builder = IrBuilder::new(crate::TargetSpec::for_test_64());
+        builder.add_type(IrTypeKind::I32);
         let recursive = builder.reserve_type();
         builder
             .define_type(
                 recursive,
-                HirTypeKind::Struct {
+                IrTypeKind::Struct {
                     fields: vec![recursive],
                 },
             )
@@ -1155,18 +1153,18 @@ mod tests {
 
     #[test]
     fn rejects_invalid_type_shapes_for_target() {
-        let mut builder = HirBuilder::new(crate::TargetSpec::for_test_32());
+        let mut builder = IrBuilder::new(crate::TargetSpec::for_test_32());
         let i32 = builder.types().i32();
-        builder.add_type(HirTypeKind::Array {
+        builder.add_type(IrTypeKind::Array {
             length: 0,
             element: i32,
         });
-        builder.add_type(HirTypeKind::Array {
+        builder.add_type(IrTypeKind::Array {
             length: u32::MAX as u64 + 1,
             element: i32,
         });
-        builder.add_type(HirTypeKind::Struct { fields: vec![] });
-        builder.add_type(HirTypeKind::Ptr {
+        builder.add_type(IrTypeKind::Struct { fields: vec![] });
+        builder.add_type(IrTypeKind::Ptr {
             pointee: i32,
             address_space: 1,
         });
@@ -1190,7 +1188,7 @@ mod tests {
 
     #[test]
     fn rejects_wrong_definition_origin_and_use_before_definition() {
-        let mut builder = HirBuilder::new(crate::TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(crate::TargetSpec::for_test_64());
         let i32 = builder.types().i32();
         let main = builder.declare_function(
             "gane.main".into(),
@@ -1240,7 +1238,7 @@ mod tests {
 
     #[test]
     fn rejects_non_dominating_use_and_wrong_block_arguments() {
-        let mut builder = HirBuilder::new(crate::TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(crate::TargetSpec::for_test_64());
         let i1 = builder.types().i1();
         let i32 = builder.types().i32();
         let main = builder.declare_function(
@@ -1323,12 +1321,12 @@ mod tests {
 
     #[test]
     fn rejects_instruction_type_matrix_errors() {
-        let mut builder = HirBuilder::new(crate::TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(crate::TargetSpec::for_test_64());
         let i1 = builder.types().i1();
         let i8 = builder.types().i8();
         let i32 = builder.types().i32();
-        let pair = builder.add_type(HirTypeKind::Struct { fields: vec![i32] });
-        let pair_ptr = builder.add_type(HirTypeKind::Ptr {
+        let pair = builder.add_type(IrTypeKind::Struct { fields: vec![i32] });
+        let pair_ptr = builder.add_type(IrTypeKind::Ptr {
             pointee: pair,
             address_space: 0,
         });
@@ -1422,11 +1420,11 @@ mod tests {
 
     #[test]
     fn rejects_constant_cast_compare_and_aggregate_errors() {
-        let mut builder = HirBuilder::new(crate::TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(crate::TargetSpec::for_test_64());
         let i8 = builder.types().i8();
         let i32 = builder.types().i32();
-        let pair = builder.add_type(HirTypeKind::Struct { fields: vec![i32] });
-        let pointer = builder.add_type(HirTypeKind::Ptr {
+        let pair = builder.add_type(IrTypeKind::Struct { fields: vec![i32] });
+        let pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: pair,
             address_space: 0,
         });
@@ -1510,7 +1508,7 @@ mod tests {
 
     #[test]
     fn rejects_unreachable_cross_block_use_and_orphan_parameter() {
-        let mut builder = HirBuilder::new(crate::TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(crate::TargetSpec::for_test_64());
         let i32 = builder.types().i32();
         let main = builder.declare_function(
             "gane.main".into(),
@@ -1561,11 +1559,11 @@ mod tests {
 
     #[test]
     fn rejects_call_return_and_no_return_contract_errors() {
-        let mut builder = HirBuilder::new(crate::TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(crate::TargetSpec::for_test_64());
         let i32 = builder.types().i32();
         let callee = builder.declare_function(
             "gane.callee".into(),
-            signature(vec![HirParameter { typ: i32 }], vec![i32]),
+            signature(vec![IrParameter { typ: i32 }], vec![i32]),
             FunctionAttributes { no_return: true },
         );
         let callee_entry = builder.entry_block(callee).unwrap();

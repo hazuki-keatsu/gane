@@ -66,7 +66,7 @@ fn valid_program_is_lowered_verified_and_interpreted() {
         .expect("run driver");
 
     assert!(output.status.success(), "{output:?}");
-    let hir = fs::read_to_string(out.join("main.go.hir.txt")).expect("verified HIR dump");
-    assert!(hir.contains("func @"));
+    let ir = fs::read_to_string(out.join("main.go.ir.txt")).expect("verified IR dump");
+    assert!(ir.contains("func @"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("interpreter completed successfully"));
 }

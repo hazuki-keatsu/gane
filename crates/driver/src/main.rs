@@ -1,6 +1,6 @@
 //! `gane-driver`: run one Go source file through the implemented compiler stages.
 //!
-//! Reads one Go source file, parses it, semantically checks it, lowers verified HIR, interprets
+//! Reads one Go source file, parses it, semantically checks it, lowers verified IR, interprets
 //! it, and writes
 //! generated files named after the input (for an input `foo.go`):
 //!
@@ -14,7 +14,7 @@
 //!   created when the source had errors.
 //! - `<output-dir>/foo.go.sema.err.txt` - semantic diagnostics; only created
 //!   when semantic analysis reports an error.
-//! - `<output-dir>/foo.go.hir.txt` - verified HIR, only created after successful lowering and
+//! - `<output-dir>/foo.go.ir.txt` - verified IR, only created after successful lowering and
 //!   escape checking.
 //!
 //! Exit codes: 0 ok, 1 a compiler stage or the interpreter failed (also reported
@@ -25,7 +25,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use gane_hir::{TargetSpec, interpret, lower_package, verify_and_check_escape};
+use gane_ir::{TargetSpec, interpret, lower_package, verify_and_check_escape};
 use gane_parser::parser::{Mode, parse_file};
 use gane_parser::token::FileSet;
 use gane_sema::{FileId, PackageInput, analyze_package};
@@ -42,7 +42,7 @@ writing generated files named after the input (for an input \"foo.go\"):
                                    (created only when errors occur)
     <output-dir>/foo.go.sema.err.txt semantic diagnostics with source locations
                                      (created only when errors occur)
-    <output-dir>/foo.go.hir.txt    verified HIR (created only on success)
+    <output-dir>/foo.go.ir.txt    verified IR (created only on success)
 
 output-dir defaults to \"out\". Exit codes: 0 ok, 1 a compiler stage or the
 interpreter failed, 2 usage or I/O error.
@@ -187,35 +187,35 @@ fn main() -> ExitCode {
 
     // ponytail: use the existing 64-bit fixture while interpreter-only; derive this from LLVM's
     // target machine when the backend supplies physical layout.
-    let raw_hir = match lower_package(&package, &analysis, TargetSpec::for_test_64()) {
+    let raw_ir = match lower_package(&package, &analysis, TargetSpec::for_test_64()) {
         Ok(package) => package,
         Err(error) => {
-            eprintln!("gane-driver: HIR lowering failed: {error}");
+            eprintln!("gane-driver: IR lowering failed: {error}");
             return ExitCode::FAILURE;
         }
     };
-    let hir = match verify_and_check_escape(raw_hir) {
+    let ir = match verify_and_check_escape(raw_ir) {
         Ok(package) => package,
         Err(diagnostics) => {
             for diagnostic in diagnostics {
-                eprintln!("gane-driver: HIR verification failed: {diagnostic}");
+                eprintln!("gane-driver: IR verification failed: {diagnostic}");
             }
             return ExitCode::FAILURE;
         }
     };
-    let hir_path = out_dir.join(format!("{stem}.hir.txt"));
-    let hir_dump = hir.to_string();
-    if let Err(e) = fs::write(&hir_path, &hir_dump) {
-        eprintln!("gane-driver: cannot write `{}`: {e}", hir_path.display());
+    let ir_path = out_dir.join(format!("{stem}.ir.txt"));
+    let ir_dump = ir.to_string();
+    if let Err(e) = fs::write(&ir_path, &ir_dump) {
+        eprintln!("gane-driver: cannot write `{}`: {e}", ir_path.display());
         return ExitCode::from(2);
     }
     println!(
-        "gane-driver: wrote {} ({} bytes, verified HIR)",
-        hir_path.display(),
-        hir_dump.len()
+        "gane-driver: wrote {} ({} bytes, verified IR)",
+        ir_path.display(),
+        ir_dump.len()
     );
 
-    match interpret(&hir) {
+    match interpret(&ir) {
         Ok(()) => {
             println!("gane-driver: interpreter completed successfully");
             ExitCode::SUCCESS

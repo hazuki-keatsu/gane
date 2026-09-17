@@ -1,11 +1,11 @@
 use crate::{
-    BinaryOp, Callee, ComparePredicate, Constant, FunctionId, GlobalInitializer, HirFunction,
-    HirTypeKind, Instruction, InstructionKind, IntCastKind, StackSlotId, Terminator, TrapReason,
-    TypeArena, TypeId, UnaryOp, ValueId, VerifiedHirPackage,
+    BinaryOp, Callee, ComparePredicate, Constant, FunctionId, GlobalInitializer, Instruction,
+    InstructionKind, IntCastKind, IrFunction, IrTypeKind, StackSlotId, Terminator, TrapReason,
+    TypeArena, TypeId, UnaryOp, ValueId, VerifiedIrPackage,
 };
 use std::{error::Error, fmt};
 
-/// An observable result of executing a verified HIR package.
+/// An observable result of executing a verified IR package.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InterpreterError {
     Trap(TrapReason),
@@ -15,16 +15,16 @@ pub enum InterpreterError {
 impl fmt::Display for InterpreterError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Trap(reason) => write!(formatter, "HIR trapped: {reason:?}"),
-            Self::ReachedUnreachable => formatter.write_str("reached HIR unreachable"),
+            Self::Trap(reason) => write!(formatter, "IR trapped: {reason:?}"),
+            Self::ReachedUnreachable => formatter.write_str("reached IR unreachable"),
         }
     }
 }
 
 impl Error for InterpreterError {}
 
-/// Executes a verified V0 HIR package from `gane.main`.
-pub fn interpret(package: &VerifiedHirPackage) -> Result<(), InterpreterError> {
+/// Executes a verified V0 IR package from `gane.main`.
+pub fn interpret(package: &VerifiedIrPackage) -> Result<(), InterpreterError> {
     Interpreter::new(package).run()
 }
 
@@ -38,14 +38,14 @@ impl RuntimeValue {
     fn bits(&self) -> u64 {
         match self {
             Self::Bits(bits) => *bits,
-            Self::Pointer(_) => unreachable!("verified HIR supplied a pointer as an integer"),
+            Self::Pointer(_) => unreachable!("verified IR supplied a pointer as an integer"),
         }
     }
 
     fn pointer(&self) -> &Pointer {
         match self {
             Self::Pointer(pointer) => pointer,
-            Self::Bits(_) => unreachable!("verified HIR supplied an integer as a pointer"),
+            Self::Bits(_) => unreachable!("verified IR supplied an integer as a pointer"),
         }
     }
 }
@@ -84,7 +84,7 @@ struct Frame {
 }
 
 struct Interpreter<'a> {
-    package: &'a VerifiedHirPackage,
+    package: &'a VerifiedIrPackage,
     globals: Vec<Object>,
     // ponytail: retain frames for the whole run; reclaim proven-dead frames if recursion becomes
     // a measured memory problem.
@@ -92,7 +92,7 @@ struct Interpreter<'a> {
 }
 
 impl<'a> Interpreter<'a> {
-    fn new(package: &'a VerifiedHirPackage) -> Self {
+    fn new(package: &'a VerifiedIrPackage) -> Self {
         let globals = package
             .globals()
             .map(|(_, global)| match global.initializer {
@@ -120,7 +120,7 @@ impl<'a> Interpreter<'a> {
         let package = self.package;
         let function = package
             .function(function_id)
-            .expect("verified HIR has valid function IDs");
+            .expect("verified IR has valid function IDs");
         let frame_id = self.frames.len();
         self.frames.push(Frame {
             values: vec![None; function.values.len()],
@@ -136,7 +136,7 @@ impl<'a> Interpreter<'a> {
         loop {
             let block = function
                 .block(block_id)
-                .expect("verified HIR has valid block IDs");
+                .expect("verified IR has valid block IDs");
             let parameters = block.parameters.clone();
             let instructions = block.instructions.clone();
             let terminator = block.terminator.clone();
@@ -179,7 +179,7 @@ impl<'a> Interpreter<'a> {
     fn execute_instruction(
         &mut self,
         frame: usize,
-        function: &HirFunction,
+        function: &IrFunction,
         instruction: &Instruction,
     ) -> Result<Vec<RuntimeValue>, InterpreterError> {
         let one = |value| Ok(vec![value]);
@@ -260,11 +260,11 @@ impl<'a> Interpreter<'a> {
                     .package
                     .types()
                     .get(array)
-                    .expect("verified HIR has valid types")
+                    .expect("verified IR has valid types")
                     .kind
                 {
-                    HirTypeKind::Array { length, .. } => *length,
-                    _ => unreachable!("verified HIR gep_index points to an array"),
+                    IrTypeKind::Array { length, .. } => *length,
+                    _ => unreachable!("verified IR gep_index points to an array"),
                 };
                 let index_value = self.value(frame, *value).bits();
                 if index_value >= length {
@@ -273,21 +273,21 @@ impl<'a> Interpreter<'a> {
                 one(RuntimeValue::Pointer(self.project(
                     base_value.pointer(),
                     Projection::Index(
-                        usize::try_from(index_value).expect("allocated HIR array index fits usize"),
+                        usize::try_from(index_value).expect("allocated IR array index fits usize"),
                     ),
                 )?))
             }
             InstructionKind::Load { pointer } => {
                 one(match self.object(self.value(frame, *pointer).pointer())? {
                     Object::Scalar(value) => value.clone(),
-                    _ => unreachable!("verified HIR only loads scalar objects"),
+                    _ => unreachable!("verified IR only loads scalar objects"),
                 })
             }
             InstructionKind::Store { pointer, value } => {
                 let value = self.value(frame, *value);
                 match self.object_mut(self.value(frame, *pointer).pointer())? {
                     Object::Scalar(destination) => *destination = value,
-                    _ => unreachable!("verified HIR only stores scalar objects"),
+                    _ => unreachable!("verified IR only stores scalar objects"),
                 }
                 Ok(Vec::new())
             }
@@ -466,7 +466,7 @@ impl<'a> Interpreter<'a> {
         assert_eq!(
             parameters.len(),
             arguments.len(),
-            "verified HIR block arguments match"
+            "verified IR block arguments match"
         );
         for (parameter, argument) in parameters.iter().zip(arguments) {
             self.frames[frame].values[index(*parameter)] = Some(argument);
@@ -482,7 +482,7 @@ impl<'a> Interpreter<'a> {
         assert_eq!(
             results.len(),
             values.len(),
-            "verified HIR instruction result count matches"
+            "verified IR instruction result count matches"
         );
         for (result, value) in results.iter().zip(values) {
             self.frames[frame].values[index(*result)] = Some(value);
@@ -492,7 +492,7 @@ impl<'a> Interpreter<'a> {
     fn value(&self, frame: usize, value: ValueId) -> RuntimeValue {
         self.frames[frame].values[index(value)]
             .clone()
-            .expect("verified HIR only reads defined values")
+            .expect("verified IR only reads defined values")
     }
 
     fn values(&self, frame: usize, values: &[ValueId]) -> Vec<RuntimeValue> {
@@ -506,26 +506,24 @@ impl<'a> Interpreter<'a> {
 fn zero_object(types: &TypeArena, typ: TypeId) -> Object {
     match types
         .get(typ)
-        .expect("verified HIR has valid types")
+        .expect("verified IR has valid types")
         .kind
         .clone()
     {
-        HirTypeKind::I1
-        | HirTypeKind::I8
-        | HirTypeKind::I16
-        | HirTypeKind::I32
-        | HirTypeKind::I64 => Object::Scalar(RuntimeValue::Bits(0)),
-        HirTypeKind::Ptr { .. } => Object::Scalar(RuntimeValue::Pointer(Pointer::Null)),
-        HirTypeKind::Array { length, element } => {
+        IrTypeKind::I1 | IrTypeKind::I8 | IrTypeKind::I16 | IrTypeKind::I32 | IrTypeKind::I64 => {
+            Object::Scalar(RuntimeValue::Bits(0))
+        }
+        IrTypeKind::Ptr { .. } => Object::Scalar(RuntimeValue::Pointer(Pointer::Null)),
+        IrTypeKind::Array { length, element } => {
             Object::Array((0..length).map(|_| zero_object(types, element)).collect())
         }
-        HirTypeKind::Struct { fields } => Object::Struct(
+        IrTypeKind::Struct { fields } => Object::Struct(
             fields
                 .into_iter()
                 .map(|field| zero_object(types, field))
                 .collect(),
         ),
-        HirTypeKind::Void => unreachable!("verified HIR has no void objects"),
+        IrTypeKind::Void => unreachable!("verified IR has no void objects"),
     }
 }
 
@@ -542,7 +540,7 @@ fn project_object<'a>(mut object: &'a Object, projections: &[Projection]) -> &'a
         object = match (object, projection) {
             (Object::Struct(fields), Projection::Field(field)) => &fields[*field],
             (Object::Array(elements), Projection::Index(index)) => &elements[*index],
-            _ => unreachable!("verified HIR pointer projection matches its object"),
+            _ => unreachable!("verified IR pointer projection matches its object"),
         };
     }
     object
@@ -556,7 +554,7 @@ fn project_object_mut<'a>(
         object = match (object, projection) {
             (Object::Struct(fields), Projection::Field(field)) => &mut fields[*field],
             (Object::Array(elements), Projection::Index(index)) => &mut elements[*index],
-            _ => unreachable!("verified HIR pointer projection matches its object"),
+            _ => unreachable!("verified IR pointer projection matches its object"),
         };
     }
     object
@@ -595,27 +593,27 @@ impl IntoIndex for crate::GlobalId {
     }
 }
 
-fn value_type(function: &HirFunction, value: ValueId) -> TypeId {
+fn value_type(function: &IrFunction, value: ValueId) -> TypeId {
     function
         .value(value)
-        .expect("verified HIR has valid value IDs")
+        .expect("verified IR has valid value IDs")
         .typ
 }
 
 fn integer_width(types: &TypeArena, typ: TypeId) -> u32 {
-    match types.get(typ).expect("verified HIR has valid types").kind {
-        HirTypeKind::I8 => 8,
-        HirTypeKind::I16 => 16,
-        HirTypeKind::I32 => 32,
-        HirTypeKind::I64 => 64,
-        _ => unreachable!("verified HIR supplied a non-integer operation"),
+    match types.get(typ).expect("verified IR has valid types").kind {
+        IrTypeKind::I8 => 8,
+        IrTypeKind::I16 => 16,
+        IrTypeKind::I32 => 32,
+        IrTypeKind::I64 => 64,
+        _ => unreachable!("verified IR supplied a non-integer operation"),
     }
 }
 
 fn pointee(types: &TypeArena, typ: TypeId) -> TypeId {
-    match types.get(typ).expect("verified HIR has valid types").kind {
-        HirTypeKind::Ptr { pointee, .. } => pointee,
-        _ => unreachable!("verified HIR supplied a non-pointer operation"),
+    match types.get(typ).expect("verified IR has valid types").kind {
+        IrTypeKind::Ptr { pointee, .. } => pointee,
+        _ => unreachable!("verified IR supplied a non-pointer operation"),
     }
 }
 
@@ -647,18 +645,18 @@ fn min_signed(width: u32) -> i64 {
 mod tests {
     use super::*;
     use crate::{
-        FunctionAttributes, HirBuilder, HirGlobal, HirParameter, HirSignature, TargetSpec,
+        FunctionAttributes, IrBuilder, IrGlobal, IrParameter, IrSignature, TargetSpec,
         verify_and_check_escape,
     };
 
-    fn signature(parameters: Vec<HirParameter>, results: Vec<TypeId>) -> HirSignature {
-        HirSignature {
+    fn signature(parameters: Vec<IrParameter>, results: Vec<TypeId>) -> IrSignature {
+        IrSignature {
             parameters,
             results,
         }
     }
 
-    fn main_function(builder: &mut HirBuilder) -> (FunctionId, crate::BlockId) {
+    fn main_function(builder: &mut IrBuilder) -> (FunctionId, crate::BlockId) {
         let main = builder.declare_function(
             "gane.main".into(),
             signature(Vec::new(), Vec::new()),
@@ -668,12 +666,12 @@ mod tests {
         (main, builder.entry_block(main).unwrap())
     }
 
-    fn verified(builder: HirBuilder) -> VerifiedHirPackage {
+    fn verified(builder: IrBuilder) -> VerifiedIrPackage {
         verify_and_check_escape(builder.finish().unwrap()).unwrap()
     }
 
     fn constant(
-        builder: &mut HirBuilder,
+        builder: &mut IrBuilder,
         function: FunctionId,
         block: crate::BlockId,
         typ: TypeId,
@@ -691,7 +689,7 @@ mod tests {
     }
 
     fn compare(
-        builder: &mut HirBuilder,
+        builder: &mut IrBuilder,
         function: FunctionId,
         block: crate::BlockId,
         predicate: ComparePredicate,
@@ -715,7 +713,7 @@ mod tests {
     }
 
     fn require(
-        builder: &mut HirBuilder,
+        builder: &mut IrBuilder,
         function: FunctionId,
         block: crate::BlockId,
         condition: ValueId,
@@ -748,7 +746,7 @@ mod tests {
     }
 
     fn require_compare(
-        builder: &mut HirBuilder,
+        builder: &mut IrBuilder,
         function: FunctionId,
         block: crate::BlockId,
         predicate: ComparePredicate,
@@ -761,7 +759,7 @@ mod tests {
 
     #[test]
     fn interprets_wrapping_integer_operations_casts_and_shifts() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i8 = builder.types().i8();
         let i64 = builder.types().i64();
         let (main, mut block) = main_function(&mut builder);
@@ -987,15 +985,15 @@ mod tests {
 
     #[test]
     fn interprets_calls_loops_block_parameters_and_zeroed_slots() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i64 = builder.types().i64();
-        let pointer = builder.add_type(HirTypeKind::Ptr {
+        let pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: i64,
             address_space: 0,
         });
         let increment = builder.declare_function(
             "gane.increment".into(),
-            signature(vec![HirParameter { typ: i64 }], vec![i64]),
+            signature(vec![IrParameter { typ: i64 }], vec![i64]),
             FunctionAttributes::default(),
         );
         let increment_entry = builder.entry_block(increment).unwrap();
@@ -1139,28 +1137,28 @@ mod tests {
 
     #[test]
     fn interprets_globals_structured_memory_zero_and_copy() {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i64 = builder.types().i64();
-        let array = builder.add_type(HirTypeKind::Array {
+        let array = builder.add_type(IrTypeKind::Array {
             length: 2,
             element: i64,
         });
-        let record = builder.add_type(HirTypeKind::Struct {
+        let record = builder.add_type(IrTypeKind::Struct {
             fields: vec![i64, array],
         });
-        let integer_pointer = builder.add_type(HirTypeKind::Ptr {
+        let integer_pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: i64,
             address_space: 0,
         });
-        let array_pointer = builder.add_type(HirTypeKind::Ptr {
+        let array_pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: array,
             address_space: 0,
         });
-        let record_pointer = builder.add_type(HirTypeKind::Ptr {
+        let record_pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: record,
             address_space: 0,
         });
-        let global = builder.add_global(HirGlobal {
+        let global = builder.add_global(IrGlobal {
             symbol: "gane.counter".into(),
             typ: i64,
             mutable: true,
@@ -1484,7 +1482,7 @@ mod tests {
     }
 
     fn binary_error(op: BinaryOp, left: u64, right: u64) -> InterpreterError {
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i64 = builder.types().i64();
         let (main, block) = main_function(&mut builder);
         let left = constant(&mut builder, main, block, i64, Constant::Integer(left));
@@ -1515,17 +1513,17 @@ mod tests {
             InterpreterError::Trap(TrapReason::NegativeShift)
         );
 
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i64 = builder.types().i64();
-        let array = builder.add_type(HirTypeKind::Array {
+        let array = builder.add_type(IrTypeKind::Array {
             length: 1,
             element: i64,
         });
-        let array_pointer = builder.add_type(HirTypeKind::Ptr {
+        let array_pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: array,
             address_space: 0,
         });
-        let integer_pointer = builder.add_type(HirTypeKind::Ptr {
+        let integer_pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: i64,
             address_space: 0,
         });
@@ -1561,9 +1559,9 @@ mod tests {
             Err(InterpreterError::Trap(TrapReason::BoundsError))
         );
 
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i64 = builder.types().i64();
-        let pointer = builder.add_type(HirTypeKind::Ptr {
+        let pointer = builder.add_type(IrTypeKind::Ptr {
             pointee: i64,
             address_space: 0,
         });
@@ -1586,7 +1584,7 @@ mod tests {
             Err(InterpreterError::Trap(TrapReason::NullDereference))
         );
 
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let (main, block) = main_function(&mut builder);
         builder
             .set_terminator(
@@ -1602,7 +1600,7 @@ mod tests {
             Err(InterpreterError::Trap(TrapReason::ExplicitPanic))
         );
 
-        let mut builder = HirBuilder::new(TargetSpec::for_test_64());
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let (main, block) = main_function(&mut builder);
         builder
             .set_terminator(main, block, Terminator::Unreachable)

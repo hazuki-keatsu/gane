@@ -6,22 +6,22 @@ impl<'a> Lowerer<'a> {
         typ: gane_sema::TypeId,
         node: AstNodeId,
     ) -> Result<TypeId, LowerError> {
-        if let Some(hir_type) = self.type_map.get(&typ) {
-            return Ok(*hir_type);
+        if let Some(ir_type) = self.type_map.get(&typ) {
+            return Ok(*ir_type);
         }
         let underlying = self.analysis.underlying_type(typ);
-        if let Some(hir_type) = self.type_map.get(&underlying).copied() {
-            self.type_map.insert(typ, hir_type);
-            return Ok(hir_type);
+        if let Some(ir_type) = self.type_map.get(&underlying).copied() {
+            self.type_map.insert(typ, ir_type);
+            return Ok(ir_type);
         }
-        if let Some(hir_type) = self.type_map.iter().find_map(|(semantic, hir_type)| {
+        if let Some(ir_type) = self.type_map.iter().find_map(|(semantic, ir_type)| {
             self.analysis
                 .identical_types(underlying, *semantic)
-                .then_some(*hir_type)
+                .then_some(*ir_type)
         }) {
-            self.type_map.insert(underlying, hir_type);
-            self.type_map.insert(typ, hir_type);
-            return Ok(hir_type);
+            self.type_map.insert(underlying, ir_type);
+            self.type_map.insert(typ, ir_type);
+            return Ok(ir_type);
         }
         let result = match self.analysis.type_of(underlying).kind.clone() {
             TypeKind::Basic(BasicType::Bool) => self.builder.types().i1(),
@@ -42,7 +42,7 @@ impl<'a> Lowerer<'a> {
                 let length = self.array_length(len, node)?;
                 let element = self.lower_type(elem, node)?;
                 self.builder
-                    .define_type(result, HirTypeKind::Array { length, element })
+                    .define_type(result, IrTypeKind::Array { length, element })
                     .map_err(|source| LowerError::Build { node, source })?;
                 return Ok(result);
             }
@@ -55,7 +55,7 @@ impl<'a> Lowerer<'a> {
                     .map(|field| self.lower_type(self.analysis.object(field).typ, node))
                     .collect::<Result<Vec<_>, _>>()?;
                 self.builder
-                    .define_type(result, HirTypeKind::Struct { fields })
+                    .define_type(result, IrTypeKind::Struct { fields })
                     .map_err(|source| LowerError::Build { node, source })?;
                 return Ok(result);
             }
@@ -121,7 +121,7 @@ impl<'a> Lowerer<'a> {
         if let Some(pointer) = self.pointer_types.get(&pointee) {
             return *pointer;
         }
-        let pointer = self.builder.add_type(HirTypeKind::Ptr {
+        let pointer = self.builder.add_type(IrTypeKind::Ptr {
             pointee,
             address_space: 0,
         });

@@ -6,7 +6,7 @@ use gane_parser::{
 };
 use gane_sema::{FileId, analyze_package};
 
-fn lower(source: &str, target: TargetSpec) -> Result<UnverifiedHirPackage, LowerError> {
+fn lower(source: &str, target: TargetSpec) -> Result<UnverifiedIrPackage, LowerError> {
     let mut files = FileSet::new();
     let (ast, errors) = parse_file(&mut files, "main.go", source.as_bytes(), Mode::default());
     assert!(errors.is_none(), "{errors:?}");
@@ -16,7 +16,7 @@ fn lower(source: &str, target: TargetSpec) -> Result<UnverifiedHirPackage, Lower
 }
 
 #[test]
-fn lowers_minimal_main_to_stable_verified_hir() {
+fn lowers_minimal_main_to_stable_verified_ir() {
     let package = lower(
         "package main\nfunc main() { var x int; x = 1 + 2 }\n",
         TargetSpec::for_test_64(),
@@ -158,8 +158,8 @@ fn maps_int_to_target_width_and_rejects_unrepresentable_constants() {
         let package = lower("package main\nfunc main() { var x int; _ = x }\n", target).unwrap();
         let slot = &package.function(package.entry()).unwrap().stack_slots[0];
         let width = match package.types().get(slot.typ).unwrap().kind {
-            HirTypeKind::I32 => 32,
-            HirTypeKind::I64 => 64,
+            IrTypeKind::I32 => 32,
+            IrTypeKind::I64 => 64,
             ref other => panic!("unexpected int type: {other:?}"),
         };
         assert_eq!(width, expected);
@@ -175,7 +175,7 @@ fn maps_int_to_target_width_and_rejects_unrepresentable_constants() {
 }
 
 #[test]
-fn lowers_scalar_functions_calls_and_returns_to_verified_hir() {
+fn lowers_scalar_functions_calls_and_returns_to_verified_ir() {
     let package = lower(
         "package main\n\
          func add(x int, y int) int { x = x + y; return x }\n\
@@ -782,7 +782,7 @@ fn lowers_nested_struct_and_array_places_to_geps() {
 }
 
 #[test]
-fn lowers_local_struct_field_to_stable_hir() {
+fn lowers_local_struct_field_to_stable_ir() {
     let package = lower(
         "package main\ntype Pair struct { value int }\nfunc main() { var pair Pair; pair.value = 1 }\n",
         TargetSpec::for_test_64(),
@@ -879,8 +879,8 @@ fn lowers_local_aggregate_copy_and_zero() {
                 for pointer in [destination, source] {
                     assert!(matches!(
                         package.types().get(function.value(pointer).unwrap().typ),
-                        Some(crate::HirType {
-                            kind: HirTypeKind::Ptr { pointee, .. }
+                        Some(crate::IrType {
+                            kind: IrTypeKind::Ptr { pointee, .. }
                         }) if *pointee == typ
                     ));
                 }
@@ -888,8 +888,8 @@ fn lowers_local_aggregate_copy_and_zero() {
             InstructionKind::AggregateZero { destination, typ } => {
                 assert!(matches!(
                     package.types().get(function.value(destination).unwrap().typ),
-                    Some(crate::HirType {
-                        kind: HirTypeKind::Ptr { pointee, .. }
+                    Some(crate::IrType {
+                        kind: IrTypeKind::Ptr { pointee, .. }
                     }) if *pointee == typ
                 ));
             }
@@ -1041,8 +1041,8 @@ fn snapshots_an_aggregate_before_a_later_rhs_call() {
 #[test]
 fn normalizes_array_indexes_to_the_target_pointer_width() {
     for (target, expected) in [
-        (TargetSpec::for_test_32(), HirTypeKind::I32),
-        (TargetSpec::for_test_64(), HirTypeKind::I64),
+        (TargetSpec::for_test_32(), IrTypeKind::I32),
+        (TargetSpec::for_test_64(), IrTypeKind::I64),
     ] {
         let package = lower(
             "package main\nfunc main() { var values [2]int; var index byte; _ = values[index] }\n",
@@ -1062,7 +1062,7 @@ fn normalizes_array_indexes_to_the_target_pointer_width() {
             .unwrap();
         assert!(matches!(
             package.types().get(function.value(index).unwrap().typ),
-            Some(crate::HirType { kind }) if *kind == expected
+            Some(crate::IrType { kind }) if *kind == expected
         ));
     }
 }
@@ -1214,11 +1214,11 @@ fn caches_identical_arrays_and_supports_pointer_recursive_structs() {
     assert_eq!(function.stack_slots[0].typ, function.stack_slots[1].typ);
     assert!(package.types().iter().any(|(_, typ)| matches!(
         typ.kind,
-        HirTypeKind::Struct { ref fields }
+        IrTypeKind::Struct { ref fields }
             if fields.iter().any(|field| matches!(
                 package.types().get(*field),
-                Some(crate::HirType {
-                    kind: HirTypeKind::Ptr { pointee, .. }
+                Some(crate::IrType {
+                    kind: IrTypeKind::Ptr { pointee, .. }
                 }) if *pointee == function.stack_slots[2].typ
             ))
     )));
@@ -1283,7 +1283,7 @@ fn reports_sema_errors_missing_facts_and_unsupported_syntax() {
 }
 
 #[test]
-fn lowers_scalar_globals_to_stable_hir_and_reuses_global_ids() {
+fn lowers_scalar_globals_to_stable_ir_and_reuses_global_ids() {
     let package = lower(
         "package main\n\
          const initial = 1\n\

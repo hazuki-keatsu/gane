@@ -1,8 +1,7 @@
 use crate::{
     BinaryOp, BlockId, BuildError, Callee, ComparePredicate, Constant, FunctionAttributes,
-    FunctionId, GlobalId, GlobalInitializer, HirBuilder, HirGlobal, HirParameter, HirSignature,
-    HirTypeKind, IntCastKind, Terminator, TrapReason, TypeId, UnaryOp, UnverifiedHirPackage,
-    ValueId,
+    FunctionId, GlobalId, GlobalInitializer, IntCastKind, IrBuilder, IrGlobal, IrParameter,
+    IrSignature, IrTypeKind, Terminator, TrapReason, TypeId, UnaryOp, UnverifiedIrPackage, ValueId,
 };
 use gane_parser::{
     ast,
@@ -72,9 +71,9 @@ impl fmt::Display for LowerError {
                 write!(formatter, "unsupported lowering construct: {construct}")
             }
             Self::InvalidConstant { .. } => {
-                formatter.write_str("constant cannot be represented by its HIR type")
+                formatter.write_str("constant cannot be represented by its IR type")
             }
-            Self::Build { source, .. } => write!(formatter, "HIR builder failed: {source}"),
+            Self::Build { source, .. } => write!(formatter, "IR builder failed: {source}"),
         }
     }
 }
@@ -92,7 +91,7 @@ pub fn lower_package(
     input: &PackageInput<'_>,
     analysis: &AnalysisResult,
     target: crate::TargetSpec,
-) -> Result<UnverifiedHirPackage, LowerError> {
+) -> Result<UnverifiedIrPackage, LowerError> {
     let errors = analysis
         .diagnostics
         .iter()
@@ -129,7 +128,7 @@ enum Rvalue {
 #[derive(Clone)]
 struct LoweredFunction {
     id: FunctionId,
-    signature: HirSignature,
+    signature: IrSignature,
 }
 
 #[derive(Clone, Copy)]
@@ -140,7 +139,7 @@ struct Loop {
 
 struct Lowerer<'a> {
     analysis: &'a AnalysisResult,
-    builder: HirBuilder,
+    builder: IrBuilder,
     function: FunctionId,
     block: BlockId,
     target_width: u8,
@@ -159,7 +158,7 @@ impl<'a> Lowerer<'a> {
         let target_width = target.pointer_width();
         Self {
             analysis,
-            builder: HirBuilder::new(target),
+            builder: IrBuilder::new(target),
             function: FunctionId::INVALID,
             block: BlockId::INVALID,
             target_width,

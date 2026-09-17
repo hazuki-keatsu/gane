@@ -1,6 +1,6 @@
 # `gane_sema` 总览
 
-一句话概括：`gane_sema` 接收同一个 package 的若干已解析 AST 文件，建立名字、对象、类型和词法作用域，检查当前 MVP 支持的声明、表达式和语句，并产出可供 HIR lowering、IDE 或诊断使用的语义事实。
+一句话概括：`gane_sema` 接收同一个 package 的若干已解析 AST 文件，建立名字、对象、类型和词法作用域，检查当前 MVP 支持的声明、表达式和语句，并产出可供 IR lowering、IDE 或诊断使用的语义事实。
 
 ```text
 source text
@@ -135,7 +135,7 @@ PackageId  package 身份（当前 MVP 内部使用 0）
 这样设计有两个原因：
 
 - Go 风格类型可以递归，例如 `type Node struct { next *Node }`；直接用 Rust 引用会很难表达环。
-- 语义查询、diagnostic、后续 HIR lowering 都应保存稳定身份，而不应持有 checker 内部容器的借用。
+- 语义查询、diagnostic、后续 IR lowering 都应保存稳定身份，而不应持有 checker 内部容器的借用。
 
 有两个保留的无效 ID：
 
@@ -400,7 +400,7 @@ parser 能产生的 AST 比 sema 当前支持的语言大得多。遇到可解�
 | 语句 | block、var、赋值、inc/dec、call、return、if、条件/无限 for、break/continue | range、switch、select、go、defer、label、三子句 for |
 | 全局初始化 | bool/int/byte 常量、nil pointer | aggregate 和运行时求值 initializer |
 
-具体限制会受到 `docs/hir-design.md` 中 V0 HIR 可表达性的约束。sema 的职责是：不把它明知 HIR 无法正确表示的源码状态静默交给 lowering。
+具体限制会受到 `docs/ir-design.md` 中 V0 IR 可表达性的约束。sema 的职责是：不把它明知 IR 无法正确表示的源码状态静默交给 lowering。
 
 ## 11. Diagnostics 与错误恢复
 
@@ -428,7 +428,7 @@ checker 不会因单个错误停止：
 - statement/expression 尽可能继续遍历子节点；
 - `finish` 会排序、去重 diagnostics。
 
-因此调用方应同时查看 `AnalysisResult::has_errors()` 和完整 `diagnostics`。即使有错误，`SemanticInfo` 仍可能包含对 IDE、高亮或后续错误恢复有用的局部事实；但 HIR lowering 应只接受无 error 的 analysis。
+因此调用方应同时查看 `AnalysisResult::has_errors()` 和完整 `diagnostics`。即使有错误，`SemanticInfo` 仍可能包含对 IDE、高亮或后续错误恢复有用的局部事实；但 IR lowering 应只接受无 error 的 analysis。
 
 ## 12. 对外查询 API 的边界
 
@@ -466,7 +466,7 @@ analysis.has_errors()
 2. 新构造是否需要新的 `TypeKind`、`ObjectKind`、`ScopeKind` 或 `SemanticInfo` 事实。
 3. 顶层名字是否必须预收集，以支持前向引用或跨文件引用。
 4. 它的类型/表达式解析从哪个 scope 开始；若是文件局部能力，应使用声明所属 file scope。
-5. HIR 是否可表达其运行时和 ABI 语义；不能时应在 sema 诊断，而不是留给 backend 猜测。
+5. IR 是否可表达其运行时和 ABI 语义；不能时应在 sema 诊断，而不是留给 backend 猜测。
 6. 是否需要对错误恢复、重名、shadowing、递归或初始化环建立负向测试。
 7. 是否需要在 `public_interface.rs` 保护新增的公开查询 API。
 
@@ -500,4 +500,4 @@ FFI 不应仅靠“缺少函数体”这一语法形状得到完整语义。稳�
 | `crates/sema/src/interface.rs` | 对外稳定查询面 |
 | `crates/sema/tests/public_interface.rs` | 外部调用者可依赖的最小接口 |
 | `docs/sema-syntax-checklist.md` | 按当前实现维护的语法支持 checklist |
-| `docs/hir-design.md` | sema 到 HIR 的 V0 契约与限制 |
+| `docs/ir-design.md` | sema 到 IR 的 V0 契约与限制 |

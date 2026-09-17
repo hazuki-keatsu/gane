@@ -4,7 +4,7 @@ impl<'a> Lowerer<'a> {
     pub(super) fn lower(
         mut self,
         input: &PackageInput<'_>,
-    ) -> Result<UnverifiedHirPackage, LowerError> {
+    ) -> Result<UnverifiedIrPackage, LowerError> {
         let main_object = self.analysis.package_member("main").ok_or_else(|| {
             self.unsupported(
                 input
@@ -97,7 +97,7 @@ impl<'a> Lowerer<'a> {
         &mut self,
         function: ObjectId,
         node: AstNodeId,
-    ) -> Result<HirSignature, LowerError> {
+    ) -> Result<IrSignature, LowerError> {
         let ObjectKind::Func { signature } = self.analysis.object(function).kind else {
             return Err(self.missing(node, "function signature"));
         };
@@ -125,7 +125,7 @@ impl<'a> Lowerer<'a> {
             if self.is_aggregate(typ) {
                 return Err(self.unsupported(node, "aggregate parameter"));
             }
-            parameters.push(HirParameter { typ });
+            parameters.push(IrParameter { typ });
         }
         let result_objects = self
             .analysis
@@ -144,7 +144,7 @@ impl<'a> Lowerer<'a> {
         if results.len() > 1 {
             return Err(self.unsupported(node, "multiple function results"));
         }
-        Ok(HirSignature {
+        Ok(IrSignature {
             parameters,
             results,
         })
@@ -216,7 +216,7 @@ impl<'a> Lowerer<'a> {
                         )?)
                     }
                 };
-                let global = self.builder.add_global(HirGlobal {
+                let global = self.builder.add_global(IrGlobal {
                     symbol: format!("gane.{}", identifier.name),
                     typ,
                     mutable: true,

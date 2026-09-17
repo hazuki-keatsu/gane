@@ -78,7 +78,7 @@ pub struct PredeclaredTypes {
     pub byte: TypeId,
 }
 
-/// The HIR-relevant, compile-time result of a package variable initializer.
+/// The IR-relevant, compile-time result of a package variable initializer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GlobalInitializer {
     /// The source declaration has Gane's ordinary zero initialization.
@@ -628,7 +628,7 @@ impl<'ast> Checker<'ast> {
                     self.diagnostics.error(
                         UNSUPPORTED_TYPE,
                         Some(expr.node_id()),
-                        "zero-length arrays are not supported by HIR V0",
+                        "zero-length arrays are not supported by IR V0",
                     );
                     return TypeId::INVALID;
                 }
@@ -685,7 +685,7 @@ impl<'ast> Checker<'ast> {
             self.diagnostics.error(
                 UNSUPPORTED_TYPE,
                 Some(struct_type.node_id()),
-                "empty structs are not supported by HIR V0",
+                "empty structs are not supported by IR V0",
             );
             return TypeId::INVALID;
         };
@@ -695,7 +695,7 @@ impl<'ast> Checker<'ast> {
                 self.diagnostics.error(
                     UNSUPPORTED_TYPE,
                     Some(field.node_id()),
-                    "struct field tags are not supported by HIR V0",
+                    "struct field tags are not supported by IR V0",
                 );
             }
             let Some(typ_expr) = &field.typ else {
@@ -731,7 +731,7 @@ impl<'ast> Checker<'ast> {
             self.diagnostics.error(
                 UNSUPPORTED_TYPE,
                 Some(struct_type.node_id()),
-                "empty structs are not supported by HIR V0",
+                "empty structs are not supported by IR V0",
             );
             return TypeId::INVALID;
         }
@@ -2673,7 +2673,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_type_forms_without_hir_v0_representations() {
+    fn rejects_type_forms_without_ir_v0_representations() {
         for source in [
             "package main\nvar value []int\n",
             "package main\nvar value func()\n",
@@ -2707,12 +2707,12 @@ mod tests {
         assert!(reports_error(
             &result,
             UNSUPPORTED_TYPE,
-            "empty structs are not supported by HIR V0"
+            "empty structs are not supported by IR V0"
         ));
         assert!(reports_error(
             &result,
             UNSUPPORTED_TYPE,
-            "zero-length arrays are not supported by HIR V0"
+            "zero-length arrays are not supported by IR V0"
         ));
         assert!(reports_unsupported(&result, "multiple function results"));
         assert!(reports_unsupported(&result, "aggregate function result"));
@@ -2788,7 +2788,7 @@ mod tests {
         assert!(reports_error(
             &tagged,
             UNSUPPORTED_TYPE,
-            "struct field tags are not supported by HIR V0"
+            "struct field tags are not supported by IR V0"
         ));
     }
 
