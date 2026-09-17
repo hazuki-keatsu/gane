@@ -42,7 +42,7 @@
   - 验证器测试；
   - 关键语义测试（尤其副作用顺序与 trap 路径）。
 
-- [ ] 单独实现 escape check
+- [x] 单独实现 escape check
 它不要和普通 verifier 混在一起。先做保守版本：
   - 标记 StackAddr 为 stack-derived；
   - 穿透 GEP、slot store/load 和内部函数参数；

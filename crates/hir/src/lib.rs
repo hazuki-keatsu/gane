@@ -1,4 +1,5 @@
 mod builder;
+mod escape;
 mod id;
 mod interface;
 mod ir;

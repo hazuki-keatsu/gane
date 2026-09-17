@@ -2,7 +2,7 @@ use crate::ir::HirPackage;
 use crate::{
     BinaryOp, BlockId, Callee, ComparePredicate, Constant, FunctionId, GlobalInitializer,
     HirFunction, HirParameter, HirTypeKind, Instruction, InstructionKind, IntCastKind, Terminator,
-    TypeId, UnaryOp, UnverifiedHirPackage, ValueId, ValueOrigin,
+    TypeId, UnaryOp, UnverifiedHirPackage, ValueId, ValueOrigin, VerifiedHirPackage,
 };
 use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::fmt;
@@ -21,6 +21,13 @@ impl fmt::Display for HirDiagnostic {
 }
 
 impl HirDiagnostic {
+    pub(crate) fn new(location: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            location: location.into(),
+            message: message.into(),
+        }
+    }
+
     /// Returns the package, function, block, or instruction containing the failure.
     pub fn location(&self) -> &str {
         &self.location
@@ -46,6 +53,15 @@ pub fn verify(package: &UnverifiedHirPackage) -> Result<(), Vec<HirDiagnostic>> 
     } else {
         Err(verifier.diagnostics)
     }
+}
+
+/// Checks ordinary HIR invariants and stack-address escape rules before producing backend input.
+pub fn verify_and_check_escape(
+    package: UnverifiedHirPackage,
+) -> Result<VerifiedHirPackage, Vec<HirDiagnostic>> {
+    verify(&package)?;
+    crate::escape::check(&package)?;
+    Ok(VerifiedHirPackage::from_inner(package.into_inner()))
 }
 
 struct Verifier<'a> {

@@ -11,7 +11,7 @@ pub use crate::ir::{
 pub use crate::lower::{LowerError, lower_package};
 pub use crate::target::{Endianness, TargetSpec, TargetSpecError};
 pub use crate::types::{HirType, HirTypeKind, SourceOrigin, Symbol, TypeArena, TypeArenaError};
-pub use crate::verify::{HirDiagnostic, verify};
+pub use crate::verify::{HirDiagnostic, verify, verify_and_check_escape};
 
 #[cfg(test)]
 mod tests {

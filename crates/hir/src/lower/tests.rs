@@ -1,5 +1,5 @@
 use super::*;
-use crate::{InstructionKind, TargetSpec, verify};
+use crate::{InstructionKind, TargetSpec, verify, verify_and_check_escape};
 use gane_parser::{
     parser::{Mode, parse_file},
     token::FileSet,
@@ -23,6 +23,7 @@ fn lowers_minimal_main_to_stable_verified_hir() {
     )
     .unwrap();
     verify(&package).unwrap();
+    verify_and_check_escape(package.clone()).unwrap();
 
     assert_eq!(
         package.to_string(),
