@@ -1,6 +1,7 @@
-//! `gane-driver`: parse and semantically check one Go source file.
+//! `gane-driver`: run one Go source file through the implemented compiler stages.
 //!
-//! Reads one Go source file, parses it, semantically checks it, and writes
+//! Reads one Go source file, parses it, semantically checks it, lowers verified HIR, interprets
+//! it, and writes
 //! generated files named after the input (for an input `foo.go`):
 //!
 //! - `<output-dir>/foo.go.ast.txt` - the parsed AST, debug-printed
@@ -13,8 +14,10 @@
 //!   created when the source had errors.
 //! - `<output-dir>/foo.go.sema.err.txt` - semantic diagnostics; only created
 //!   when semantic analysis reports an error.
+//! - `<output-dir>/foo.go.hir.txt` - verified HIR, only created after successful lowering and
+//!   escape checking.
 //!
-//! Exit codes: 0 ok, 1 the source had parse or semantic errors (also reported
+//! Exit codes: 0 ok, 1 a compiler stage or the interpreter failed (also reported
 //! on stderr), 2 usage or I/O error.
 
 use std::env;
@@ -22,6 +25,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use gane_hir::{TargetSpec, interpret, lower_package, verify_and_check_escape};
 use gane_parser::parser::{Mode, parse_file};
 use gane_parser::token::FileSet;
 use gane_sema::{FileId, PackageInput, analyze_package};
@@ -29,8 +33,8 @@ use gane_sema::{FileId, PackageInput, analyze_package};
 const USAGE: &str = "\
 usage: gane-driver <file.go> [output-dir]
 
-Parses and semantically checks the Go source file <file.go>, writing generated
-files named after the input (for an input \"foo.go\"):
+Parses, semantically checks, lowers, verifies, and interprets <file.go>,
+writing generated files named after the input (for an input \"foo.go\"):
 
     <output-dir>/foo.go.ast.txt    the parsed AST, debug-printed ({:#?})
     <output-dir>/foo.go.sema.txt   the semantic analysis result, debug-printed
@@ -38,9 +42,10 @@ files named after the input (for an input \"foo.go\"):
                                    (created only when errors occur)
     <output-dir>/foo.go.sema.err.txt semantic diagnostics with source locations
                                      (created only when errors occur)
+    <output-dir>/foo.go.hir.txt    verified HIR (created only on success)
 
-output-dir defaults to \"out\". Exit codes: 0 ok, 1 parse or semantic errors,
-2 usage or I/O error.
+output-dir defaults to \"out\". Exit codes: 0 ok, 1 a compiler stage or the
+interpreter failed, 2 usage or I/O error.
 ";
 
 fn main() -> ExitCode {
@@ -134,7 +139,8 @@ fn main() -> ExitCode {
 
     // Only a syntax-clean AST reaches sema; semantic diagnostics then share
     // the parser's FileSet for source-aware rendering.
-    let analysis = analyze_package(PackageInput::single("main", FileId::from_raw(1), &ast));
+    let package = PackageInput::single("main", FileId::from_raw(1), &ast);
+    let analysis = analyze_package(package.clone());
     let sema_dump_path = out_dir.join(format!("{stem}.sema.txt"));
     let sema_dump = format!("{analysis:#?}");
     if let Err(e) = fs::write(&sema_dump_path, &sema_dump) {
@@ -151,33 +157,72 @@ fn main() -> ExitCode {
         analysis.diagnostics.len()
     );
 
-    if !analysis.has_errors() {
-        return ExitCode::SUCCESS;
-    }
-
-    let mut text = String::new();
-    for diagnostic in &analysis.diagnostics {
-        text.push_str(&diagnostic.display_with(&fset).to_string());
-    }
-    let sema_err_path = out_dir.join(format!("{stem}.sema.err.txt"));
-    if let Err(e) = fs::write(&sema_err_path, &text) {
+    if analysis.has_errors() {
+        let mut text = String::new();
+        for diagnostic in &analysis.diagnostics {
+            text.push_str(&diagnostic.display_with(&fset).to_string());
+        }
+        let sema_err_path = out_dir.join(format!("{stem}.sema.err.txt"));
+        if let Err(e) = fs::write(&sema_err_path, &text) {
+            eprintln!(
+                "gane-driver: cannot write `{}`: {e}",
+                sema_err_path.display()
+            );
+            return ExitCode::from(2);
+        }
+        for diagnostic in &analysis.diagnostics {
+            eprint!("gane-driver: {}", diagnostic.display_with(&fset));
+        }
         eprintln!(
-            "gane-driver: cannot write `{}`: {e}",
+            "gane-driver: source has {} semantic error(s), see `{}`",
+            analysis
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == gane_sema::Severity::Error)
+                .count(),
             sema_err_path.display()
         );
+        return ExitCode::FAILURE;
+    }
+
+    // ponytail: use the existing 64-bit fixture while interpreter-only; derive this from LLVM's
+    // target machine when the backend supplies physical layout.
+    let raw_hir = match lower_package(&package, &analysis, TargetSpec::for_test_64()) {
+        Ok(package) => package,
+        Err(error) => {
+            eprintln!("gane-driver: HIR lowering failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let hir = match verify_and_check_escape(raw_hir) {
+        Ok(package) => package,
+        Err(diagnostics) => {
+            for diagnostic in diagnostics {
+                eprintln!("gane-driver: HIR verification failed: {diagnostic}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+    let hir_path = out_dir.join(format!("{stem}.hir.txt"));
+    let hir_dump = hir.to_string();
+    if let Err(e) = fs::write(&hir_path, &hir_dump) {
+        eprintln!("gane-driver: cannot write `{}`: {e}", hir_path.display());
         return ExitCode::from(2);
     }
-    for diagnostic in &analysis.diagnostics {
-        eprint!("gane-driver: {}", diagnostic.display_with(&fset));
-    }
-    eprintln!(
-        "gane-driver: source has {} semantic error(s), see `{}`",
-        analysis
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.severity == gane_sema::Severity::Error)
-            .count(),
-        sema_err_path.display()
+    println!(
+        "gane-driver: wrote {} ({} bytes, verified HIR)",
+        hir_path.display(),
+        hir_dump.len()
     );
-    ExitCode::FAILURE
+
+    match interpret(&hir) {
+        Ok(()) => {
+            println!("gane-driver: interpreter completed successfully");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("gane-driver: interpreter failed: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }

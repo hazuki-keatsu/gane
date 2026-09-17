@@ -26,6 +26,7 @@ dependencies = [
 name = "gane_driver"
 version = "0.1.0"
 dependencies = [
+ "gane_hir",
  "gane_parser",
  "gane_sema",
 ]

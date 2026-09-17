@@ -45,3 +45,28 @@ fn semantic_errors_are_dumped_and_rendered_after_a_successful_parse() {
     assert!(diagnostics.contains("error[E2201]: undefined name `missing`"));
     assert!(diagnostics.contains(" --> "));
 }
+
+#[test]
+fn valid_program_is_lowered_verified_and_interpreted() {
+    let root = fixture_dir("pipeline");
+    let _fixture = FixtureDir(root.clone());
+    let out = root.join("out");
+    fs::create_dir_all(&root).expect("create fixture directory");
+    let input = root.join("main.go");
+    fs::write(
+        &input,
+        b"package main\nfunc increment(x int) int { return x + 1 }\nfunc main() { var x int; x = increment(2) }\n",
+    )
+    .expect("write fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_gane_driver"))
+        .arg(&input)
+        .arg(&out)
+        .output()
+        .expect("run driver");
+
+    assert!(output.status.success(), "{output:?}");
+    let hir = fs::read_to_string(out.join("main.go.hir.txt")).expect("verified HIR dump");
+    assert!(hir.contains("func @"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("interpreter completed successfully"));
+}
