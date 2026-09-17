@@ -26,9 +26,6 @@ fn print_package(package: &IrPackage, f: &mut fmt::Formatter<'_>) -> fmt::Result
     writeln!(f, "  endianness = {:?}", package.target.endianness())?;
     writeln!(f, "}}")?;
 
-    for (id, _) in package.types.iter() {
-        writeln!(f, "type !{}", id.raw())?;
-    }
     for (id, typ) in package.types.iter() {
         writeln!(f, "type !{} = {}", id.raw(), TypeDisplay(&typ.kind))?;
     }
