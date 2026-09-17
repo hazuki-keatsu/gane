@@ -47,7 +47,7 @@ fn semantic_errors_are_dumped_and_rendered_after_a_successful_parse() {
 }
 
 #[test]
-fn valid_program_is_lowered_verified_and_interpreted() {
+fn valid_program_is_lowered_emitted_and_interpreted() {
     let root = fixture_dir("pipeline");
     let _fixture = FixtureDir(root.clone());
     let out = root.join("out");
@@ -68,5 +68,9 @@ fn valid_program_is_lowered_verified_and_interpreted() {
     assert!(output.status.success(), "{output:?}");
     let ir = fs::read_to_string(out.join("main.go.ir.txt")).expect("verified IR dump");
     assert!(ir.contains("func @"));
+    let llvm_ir = fs::read_to_string(out.join("main.go.ll")).expect("verified LLVM IR");
+    assert!(llvm_ir.contains("target triple ="));
+    assert!(llvm_ir.contains("define i32 @main"));
+    assert!(llvm_ir.contains("@gane.main"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("interpreter completed successfully"));
 }

@@ -5,3 +5,5 @@ version.workspace = true
 authors.workspace = true
 
 [dependencies]
+gane_ir = { path = "../ir" }
+inkwell = { workspace = true }

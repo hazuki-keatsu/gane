@@ -1,7 +1,7 @@
 //! `gane-driver`: run one Go source file through the implemented compiler stages.
 //!
-//! Reads one Go source file, parses it, semantically checks it, lowers verified IR, interprets
-//! it, and writes
+//! Reads one Go source file, parses it, semantically checks it, lowers verified IR, emits LLVM
+//! IR, interprets it, and writes
 //! generated files named after the input (for an input `foo.go`):
 //!
 //! - `<output-dir>/foo.go.ast.txt` - the parsed AST, debug-printed
@@ -16,6 +16,7 @@
 //!   when semantic analysis reports an error.
 //! - `<output-dir>/foo.go.ir.txt` - verified IR, only created after successful lowering and
 //!   escape checking.
+//! - `<output-dir>/foo.go.ll` - verified LLVM IR, only created after successful codegen.
 //!
 //! Exit codes: 0 ok, 1 a compiler stage or the interpreter failed (also reported
 //! on stderr), 2 usage or I/O error.
@@ -25,7 +26,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use gane_ir::{TargetSpec, interpret, lower_package, verify_and_check_escape};
+use gane_codegen::LlvmBackend;
+use gane_ir::{interpret, lower_package, verify_and_check_escape};
 use gane_parser::parser::{Mode, parse_file};
 use gane_parser::token::FileSet;
 use gane_sema::{FileId, PackageInput, analyze_package};
@@ -43,6 +45,7 @@ writing generated files named after the input (for an input \"foo.go\"):
     <output-dir>/foo.go.sema.err.txt semantic diagnostics with source locations
                                      (created only when errors occur)
     <output-dir>/foo.go.ir.txt    verified IR (created only on success)
+    <output-dir>/foo.go.ll        verified LLVM IR (created only on success)
 
 output-dir defaults to \"out\". Exit codes: 0 ok, 1 a compiler stage or the
 interpreter failed, 2 usage or I/O error.
@@ -185,9 +188,14 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // ponytail: use the existing 64-bit fixture while interpreter-only; derive this from LLVM's
-    // target machine when the backend supplies physical layout.
-    let raw_ir = match lower_package(&package, &analysis, TargetSpec::for_test_64()) {
+    let backend = match LlvmBackend::for_host() {
+        Ok(backend) => backend,
+        Err(error) => {
+            eprintln!("gane-driver: LLVM backend initialization failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let raw_ir = match lower_package(&package, &analysis, backend.target_spec().clone()) {
         Ok(package) => package,
         Err(error) => {
             eprintln!("gane-driver: IR lowering failed: {error}");
@@ -213,6 +221,27 @@ fn main() -> ExitCode {
         "gane-driver: wrote {} ({} bytes, verified IR)",
         ir_path.display(),
         ir_dump.len()
+    );
+
+    let llvm_ir = match backend.emit_llvm_ir(&ir) {
+        Ok(llvm_ir) => llvm_ir,
+        Err(error) => {
+            eprintln!("gane-driver: LLVM codegen failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let llvm_path = out_dir.join(format!("{stem}.ll"));
+    if let Err(error) = fs::write(&llvm_path, &llvm_ir) {
+        eprintln!(
+            "gane-driver: cannot write `{}`: {error}",
+            llvm_path.display()
+        );
+        return ExitCode::from(2);
+    }
+    println!(
+        "gane-driver: wrote {} ({} bytes, verified LLVM IR)",
+        llvm_path.display(),
+        llvm_ir.len()
     );
 
     match interpret(&ir) {

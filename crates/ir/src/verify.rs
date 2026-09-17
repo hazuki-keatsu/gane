@@ -272,6 +272,14 @@ impl Verifier<'_> {
                 "stack slot",
             );
         }
+        for (block_index, block) in function.blocks.iter().enumerate() {
+            if targets(&block.terminator).contains(&function.entry) {
+                self.error(
+                    format!("{prefix} block ^{} terminator", block_index + 1),
+                    "function entry block cannot be a branch target",
+                );
+            }
+        }
         self.verify_definitions(id, function);
         let (reachable, dominators) = self.control_flow(id, function);
         for (block_index, block) in function.blocks.iter().enumerate() {
@@ -1084,6 +1092,31 @@ mod tests {
     #[test]
     fn accepts_well_typed_package() {
         assert_eq!(verify(&empty_main()), Ok(()));
+    }
+
+    #[test]
+    fn rejects_branch_to_function_entry() {
+        let mut builder = IrBuilder::new(crate::TargetSpec::for_test_64());
+        let main = builder.declare_function(
+            "gane.main".into(),
+            signature(vec![], vec![]),
+            FunctionAttributes::default(),
+        );
+        builder.set_entry(main).unwrap();
+        let entry = builder.entry_block(main).unwrap();
+        builder
+            .set_terminator(
+                main,
+                entry,
+                Terminator::Branch {
+                    target: entry,
+                    arguments: vec![],
+                },
+            )
+            .unwrap();
+
+        let errors = messages(&builder.finish().unwrap());
+        assert!(errors.contains("function entry block cannot be a branch target"));
     }
 
     #[test]

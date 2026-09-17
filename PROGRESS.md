@@ -53,8 +53,8 @@ verify_and_check_escape 只有两类检查都通过才返回 VerifiedIrPackage�
 - [x] 实现最小 interpreter
 interpreter 是 IR 设计的安全网：已覆盖整数、CFG、stack object、trap、aggregate copy/zero，不需要真实物理布局或 extern。
 
-- [ ] 实现 host LLVM IR backend
-codegen 只接受 VerifiedIrPackage，按 [codegen-design](./docs/codegen-design.md) 生成并验证 `.ll`。先完成 TargetMachine/TargetData、SSA/phi、LLVM safety legalization、结构化内存与 aggregate，再由 driver 输出 `.ll` 并使用 `lli` 与 interpreter 做差分测试。object、链接和可执行文件 AOT 属于后续里程碑。
+- [x] 实现 host LLVM IR backend
+codegen 只接受 VerifiedIrPackage，按 [codegen-design](./docs/codegen-design.md) 生成并验证 `.ll`。已完成 TargetMachine/TargetData、SSA/phi、LLVM safety legalization、结构化内存与 aggregate；driver 输出 `.ll`，codegen 回归测试以 `lli` 与 interpreter 覆盖正常完成和 trap 路径。object、链接和可执行文件 AOT 属于后续里程碑。
 
 ## 建议
 
