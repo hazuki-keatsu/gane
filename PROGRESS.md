@@ -50,7 +50,7 @@
   - 对内部调用图做 noescape summary 的不动点求解。
 verify_and_check_escape 只有两类检查都通过才返回 VerifiedHirPackage。
 
-- [ ] 先做 interpreter，再做 LLVM backend
+- [x] 先做 interpreter，再做 LLVM backend
 interpreter 是 HIR 设计的安全网：可先实现整数、CFG、stack object、trap、aggregate copy/zero，不需要真实物理布局或 extern。之后 LLVM codegen 只接受 VerifiedHirPackage，实现 hosted main wrapper，并逐步用“interpreter 与生成可执行文件的差分测试”验证除零、MIN / -1、越界、负/超宽 shift、null 等最危险的语义。
 
 ## 建议
