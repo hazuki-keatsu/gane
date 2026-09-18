@@ -100,7 +100,7 @@ pub fn lower_package(
     if !errors.is_empty() {
         let node = errors[0]
             .primary
-            .node
+            .ast_node()
             .or_else(|| input.files.first().map(|file| file.ast.node_id()))
             .unwrap_or(AstNodeId::INVALID);
         return Err(LowerError::SemanticErrors {

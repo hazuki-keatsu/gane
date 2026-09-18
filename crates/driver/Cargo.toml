@@ -6,6 +6,8 @@ authors.workspace = true
 
 [dependencies]
 clap = { workspace = true }
+colored = { workspace = true }
+gane_diagnostics = { path = "../diagnostics" }
 gane_codegen = { path = "../codegen" }
 gane_ir = { path = "../ir" }
 gane_parser = { path= "../parser" }

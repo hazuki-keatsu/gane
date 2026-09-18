@@ -1,5 +1,5 @@
-use std::{path::PathBuf, process::ExitCode};
 use clap::{Args, Parser, Subcommand};
+use std::{path::PathBuf, process::ExitCode};
 
 mod single_file;
 
@@ -31,10 +31,14 @@ struct SingleArgs {
     /// Directory for generated dumps.
     #[arg(short, long, default_value = "out", value_name = "DIR")]
     out_dir: PathBuf,
+
+    /// Render diagnostics with ANSI colors on stderr.
+    #[arg(long)]
+    disable_color: bool,
 }
 
 fn main() -> ExitCode {
     match Cli::parse().command {
-        Command::Single(args) => single_file::run(args.input, args.out_dir),
+        Command::Single(args) => single_file::run(args.input, args.out_dir, args.disable_color),
     }
 }

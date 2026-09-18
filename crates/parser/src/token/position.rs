@@ -20,7 +20,7 @@ const DEBUG: bool = false;
 
 /// An arbitrary source position including the file, line, and column location.
 /// A `Position` is valid if the line number is > 0.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Position {
     pub file_name: String, // file name, if any
     pub offset: i64,       // offset, starting at 0

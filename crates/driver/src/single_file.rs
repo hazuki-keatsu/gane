@@ -3,12 +3,14 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use gane_codegen::LlvmBackend;
+use gane_diagnostics::{DiagnosticMode, Diagnostics};
 use gane_ir::{interpret, lower_package, verify_and_check_escape};
 use gane_parser::parser::{Mode, parse_file};
 use gane_parser::token::FileSet;
 use gane_sema::{FileId, PackageInput, analyze_package};
 
-pub(crate) fn run(input: PathBuf, out_dir: PathBuf) -> ExitCode {
+pub(crate) fn run(input: PathBuf, out_dir: PathBuf, disable_color: bool) -> ExitCode {
+    colored::control::set_override(!disable_color);
     // --- src -> AST -------------------------------------------------------
     let src = match fs::read(&input) {
         Ok(src) => src,
@@ -18,6 +20,11 @@ pub(crate) fn run(input: PathBuf, out_dir: PathBuf) -> ExitCode {
         }
     };
     let filename = input.to_string_lossy().into_owned();
+    let diagnostic_mode = if disable_color {
+        DiagnosticMode::PLAIN
+    } else {
+        DiagnosticMode::COLOR
+    };
     let mut fset = FileSet::new();
     let (ast, errors) = parse_file(&mut fset, &filename, &src, Mode::default());
 
@@ -51,9 +58,15 @@ pub(crate) fn run(input: PathBuf, out_dir: PathBuf) -> ExitCode {
     );
 
     if let Some(errors) = &errors {
+        let diagnostics = Diagnostics::from(errors);
         let mut text = String::new();
-        for e in errors.iter() {
-            text.push_str(&e.to_string());
+        for diagnostic in diagnostics.iter() {
+            text.push_str(
+                &diagnostic
+                    .display(DiagnosticMode::PLAIN)
+                    .expect("parser diagnostics have resolved positions")
+                    .to_string(),
+            );
             text.push('\n');
         }
         let err_path = out_dir.join(format!("{stem}.err.txt"));
@@ -61,8 +74,13 @@ pub(crate) fn run(input: PathBuf, out_dir: PathBuf) -> ExitCode {
             eprintln!("gane-driver: cannot write `{}`: {e}", err_path.display());
             return ExitCode::from(2);
         }
-        for e in errors.iter() {
-            eprintln!("gane-driver: {}", e);
+        for diagnostic in diagnostics.iter() {
+            eprintln!(
+                "gane-driver: {}",
+                diagnostic
+                    .display(diagnostic_mode)
+                    .expect("parser diagnostics have resolved positions")
+            );
         }
         eprintln!(
             "gane-driver: source has {} parse error(s), see `{}`",
@@ -72,10 +90,13 @@ pub(crate) fn run(input: PathBuf, out_dir: PathBuf) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // Only a syntax-clean AST reaches sema; semantic diagnostics then share
-    // the parser's FileSet for source-aware rendering.
+    // Only a syntax-clean AST reaches sema.
     let package = PackageInput::single("main", FileId::from_raw(1), &ast);
-    let analysis = analyze_package(package.clone());
+    let mut analysis = analyze_package(package.clone());
+    if let Err(error) = analysis.resolve_diagnostics(&package, &fset) {
+        eprintln!("gane-driver: cannot resolve semantic diagnostic positions: {error}");
+        return ExitCode::FAILURE;
+    }
     let sema_dump_path = out_dir.join(format!("{stem}.sema.txt"));
     let sema_dump = format!("{analysis:#?}");
     if let Err(e) = fs::write(&sema_dump_path, &sema_dump) {
@@ -95,7 +116,12 @@ pub(crate) fn run(input: PathBuf, out_dir: PathBuf) -> ExitCode {
     if analysis.has_errors() {
         let mut text = String::new();
         for diagnostic in &analysis.diagnostics {
-            text.push_str(&diagnostic.display_with(&fset).to_string());
+            text.push_str(
+                &diagnostic
+                    .display(DiagnosticMode::PLAIN)
+                    .expect("resolved semantic diagnostics")
+                    .to_string(),
+            );
         }
         let sema_err_path = out_dir.join(format!("{stem}.sema.err.txt"));
         if let Err(e) = fs::write(&sema_err_path, &text) {
@@ -106,7 +132,12 @@ pub(crate) fn run(input: PathBuf, out_dir: PathBuf) -> ExitCode {
             return ExitCode::from(2);
         }
         for diagnostic in &analysis.diagnostics {
-            eprint!("gane-driver: {}", diagnostic.display_with(&fset));
+            eprint!(
+                "gane-driver: {}",
+                diagnostic
+                    .display(diagnostic_mode)
+                    .expect("resolved semantic diagnostics")
+            );
         }
         eprintln!(
             "gane-driver: source has {} semantic error(s), see `{}`",

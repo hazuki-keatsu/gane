@@ -13,14 +13,30 @@ pub use crate::{
         TupleId, Type, TypeAndValue, TypeId, TypeKind, UnderlyingState, ValueMode,
     },
 };
-pub use gane_diagnostics::{Diagnostic, DiagnosticCode, Severity};
+pub use gane_diagnostics::{Diagnostic, DiagnosticCode, ResolveError, Severity};
 pub use gane_parser::token::AstNodeId;
+use gane_parser::{ast, token::FileSet};
 
 pub use crate::checker::{
     AnalysisResult, GlobalInitializer, PackageFile, PackageInput, PredeclaredTypes,
 };
 
 impl AnalysisResult {
+    /// Resolves diagnostic source anchors while the input AST and file set are available.
+    pub fn resolve_diagnostics(
+        &mut self,
+        input: &PackageInput<'_>,
+        files: &FileSet,
+    ) -> Result<(), ResolveError> {
+        gane_diagnostics::resolve_positions(&mut self.diagnostics, files, |id| {
+            input.files.iter().find_map(|file| {
+                ast::preorder(ast::NodeRef::File(file.ast))
+                    .find(|node| node.node_id() == id)
+                    .map(|node| node.pos())
+            })
+        })
+    }
+
     /// Returns the object for `id`, or the canonical invalid object for an
     /// unknown ID. Invalid IDs are intentionally safe during error recovery.
     pub fn object(&self, id: ObjectId) -> &Object {

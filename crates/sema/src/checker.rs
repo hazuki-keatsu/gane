@@ -1892,9 +1892,9 @@ impl<'ast> Checker<'ast> {
             Diagnostic::new(
                 gane_diagnostics::Severity::Error,
                 DUPLICATE_DECLARATION,
-                Label::new(anchor, "duplicate declaration in scope"),
+                label_from_node(anchor, "duplicate declaration in scope"),
             )
-            .with_secondary(Label::new(
+            .with_secondary(label_from_node(
                 previous.declaration,
                 "previous declaration is here",
             )),
@@ -1902,14 +1902,6 @@ impl<'ast> Checker<'ast> {
     }
 
     fn finish(self) -> AnalysisResult {
-        let mut diagnostics = self.diagnostics;
-        diagnostics.capture_positions(|id| {
-            self.input.files.iter().find_map(|file| {
-                ast::preorder(ast::NodeRef::File(file.ast))
-                    .find(|node| node.node_id() == id)
-                    .map(|node| node.pos())
-            })
-        });
         let package = Package {
             id: PackageId::from_raw(0),
             name: self.package_name.expect("package name must be initialized"),
@@ -1928,8 +1920,15 @@ impl<'ast> Checker<'ast> {
             file_scopes: self.file_scopes,
             info: self.info,
             global_initializers: self.resolved_global_initializers,
-            diagnostics: diagnostics.finish(),
+            diagnostics: self.diagnostics.finish(),
         }
+    }
+}
+
+fn label_from_node(node: Option<AstNodeId>, message: impl Into<String>) -> Label {
+    match node {
+        Some(node) => Label::from_node(node, message),
+        None => Label::from_position(gane_parser::token::Position::default(), message),
     }
 }
 
