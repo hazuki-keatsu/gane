@@ -339,12 +339,6 @@ mod tests {
   pointer_width = 64
   endianness = Little
 }
-type !1
-type !2
-type !3
-type !4
-type !5
-type !6
 type !1 = void
 type !2 = i1
 type !3 = i8

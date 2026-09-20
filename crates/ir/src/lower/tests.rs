@@ -35,13 +35,6 @@ fn lowers_minimal_main_to_stable_verified_ir() {
   pointer_width = 64
   endianness = Little
 }
-type !1
-type !2
-type !3
-type !4
-type !5
-type !6
-type !7
 type !1 = void
 type !2 = i1
 type !3 = i8
@@ -195,13 +188,6 @@ fn lowers_scalar_functions_calls_and_returns_to_verified_ir() {
   pointer_width = 64
   endianness = Little
 }
-type !1
-type !2
-type !3
-type !4
-type !5
-type !6
-type !7
 type !1 = void
 type !2 = i1
 type !3 = i8
@@ -332,13 +318,6 @@ fn lowers_if_else_to_zero_parameter_join() {
   pointer_width = 64
   endianness = Little
 }
-type !1
-type !2
-type !3
-type !4
-type !5
-type !6
-type !7
 type !1 = void
 type !2 = i1
 type !3 = i8
@@ -388,13 +367,6 @@ fn lowers_conditional_for_to_a_zero_parameter_loop_cfg() {
   pointer_width = 64
   endianness = Little
 }
-type !1
-type !2
-type !3
-type !4
-type !5
-type !6
-type !7
 type !1 = void
 type !2 = i1
 type !3 = i8
@@ -446,13 +418,6 @@ fn lowers_short_circuit_to_cfg_with_boolean_join_parameters() {
   pointer_width = 64
   endianness = Little
 }
-type !1
-type !2
-type !3
-type !4
-type !5
-type !6
-type !7
 type !1 = void
 type !2 = i1
 type !3 = i8
@@ -798,15 +763,6 @@ fn lowers_local_struct_field_to_stable_ir() {
   pointer_width = 64
   endianness = Little
 }
-type !1
-type !2
-type !3
-type !4
-type !5
-type !6
-type !7
-type !8
-type !9
 type !1 = void
 type !2 = i1
 type !3 = i8
@@ -905,16 +861,6 @@ fn lowers_local_aggregate_copy_and_zero() {
   pointer_width = 64
   endianness = Little
 }
-type !1
-type !2
-type !3
-type !4
-type !5
-type !6
-type !7
-type !8
-type !9
-type !10
 type !1 = void
 type !2 = i1
 type !3 = i8
@@ -1337,13 +1283,6 @@ fn lowers_scalar_globals_to_stable_ir_and_reuses_global_ids() {
   pointer_width = 64
   endianness = Little
 }
-type !1
-type !2
-type !3
-type !4
-type !5
-type !6
-type !7
 type !1 = void
 type !2 = i1
 type !3 = i8
