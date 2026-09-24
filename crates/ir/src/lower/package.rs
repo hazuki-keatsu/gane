@@ -1,10 +1,11 @@
 use super::*;
 
-impl<'a> Lowerer<'a> {
+impl<'a> PackageLowerer<'a> {
     pub(super) fn lower(
         mut self,
         input: &PackageInput<'_>,
     ) -> Result<UnverifiedIrPackage, LowerError> {
+        // Guard for main package
         let main_object = self.analysis.package_member("main").ok_or_else(|| {
             self.unsupported(
                 input
@@ -161,33 +162,7 @@ impl<'a> Lowerer<'a> {
             .body
             .as_deref()
             .ok_or_else(|| self.unsupported(declaration.node_id(), "bodyless function"))?;
-        self.function = function.id;
-        self.block = self
-            .builder
-            .entry_block(function.id)
-            .map_err(|source| LowerError::Build {
-                node: declaration.node_id(),
-                source,
-            })?;
-        self.results = function.signature.results.clone();
-        self.locals.clear();
-        self.known_non_null.clear();
-        self.loops.clear();
-        self.initialize_parameters(object, declaration.node_id())?;
-        if !self.lower_block(body)? {
-            if self.results.is_empty() {
-                self.build(body.node_id(), |builder, function, block| {
-                    builder.set_terminator(
-                        function,
-                        block,
-                        Terminator::Return { values: Vec::new() },
-                    )
-                })?;
-            } else {
-                return Err(self.unsupported(body.node_id(), "non-void function reaches end"));
-            }
-        }
-        Ok(())
+        FunctionLowerer::new(self, function, object, declaration.node_id())?.lower(body)
     }
 
     pub(super) fn lower_global_declaration(
@@ -227,50 +202,32 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
-    pub(super) fn initialize_parameters(
-        &mut self,
-        function: ObjectId,
-        node: AstNodeId,
-    ) -> Result<(), LowerError> {
-        let ObjectKind::Func { signature } = self.analysis.object(function).kind else {
-            return Err(self.missing(node, "function signature"));
-        };
-        let TypeKind::Signature { params, .. } = &self.analysis.type_of(signature).kind else {
-            return Err(self.missing(node, "function signature type"));
-        };
-        let parameters = self
-            .analysis
-            .tuple(*params)
-            .ok_or_else(|| self.missing(node, "function parameters"))?;
-        let parameter_objects = parameters.vars.clone();
-        let entry_parameters = self
-            .builder
-            .entry_parameters(self.function)
-            .map_err(|source| LowerError::Build { node, source })?;
-        for (object, value) in parameter_objects.into_iter().zip(entry_parameters) {
-            let parameter = self.analysis.object(object);
-            let Some(name) = self.analysis.name(parameter.name) else {
-                continue;
-            };
-            if name.is_empty() || name == "_" {
-                continue;
-            }
-            let parameter_node = parameter.declaration.unwrap_or(node);
-            let typ = self.lower_type(parameter.typ, parameter_node)?;
-            let slot = self.build(parameter_node, |builder, function, _| {
-                builder.add_stack_slot(function, typ, Some(name.to_owned()), Some(parameter_node))
-            })?;
-            let pointer_type = self.pointer_type(typ);
-            let pointer = self.instruction(
-                parameter_node,
-                crate::InstructionKind::StackAddr { slot },
-                [pointer_type],
-            )?[0];
-            let place = Place { pointer, typ };
-            self.locals.insert(object, place);
-            self.known_non_null.insert(pointer);
-            self.store(parameter_node, place, value)?;
-        }
-        Ok(())
+    pub(super) fn definition(&self, node: AstNodeId) -> Result<ObjectId, LowerError> {
+        self.analysis
+            .definition(node)
+            .ok_or_else(|| self.missing(node, "definition"))
+    }
+
+    pub(super) fn use_of(&self, node: AstNodeId) -> Result<ObjectId, LowerError> {
+        self.analysis
+            .use_of(node)
+            .ok_or_else(|| self.missing(node, "identifier use"))
+    }
+
+    pub(super) fn missing(&self, node: AstNodeId, fact: &'static str) -> LowerError {
+        LowerError::MissingSemanticFact { node, fact }
+    }
+
+    pub(super) fn unsupported(&self, node: AstNodeId, construct: &'static str) -> LowerError {
+        LowerError::Unsupported { node, construct }
+    }
+
+    pub(super) fn is_aggregate(&self, typ: TypeId) -> bool {
+        matches!(
+            self.builder.types().get(typ),
+            Some(crate::IrType {
+                kind: IrTypeKind::Array { .. } | IrTypeKind::Struct { .. },
+            })
+        )
     }
 }

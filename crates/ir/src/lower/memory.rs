@@ -1,6 +1,6 @@
 use super::*;
 
-impl<'a> Lowerer<'a> {
+impl FunctionLowerer<'_, '_> {
     pub(super) fn ensure_non_null(
         &mut self,
         node: AstNodeId,
@@ -25,53 +25,10 @@ impl<'a> Lowerer<'a> {
                 left: place.pointer,
                 right: null,
             },
-            [self.builder.types().i1()],
+            [self.package.builder.types().i1()],
         )?[0];
         self.guard(node, non_null, TrapReason::NullDereference)?;
         self.known_non_null.insert(place.pointer);
-        Ok(())
-    }
-
-    pub(super) fn guard_nonzero(
-        &mut self,
-        node: AstNodeId,
-        divisor: ValueId,
-        typ: TypeId,
-    ) -> Result<(), LowerError> {
-        let zero = self.integer_constant(node, typ, 0)?;
-        let non_zero = self.instruction(
-            node,
-            crate::InstructionKind::Compare {
-                predicate: ComparePredicate::NotEqual,
-                left: divisor,
-                right: zero,
-            },
-            [self.builder.types().i1()],
-        )?[0];
-        self.guard(node, non_zero, TrapReason::DivisionByZero)
-    }
-
-    pub(super) fn guard(
-        &mut self,
-        node: AstNodeId,
-        condition: ValueId,
-        reason: TrapReason,
-    ) -> Result<(), LowerError> {
-        let success = self.build(node, |builder, function, _| builder.create_block(function))?;
-        let failure = self.build(node, |builder, function, _| builder.create_block(function))?;
-        self.terminate(
-            node,
-            self.block,
-            Terminator::CondBranch {
-                condition,
-                then_target: success,
-                then_arguments: Vec::new(),
-                else_target: failure,
-                else_arguments: Vec::new(),
-            },
-        )?;
-        self.terminate(node, failure, Terminator::Trap { reason })?;
-        self.block = success;
         Ok(())
     }
 
@@ -192,65 +149,5 @@ impl<'a> Lowerer<'a> {
             [],
         )?;
         Ok(())
-    }
-
-    pub(super) fn is_aggregate(&self, typ: TypeId) -> bool {
-        matches!(
-            self.builder.types().get(typ),
-            Some(crate::IrType {
-                kind: IrTypeKind::Array { .. } | IrTypeKind::Struct { .. },
-            })
-        )
-    }
-
-    pub(super) fn instruction(
-        &mut self,
-        node: AstNodeId,
-        kind: crate::InstructionKind,
-        result_types: impl IntoIterator<Item = TypeId>,
-    ) -> Result<Vec<ValueId>, LowerError> {
-        self.build(node, |builder, function, block| {
-            builder.append_instruction(function, block, kind, result_types, Some(node))
-        })
-    }
-
-    pub(super) fn build<T>(
-        &mut self,
-        node: AstNodeId,
-        operation: impl FnOnce(&mut IrBuilder, FunctionId, BlockId) -> Result<T, BuildError>,
-    ) -> Result<T, LowerError> {
-        operation(&mut self.builder, self.function, self.block)
-            .map_err(|source| LowerError::Build { node, source })
-    }
-
-    pub(super) fn terminate(
-        &mut self,
-        node: AstNodeId,
-        block: BlockId,
-        terminator: Terminator,
-    ) -> Result<(), LowerError> {
-        self.builder
-            .set_terminator(self.function, block, terminator)
-            .map_err(|source| LowerError::Build { node, source })
-    }
-
-    pub(super) fn definition(&self, node: AstNodeId) -> Result<ObjectId, LowerError> {
-        self.analysis
-            .definition(node)
-            .ok_or_else(|| self.missing(node, "definition"))
-    }
-
-    pub(super) fn use_of(&self, node: AstNodeId) -> Result<ObjectId, LowerError> {
-        self.analysis
-            .use_of(node)
-            .ok_or_else(|| self.missing(node, "identifier use"))
-    }
-
-    pub(super) fn missing(&self, node: AstNodeId, fact: &'static str) -> LowerError {
-        LowerError::MissingSemanticFact { node, fact }
-    }
-
-    pub(super) fn unsupported(&self, node: AstNodeId, construct: &'static str) -> LowerError {
-        LowerError::Unsupported { node, construct }
     }
 }

@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
+/// The byte order of multi-byte data in memory
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Endianness {
     Little,
@@ -9,8 +10,11 @@ pub enum Endianness {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TargetSpec {
+    /// LLVM target triple, such as "i686-unknown-linux-gnu"
     triple: String,
+    /// LLVM target machine, such as "generic", "apple-m1"
     cpu: String,
+    /// CPU command feature, such as "+avx2"
     features: String,
     data_layout: String,
     pointer_width: u8,

@@ -1,6 +1,6 @@
 use super::*;
 
-impl<'a> Lowerer<'a> {
+impl FunctionLowerer<'_, '_> {
     pub(super) fn lower_block(&mut self, block: &ast::BlockStmt) -> Result<bool, LowerError> {
         for statement in &block.list {
             if self.lower_statement(statement)? {
@@ -285,7 +285,7 @@ impl<'a> Lowerer<'a> {
                 continue;
             }
             let object = self.definition(identifier.node_id())?;
-            let semantic_type = self.analysis.object(object).typ;
+            let semantic_type = self.package.analysis.object(object).typ;
             let typ = self.lower_type(semantic_type, identifier.node_id())?;
             let slot = self.build(identifier.node_id(), |builder, function, _| {
                 builder.add_stack_slot(

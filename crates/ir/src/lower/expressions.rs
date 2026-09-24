@@ -1,8 +1,28 @@
 use super::*;
 
-impl<'a> Lowerer<'a> {
+impl FunctionLowerer<'_, '_> {
+    fn guard_nonzero(
+        &mut self,
+        node: AstNodeId,
+        divisor: ValueId,
+        typ: TypeId,
+    ) -> Result<(), LowerError> {
+        let zero = self.integer_constant(node, typ, 0)?;
+        let non_zero = self.instruction(
+            node,
+            crate::InstructionKind::Compare {
+                predicate: ComparePredicate::NotEqual,
+                left: divisor,
+                right: zero,
+            },
+            [self.package.builder.types().i1()],
+        )?[0];
+        self.guard(node, non_zero, TrapReason::DivisionByZero)
+    }
+
     pub(super) fn lower_rvalue(&mut self, expression: &ast::Expr) -> Result<Rvalue, LowerError> {
         let semantic_type = self
+            .package
             .analysis
             .type_and_value(expression.node_id())
             .ok_or_else(|| self.missing(expression.node_id(), "expression type and value"))?
@@ -29,6 +49,7 @@ impl<'a> Lowerer<'a> {
         expression: &ast::Expr,
     ) -> Result<ValueId, LowerError> {
         let fact = self
+            .package
             .analysis
             .type_and_value(expression.node_id())
             .ok_or_else(|| self.missing(expression.node_id(), "expression type and value"))?
@@ -113,7 +134,10 @@ impl<'a> Lowerer<'a> {
                     }
                     Token::Quo | Token::Rem => {
                         self.guard_nonzero(expression.node_id(), right, result_type)?;
-                        let unsigned = self.analysis.is_basic_type(fact.typ, BasicType::Byte);
+                        let unsigned = self
+                            .package
+                            .analysis
+                            .is_basic_type(fact.typ, BasicType::Byte);
                         let op = match (expression.op, unsigned) {
                             (Token::Quo, false) => BinaryOp::SignedDiv,
                             (Token::Quo, true) => BinaryOp::UnsignedDiv,
@@ -134,6 +158,7 @@ impl<'a> Lowerer<'a> {
                     | Token::Greater
                     | Token::Geq => {
                         let left_fact = self
+                            .package
                             .analysis
                             .type_and_value(expression.x.node_id())
                             .ok_or_else(|| {
@@ -235,6 +260,7 @@ impl<'a> Lowerer<'a> {
         };
         let object = self.use_of(callee.node_id())?;
         let function = self
+            .package
             .functions
             .get(&object)
             .cloned()
@@ -260,7 +286,7 @@ impl<'a> Lowerer<'a> {
         typ: gane_sema::TypeId,
         node: AstNodeId,
     ) -> Result<ComparePredicate, LowerError> {
-        let unsigned = self.analysis.is_basic_type(typ, BasicType::Byte);
+        let unsigned = self.package.analysis.is_basic_type(typ, BasicType::Byte);
         let predicate = match (operator, unsigned) {
             (Token::Equal, _) => ComparePredicate::Equal,
             (Token::Neq, _) => ComparePredicate::NotEqual,
@@ -279,6 +305,7 @@ impl<'a> Lowerer<'a> {
 
     pub(super) fn lower_place(&mut self, expression: &ast::Expr) -> Result<Place, LowerError> {
         let semantic_type = self
+            .package
             .analysis
             .type_and_value(expression.node_id())
             .ok_or_else(|| self.missing(expression.node_id(), "expression type and value"))?
@@ -292,6 +319,7 @@ impl<'a> Lowerer<'a> {
                     return Ok(*local);
                 }
                 let global = self
+                    .package
                     .globals
                     .get(&object)
                     .copied()
@@ -313,6 +341,7 @@ impl<'a> Lowerer<'a> {
             }
             ast::Expr::SelectorExpr(expression) => {
                 let selection = self
+                    .package
                     .analysis
                     .selection(expression.node_id())
                     .cloned()
@@ -326,13 +355,18 @@ impl<'a> Lowerer<'a> {
                 let base = if selection.indirect {
                     let pointer = self.lower_expression(&expression.x)?;
                     let receiver_type = self
+                        .package
                         .analysis
                         .type_and_value(expression.x.node_id())
                         .ok_or_else(|| self.missing(expression.x.node_id(), "field receiver type"))?
                         .typ;
-                    let pointee = self.analysis.deref_type(receiver_type).ok_or_else(|| {
-                        self.missing(expression.x.node_id(), "field receiver pointee")
-                    })?;
+                    let pointee =
+                        self.package
+                            .analysis
+                            .deref_type(receiver_type)
+                            .ok_or_else(|| {
+                                self.missing(expression.x.node_id(), "field receiver pointee")
+                            })?;
                     Place {
                         pointer,
                         typ: self.lower_type(pointee, expression.x.node_id())?,
@@ -365,13 +399,14 @@ impl<'a> Lowerer<'a> {
     ) -> Result<Place, LowerError> {
         let base = self.lower_place(&expression.x)?;
         self.ensure_non_null(expression.x.node_id(), base)?;
-        let length = match self.builder.types().get(base.typ) {
+        let length = match self.package.builder.types().get(base.typ) {
             Some(crate::IrType {
                 kind: IrTypeKind::Array { length, .. },
             }) => *length,
             _ => return Err(self.unsupported(expression.x.node_id(), "indexing non-array place")),
         };
         let index_fact = self
+            .package
             .analysis
             .type_and_value(expression.index.node_id())
             .ok_or_else(|| self.missing(expression.index.node_id(), "index type"))?
@@ -385,7 +420,11 @@ impl<'a> Lowerer<'a> {
             builder.create_block(function)
         })?;
 
-        if self.analysis.is_basic_type(index_fact.typ, BasicType::Int) {
+        if self
+            .package
+            .analysis
+            .is_basic_type(index_fact.typ, BasicType::Int)
+        {
             let zero = self.integer_constant(expression.index.node_id(), index_type, 0)?;
             let non_negative = self.instruction(
                 expression.index.node_id(),
@@ -394,7 +433,7 @@ impl<'a> Lowerer<'a> {
                     left: index,
                     right: zero,
                 },
-                [self.builder.types().i1()],
+                [self.package.builder.types().i1()],
             )?[0];
             let upper = self.build(expression.node_id(), |builder, function, _| {
                 builder.create_block(function)
@@ -411,7 +450,11 @@ impl<'a> Lowerer<'a> {
                 },
             )?;
             self.block = upper;
-        } else if !self.analysis.is_basic_type(index_fact.typ, BasicType::Byte) {
+        } else if !self
+            .package
+            .analysis
+            .is_basic_type(index_fact.typ, BasicType::Byte)
+        {
             return Err(self.unsupported(expression.index.node_id(), "array index type"));
         }
 
@@ -425,7 +468,7 @@ impl<'a> Lowerer<'a> {
                 left: normalized,
                 right: length,
             },
-            [self.builder.types().i1()],
+            [self.package.builder.types().i1()],
         )?[0];
         self.terminate(
             expression.node_id(),
@@ -460,5 +503,26 @@ impl<'a> Lowerer<'a> {
             pointer,
             typ: element,
         })
+    }
+
+    fn normalize_index(
+        &mut self,
+        node: AstNodeId,
+        index: ValueId,
+        source: TypeId,
+    ) -> Result<ValueId, LowerError> {
+        let target = self.pointer_integer_type(node)?;
+        if source == target {
+            return Ok(index);
+        }
+        Ok(self.instruction(
+            node,
+            crate::InstructionKind::IntCast {
+                kind: IntCastKind::ZeroExtend,
+                operand: index,
+                target,
+            },
+            [target],
+        )?[0])
     }
 }

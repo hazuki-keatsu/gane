@@ -1,6 +1,6 @@
 use super::*;
 
-impl<'a> Lowerer<'a> {
+impl PackageLowerer<'_> {
     pub(super) fn lower_type(
         &mut self,
         typ: gane_sema::TypeId,
@@ -135,42 +135,5 @@ impl<'a> Lowerer<'a> {
             64 => Ok(self.builder.types().i64()),
             _ => Err(self.unsupported(node, "target pointer width")),
         }
-    }
-
-    pub(super) fn normalize_index(
-        &mut self,
-        node: AstNodeId,
-        index: ValueId,
-        source: TypeId,
-    ) -> Result<ValueId, LowerError> {
-        let target = self.pointer_integer_type(node)?;
-        if source == target {
-            return Ok(index);
-        }
-        Ok(self.instruction(
-            node,
-            crate::InstructionKind::IntCast {
-                kind: IntCastKind::ZeroExtend,
-                operand: index,
-                target,
-            },
-            [target],
-        )?[0])
-    }
-
-    pub(super) fn integer_constant(
-        &mut self,
-        node: AstNodeId,
-        typ: TypeId,
-        value: u64,
-    ) -> Result<ValueId, LowerError> {
-        Ok(self.instruction(
-            node,
-            crate::InstructionKind::Const {
-                value: Constant::Integer(value),
-                typ,
-            },
-            [typ],
-        )?[0])
     }
 }

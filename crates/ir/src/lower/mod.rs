@@ -17,9 +17,10 @@ use std::{
     fmt,
 };
 
-mod declarations;
 mod expressions;
+mod function;
 mod memory;
+mod package;
 mod statements;
 mod types;
 
@@ -109,9 +110,12 @@ pub fn lower_package(
         });
     }
 
-    Lowerer::new(analysis, target).lower(input)
+    PackageLowerer::new(analysis, target).lower(input)
 }
 
+/// Place - A pointer for reading and writing value
+///
+/// More common name for this type may be left value
 #[derive(Clone, Copy)]
 struct Place {
     pointer: ValueId,
@@ -131,45 +135,46 @@ struct LoweredFunction {
     signature: IrSignature,
 }
 
+/// Current jumpable recursive context
+///
+/// When lowering, the header will be the target for `continue` and the exit will be the target for `break`.
 #[derive(Clone, Copy)]
 struct Loop {
     header: BlockId,
     exit: Option<BlockId>,
 }
 
-struct Lowerer<'a> {
+struct PackageLowerer<'a> {
     analysis: &'a AnalysisResult,
     builder: IrBuilder,
-    function: FunctionId,
-    block: BlockId,
     target_width: u8,
-    locals: HashMap<ObjectId, Place>,
     globals: HashMap<ObjectId, GlobalId>,
     functions: HashMap<ObjectId, LoweredFunction>,
-    results: Vec<TypeId>,
     pointer_types: HashMap<TypeId, TypeId>,
     type_map: HashMap<gane_sema::TypeId, TypeId>,
+}
+
+struct FunctionLowerer<'package, 'analysis> {
+    package: &'package mut PackageLowerer<'analysis>,
+    function: FunctionId,
+    block: BlockId,
+    results: Vec<TypeId>,
+    locals: HashMap<ObjectId, Place>,
     known_non_null: HashSet<ValueId>,
     loops: Vec<Loop>,
 }
 
-impl<'a> Lowerer<'a> {
+impl<'a> PackageLowerer<'a> {
     fn new(analysis: &'a AnalysisResult, target: crate::TargetSpec) -> Self {
         let target_width = target.pointer_width();
         Self {
             analysis,
             builder: IrBuilder::new(target),
-            function: FunctionId::INVALID,
-            block: BlockId::INVALID,
             target_width,
-            locals: HashMap::new(),
             globals: HashMap::new(),
             functions: HashMap::new(),
-            results: Vec::new(),
             pointer_types: HashMap::new(),
             type_map: HashMap::new(),
-            known_non_null: HashSet::new(),
-            loops: Vec::new(),
         }
     }
 }

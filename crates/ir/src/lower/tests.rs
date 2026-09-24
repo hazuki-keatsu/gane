@@ -1146,6 +1146,30 @@ fn guards_pointer_dereferences_division_and_byte_indexes() {
 }
 
 #[test]
+fn keeps_non_null_facts_isolated_between_functions() {
+    let package = lower(
+        "package main\n\
+         func seed() { var a int; var b int; var c int }\n\
+         func check(p *int) { _ = *p }\n\
+         func main() { var value int; check(&value) }\n",
+        TargetSpec::for_test_64(),
+    )
+    .unwrap();
+    verify(&package).unwrap();
+
+    let check = package
+        .functions()
+        .find_map(|(_, function)| (function.symbol == "gane.check").then_some(function))
+        .unwrap();
+    assert!(check.blocks.iter().any(|block| matches!(
+        block.terminator,
+        Terminator::Trap {
+            reason: TrapReason::NullDereference
+        }
+    )));
+}
+
+#[test]
 fn caches_identical_arrays_and_supports_pointer_recursive_structs() {
     let package = lower(
         "package main\n\
@@ -1290,9 +1314,9 @@ type !4 = i16
 type !5 = i32
 type !6 = i64
 type !7 = ptr(addrspace=0, !6)
-global @1 "gane.count": !6 mutable = 1
-global @2 "gane.ready": !2 mutable = zero
-global @3 "gane.none": !7 mutable = zero
+global @1 "gane.count": !6 = 1
+global @2 "gane.ready": !2 = zero
+global @3 "gane.none": !7 = zero
 func @1 "gane.tick"() -> () [no_return=false] entry ^1 {
   ^1():
     %1 = global_addr @1
