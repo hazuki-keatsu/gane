@@ -1161,7 +1161,6 @@ mod tests {
         let global = builder.add_global(IrGlobal {
             symbol: "gane.counter".into(),
             typ: i64,
-            mutable: true,
             initializer: GlobalInitializer::Scalar(Constant::Integer(4)),
         });
         let (main, mut block) = main_function(&mut builder);

@@ -1260,7 +1260,7 @@ fn lowers_scalar_globals_to_stable_ir_and_reuses_global_ids() {
     assert!(
         globals
             .iter()
-            .all(|(_, global)| { global.mutable && global.symbol.starts_with("gane.") })
+            .all(|(_, global)| { global.symbol.starts_with("gane.") })
     );
 
     let count = crate::GlobalId::from_raw(1);

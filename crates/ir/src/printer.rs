@@ -33,15 +33,10 @@ fn print_package(package: &IrPackage, f: &mut fmt::Formatter<'_>) -> fmt::Result
     for (index, global) in package.globals.iter().enumerate() {
         write!(
             f,
-            "global @{} {:?}: !{} {}",
+            "global @{} {:?}: !{}",
             index + 1,
             global.symbol,
             global.typ.raw(),
-            if global.mutable {
-                "mutable"
-            } else {
-                "constant"
-            }
         )?;
         match global.initializer {
             GlobalInitializer::Zero => writeln!(f, " = zero")?,

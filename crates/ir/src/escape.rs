@@ -319,7 +319,9 @@ fn storage(function: &IrFunction, value: ValueId) -> Storage {
         return Storage::Unknown;
     };
     let ValueOrigin::InstructionResult {
-        block, instruction_index, ..
+        block,
+        instruction_index,
+        ..
     } = definition.origin
     else {
         return Storage::Unknown;
@@ -591,7 +593,6 @@ mod tests {
         let global = builder.add_global(IrGlobal {
             symbol: "gane.global".into(),
             typ: pointer,
-            mutable: true,
             initializer: GlobalInitializer::Zero,
         });
         let main = builder.declare_function(

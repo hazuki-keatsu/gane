@@ -541,7 +541,9 @@ impl Verifier<'_> {
             let (definition_block, definition_position) = match definition.origin {
                 ValueOrigin::BlockParameter { block, .. } => (block, None),
                 ValueOrigin::InstructionResult {
-                    block, instruction_index, ..
+                    block,
+                    instruction_index,
+                    ..
                 } => (block, Some(instruction_index as usize)),
             };
             if definition_block == block {
@@ -1138,7 +1140,6 @@ mod tests {
         package.inner_mut().globals.push(IrGlobal {
             symbol: "gane.bad".into(),
             typ: void,
-            mutable: false,
             initializer: GlobalInitializer::Scalar(Constant::Integer(1)),
         });
         package.inner_mut().functions[0]

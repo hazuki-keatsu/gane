@@ -199,7 +199,10 @@ impl IrBuilder {
         let value = ValueId::from_raw(function_data.values.len() as u32 + 1);
         function_data.values.push(ValueDef {
             typ,
-            origin: ValueOrigin::BlockParameter { block, parameter_index },
+            origin: ValueOrigin::BlockParameter {
+                block,
+                parameter_index,
+            },
             source,
         });
         function_data.blocks[block_index].parameters.push(value);

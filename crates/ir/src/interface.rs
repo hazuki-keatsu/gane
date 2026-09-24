@@ -73,7 +73,6 @@ mod tests {
         let global = builder.add_global(IrGlobal {
             symbol: "gane.global".to_owned(),
             typ: i32,
-            mutable: true,
             initializer: GlobalInitializer::Zero,
         });
         assert_eq!(global.raw(), 1);

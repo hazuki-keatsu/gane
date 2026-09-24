@@ -219,7 +219,6 @@ impl<'a> Lowerer<'a> {
                 let global = self.builder.add_global(IrGlobal {
                     symbol: format!("gane.{}", identifier.name),
                     typ,
-                    mutable: true,
                     initializer,
                 });
                 self.globals.insert(object, global);

@@ -8,7 +8,6 @@ use crate::{
 pub struct IrGlobal {
     pub symbol: Symbol,
     pub typ: TypeId,
-    pub mutable: bool,
     pub initializer: GlobalInitializer,
 }
 
@@ -25,7 +24,7 @@ pub struct IrFunction {
     /// The parameters and returns of the function
     pub signature: IrSignature,
     /// The additional attributes for the function
-    /// 
+    ///
     /// v0: no_return is false forever
     pub attributes: FunctionAttributes,
     /// The local memory object for the function
@@ -35,7 +34,7 @@ pub struct IrFunction {
     /// The instruction blocks in the function
     pub blocks: Vec<IrBlock>,
     /// The entry point of the function
-    /// 
+    ///
     /// v0: the entry will be ^1 forever
     pub entry: BlockId,
 }
