@@ -95,6 +95,7 @@ impl IrBuilder {
         signature: IrSignature,
         attributes: FunctionAttributes,
     ) -> FunctionId {
+        // The default entry for function
         let entry = BlockId::from_raw(1);
         let mut function = IrFunction {
             symbol,
@@ -116,13 +117,13 @@ impl IrBuilder {
             .map(|parameter| parameter.typ)
             .collect::<Vec<_>>();
         for typ in parameter_types {
-            let index = function.blocks[0].parameters.len() as u32;
+            let parameter_index = function.blocks[0].parameters.len() as u32;
             let value = ValueId::from_raw(function.values.len() as u32 + 1);
             function.values.push(ValueDef {
                 typ,
                 origin: ValueOrigin::BlockParameter {
                     block: entry,
-                    index,
+                    parameter_index,
                 },
                 source: None,
             });
@@ -194,11 +195,11 @@ impl IrBuilder {
         }
         let block_index = Self::block_index(function, block)?;
         let function_data = self.function_mut(function)?;
-        let index = function_data.blocks[block_index].parameters.len() as u32;
+        let parameter_index = function_data.blocks[block_index].parameters.len() as u32;
         let value = ValueId::from_raw(function_data.values.len() as u32 + 1);
         function_data.values.push(ValueDef {
             typ,
-            origin: ValueOrigin::BlockParameter { block, index },
+            origin: ValueOrigin::BlockParameter { block, parameter_index },
             source,
         });
         function_data.blocks[block_index].parameters.push(value);
@@ -218,7 +219,7 @@ impl IrBuilder {
         }
         let block_index = Self::block_index(function, block)?;
         let function_data = self.function_mut(function)?;
-        let instruction = function_data.blocks[block_index].instructions.len() as u32;
+        let instruction_index = function_data.blocks[block_index].instructions.len() as u32;
         let results = result_types
             .into_iter()
             .enumerate()
@@ -228,8 +229,8 @@ impl IrBuilder {
                     typ,
                     origin: ValueOrigin::InstructionResult {
                         block,
-                        instruction,
-                        index: index as u32,
+                        instruction_index,
+                        result_index: index as u32,
                     },
                     source,
                 });

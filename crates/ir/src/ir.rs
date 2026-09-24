@@ -20,12 +20,23 @@ pub enum GlobalInitializer {
 
 #[derive(Clone, Debug)]
 pub struct IrFunction {
+    /// The name of the function
     pub symbol: Symbol,
+    /// The parameters and returns of the function
     pub signature: IrSignature,
+    /// The additional attributes for the function
+    /// 
+    /// v0: no_return is false forever
     pub attributes: FunctionAttributes,
+    /// The local memory object for the function
     pub stack_slots: Vec<StackSlot>,
+    /// The SSA values in the function
     pub values: Vec<ValueDef>,
+    /// The instruction blocks in the function
     pub blocks: Vec<IrBlock>,
+    /// The entry point of the function
+    /// 
+    /// v0: the entry will be ^1 forever
     pub entry: BlockId,
 }
 
@@ -84,12 +95,12 @@ pub struct ValueDef {
 pub enum ValueOrigin {
     BlockParameter {
         block: BlockId,
-        index: u32,
+        parameter_index: u32,
     },
     InstructionResult {
         block: BlockId,
-        instruction: u32,
-        index: u32,
+        instruction_index: u32,
+        result_index: u32,
     },
 }
 
@@ -244,8 +255,11 @@ pub enum Terminator {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TrapReason {
     DivisionByZero,
+    /// Use negative number as the value of shift times
     NegativeShift,
+    /// Access arrays out of the bounds
     BoundsError,
+    /// Dereference the null pointer
     NullDereference,
     ExplicitPanic,
 }

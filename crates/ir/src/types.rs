@@ -121,6 +121,7 @@ impl TypeArena {
         Ok(())
     }
 
+    /// Check whether there is any type in arena being None.
     pub(crate) fn unfinished(&self) -> Option<TypeId> {
         self.types.iter().position(Option::is_none).map(|index| {
             TypeId::from_raw(

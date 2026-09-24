@@ -349,7 +349,7 @@ impl Verifier<'_> {
                     *value,
                     ValueOrigin::BlockParameter {
                         block,
-                        index: index as u32,
+                        parameter_index: index as u32,
                     },
                     format!("{prefix} block ^{}", block.raw()),
                 );
@@ -364,8 +364,8 @@ impl Verifier<'_> {
                         *value,
                         ValueOrigin::InstructionResult {
                             block,
-                            instruction: instruction_index as u32,
-                            index: result_index as u32,
+                            instruction_index: instruction_index as u32,
+                            result_index: result_index as u32,
                         },
                         format!(
                             "{prefix} block ^{} instruction {instruction_index}",
@@ -541,8 +541,8 @@ impl Verifier<'_> {
             let (definition_block, definition_position) = match definition.origin {
                 ValueOrigin::BlockParameter { block, .. } => (block, None),
                 ValueOrigin::InstructionResult {
-                    block, instruction, ..
-                } => (block, Some(instruction as usize)),
+                    block, instruction_index, ..
+                } => (block, Some(instruction_index as usize)),
             };
             if definition_block == block {
                 if definition_position.is_some_and(|defined| defined >= position) {
@@ -1261,7 +1261,7 @@ mod tests {
         package.inner_mut().functions[0].values[first.raw() as usize - 1].origin =
             ValueOrigin::BlockParameter {
                 block: entry,
-                index: 0,
+                parameter_index: 0,
             };
 
         let errors = messages(&package);

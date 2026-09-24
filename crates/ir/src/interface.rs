@@ -146,15 +146,15 @@ mod tests {
             function.values[1].origin,
             ValueOrigin::InstructionResult {
                 block: entry,
-                instruction: 0,
-                index: 0,
+                instruction_index: 0,
+                result_index: 0,
             }
         );
         assert_eq!(
             function.values[2].origin,
             ValueOrigin::BlockParameter {
                 block: join,
-                index: 0,
+                parameter_index: 0,
             }
         );
     }

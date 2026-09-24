@@ -53,22 +53,34 @@ impl std::ops::BitOr for Mode {
 /// [`Scanner::init`] before use.
 pub struct Scanner<'src> {
     // immutable state
-    file: Rc<File>,            // source file handle
-    dir: String,               // directory portion of file.name()
-    src: &'src [u8],           // source
-    err: Option<ErrorHandler>, // error reporting; or None
-    mode: Mode,                // scanning mode
+    /// Source file handle
+    file: Rc<File>,
+    /// Directory portion of file.name()
+    dir: String,
+    /// Source
+    src: &'src [u8],
+    /// Error reporting; or None
+    err: Option<ErrorHandler>,
+    /// Scanning mode
+    mode: Mode,
 
     // scanning state
-    ch: i32,            // current character; < 0 (EOF) means end-of-file
-    offset: usize,      // character offset
-    rd_offset: usize,   // reading offset (position after current character)
-    line_offset: usize, // current line offset
-    insert_semi: bool,  // insert a semicolon before next newline
-    nl_pos: Pos,        // position of newline in preceding comment
+    /// Current character; < 0 means end-of-file
+    ch: i32,
+    /// Character offset
+    offset: usize,
+    /// Reading offset (position after current character)
+    rd_offset: usize,
+    /// Current line offset
+    line_offset: usize,
+    /// Insert a semicolon before next newline
+    insert_semi: bool,
+    /// Position of new line in preceding comment
+    nl_pos: Pos,
 
     end_pos_valid: bool,
-    end_pos: Pos, // overrides the offset as the default end position
+    /// Overrides the offset as the default end position
+    end_pos: Pos,
 
     // public state - ok to modify
     pub error_count: usize, // number of errors encountered

@@ -319,14 +319,14 @@ fn storage(function: &IrFunction, value: ValueId) -> Storage {
         return Storage::Unknown;
     };
     let ValueOrigin::InstructionResult {
-        block, instruction, ..
+        block, instruction_index, ..
     } = definition.origin
     else {
         return Storage::Unknown;
     };
     let Some(instruction) = function
         .block(block)
-        .and_then(|block| block.instructions.get(instruction as usize))
+        .and_then(|block| block.instructions.get(instruction_index as usize))
     else {
         return Storage::Unknown;
     };
