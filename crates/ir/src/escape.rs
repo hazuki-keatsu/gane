@@ -20,11 +20,21 @@ pub(crate) fn check(package: &UnverifiedIrPackage) -> Result<(), Vec<IrDiagnosti
     }
 }
 
+/// Return a [`Vec<Vec<bool>>`] to describe that if
+/// `summaries[FunctionId][IrParameter as index] == true`, 
+/// the [`IrParameter`](crate::ir::IrParameter) of the [`IrFunction`] may escape.
+/// 
+/// 1. Assume that all the parameter won't escape.
+/// 2. Mark every pointer parameter with taint.
+/// 3. [`propagate()`] will track the taint pointer by Gep, stack slot, branch parameter, load/store and etc.
+/// 4. [`escapes()`] will check if or not the taint would escape by returning, out-of-memory writing or passing to escaping calling function.
+/// 5. If found, the bool will be set to `true`.
+/// 6. Repeat until there is no new result. To process the recursive calling.
 fn summaries(package: &UnverifiedIrPackage) -> Vec<Vec<bool>> {
     let mut summaries = package
         .functions()
         .map(|(_, function)| vec![false; function.signature.parameters.len()])
-        .collect::<Vec<_>>();
+        .collect::<Vec<Vec<bool>>>();
 
     loop {
         let mut changed = false;
@@ -314,6 +324,7 @@ impl Storage {
     }
 }
 
+/// Used for distinct a SSA value in a function is how to store.
 fn storage(function: &IrFunction, value: ValueId) -> Storage {
     let Some(definition) = function.value(value) else {
         return Storage::Unknown;

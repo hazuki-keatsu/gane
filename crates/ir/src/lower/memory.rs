@@ -1,6 +1,18 @@
+//! Lowering helpers for memory-backed values.
+//!
+//! A [`Place`] represents an address and the type stored at that address.
+//! Scalar values use [`load`] and [`store`], while aggregate values remain in
+//! memory and use [`aggregate_zero`] or [`aggregate_copy`]. These helpers also
+//! insert the null-dereference guards required before accessing a place.
+
 use super::*;
 
 impl FunctionLowerer<'_, '_> {
+    /// Ensures that a place's address is non-null before it is accessed.
+    ///
+    /// Already-proven addresses are cached in `known_non_null`. Otherwise this
+    /// emits a comparison and a trapping guard, then continues in the success
+    /// block.
     pub(super) fn ensure_non_null(
         &mut self,
         node: AstNodeId,
@@ -32,6 +44,10 @@ impl FunctionLowerer<'_, '_> {
         Ok(())
     }
 
+    /// Loads a scalar value from a place.
+    ///
+    /// Aggregate values are intentionally rejected because V0 represents them
+    /// in memory rather than as ordinary SSA values.
     pub(super) fn load(&mut self, node: AstNodeId, place: Place) -> Result<ValueId, LowerError> {
         if self.is_aggregate(place.typ) {
             return Err(self.unsupported(node, "aggregate value"));
@@ -46,6 +62,10 @@ impl FunctionLowerer<'_, '_> {
         )?[0])
     }
 
+    /// Stores a scalar SSA value into a place after checking its address.
+    ///
+    /// Aggregate assignment is handled by [`aggregate_copy`] or
+    /// [`aggregate_zero`] instead.
     pub(super) fn store(
         &mut self,
         node: AstNodeId,
@@ -67,6 +87,7 @@ impl FunctionLowerer<'_, '_> {
         Ok(())
     }
 
+    /// Applies the appropriate scalar or aggregate assignment operation.
     pub(super) fn assign(
         &mut self,
         node: AstNodeId,
@@ -85,6 +106,11 @@ impl FunctionLowerer<'_, '_> {
         }
     }
 
+    /// Copies an aggregate into a fresh temporary stack slot and returns its
+    /// place.
+    ///
+    /// This snapshots an aggregate RHS before a multiple assignment can
+    /// overwrite one of the source locations.
     pub(super) fn aggregate_snapshot(
         &mut self,
         node: AstNodeId,
@@ -108,6 +134,7 @@ impl FunctionLowerer<'_, '_> {
         Ok(destination)
     }
 
+    /// Writes the zero value of an aggregate into a destination place.
     pub(super) fn aggregate_zero(
         &mut self,
         node: AstNodeId,
@@ -128,6 +155,7 @@ impl FunctionLowerer<'_, '_> {
         Ok(())
     }
 
+    /// Copies an aggregate between two places of the same type.
     pub(super) fn aggregate_copy(
         &mut self,
         node: AstNodeId,

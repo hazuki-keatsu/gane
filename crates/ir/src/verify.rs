@@ -79,6 +79,16 @@ impl Verifier<'_> {
         }
     }
 
+    /// Verify types, including:
+    ///
+    /// - whether primitive types are canonical
+    /// - duplicate definition of primitive types
+    /// - whether Ptr's address space is zero (v0 required)
+    /// - whether array's length is zero
+    /// - whether the array's max length is more than pointer width
+    /// - whether array's element is void
+    /// - whether struct's fields are empty
+    /// - whether struct's fields include void value
     fn verify_types(&mut self) {
         let primitive = [
             IrTypeKind::Void,
@@ -88,6 +98,7 @@ impl Verifier<'_> {
             IrTypeKind::I32,
             IrTypeKind::I64,
         ];
+        // Make sure all the primitive types have been embedded
         for (index, expected) in primitive.iter().enumerate() {
             let id = TypeId::from_raw(index as u32 + 1);
             if self.package.types.get(id).map(|typ| &typ.kind) != Some(expected) {
@@ -172,6 +183,7 @@ impl Verifier<'_> {
         }
     }
 
+    /// Use DFS and two sets to detect ir or not there is any value recursion.
     fn has_value_cycle(
         &self,
         id: TypeId,
@@ -200,7 +212,14 @@ impl Verifier<'_> {
         cycle
     }
 
+    /// Verify the uniqueness of symbols and the validness of global variable
+    ///
+    /// - whether global variables are repeated
+    /// - whether global variable's type is [`IrTypeKind::Void`] or [`None`]
+    /// - whether global variable is without initializer
+    /// - whether function name has the same name with global variable
     fn verify_symbols_and_globals(&mut self) {
+        // A package-level symbol table
         let mut symbols = HashSet::new();
         for (index, global) in self.package.globals.iter().enumerate() {
             let location = format!("global @{}", index + 1);
@@ -937,11 +956,17 @@ impl Verifier<'_> {
             self.error(location, message);
         }
     }
+
+    // ====== Helpers ======
+
+    /// Test if or not [`TypeId`] is existing in [`TypeArena`](crate::types::TypeArena).
+    /// If not, error will be put into [`Verifier::diagnostics`]
     fn type_exists(&mut self, typ: TypeId, location: String) {
         if self.type_kind(typ).is_none() {
             self.error(location, format!("type !{} is invalid", typ.raw()));
         }
     }
+    /// Test if or not [`TypeId`] is [`IrTypeKind::Void`] or [`None`]
     fn non_void_type(&mut self, typ: TypeId, location: String, subject: &str) {
         if self.type_kind(typ).is_none() || self.is_void(typ) {
             self.error(
@@ -955,18 +980,25 @@ impl Verifier<'_> {
             self.error(location, format!("{subject} must have scalar type"));
         }
     }
+    /// Get [`&IrTypeKind`](crate::types::IrTypeKind) by [`TypeId`]
+    /// from [`TypeArena`](crate::types::TypeArena)
     fn type_kind(&self, typ: TypeId) -> Option<&IrTypeKind> {
         self.package.types.get(typ).map(|typ| &typ.kind)
     }
+    /// Test if or not [`TypeId`] is [`IrTypeKind::Void`]
     fn is_void(&self, typ: TypeId) -> bool {
         matches!(self.type_kind(typ), Some(IrTypeKind::Void))
     }
+    /// Test if or not [`TypeId`] is [`IrTypeKind::I1`]
     fn is_i1(&self, typ: TypeId) -> bool {
         matches!(self.type_kind(typ), Some(IrTypeKind::I1))
     }
+    /// [`IrTypeKind::I8`], [`IrTypeKind::I16`], [`IrTypeKind::I32`] and [`IrTypeKind::I64`] are integer,
+    /// but [`IrTypeKind::I1`].
     fn is_integer(&self, typ: TypeId) -> bool {
         self.integer_width(typ).is_some()
     }
+    /// Get the integer width by [`TypeId`]
     fn integer_width(&self, typ: TypeId) -> Option<u32> {
         match self.type_kind(typ)? {
             IrTypeKind::I8 => Some(8),
@@ -976,6 +1008,7 @@ impl Verifier<'_> {
             _ => None,
         }
     }
+    /// Test if or not [`TypeId`] is a [`IrTypeKind::Ptr`].
     fn is_pointer(&self, typ: TypeId) -> bool {
         matches!(self.type_kind(typ), Some(IrTypeKind::Ptr { .. }))
     }
@@ -991,6 +1024,8 @@ impl Verifier<'_> {
             Some(IrTypeKind::Array { .. } | IrTypeKind::Struct { .. })
         )
     }
+    /// Except for [`IrTypeKind::Void`], [`IrTypeKind::Array`] and [`IrTypeKind::Struct`],
+    /// the rest of types are scalar.
     fn is_scalar(&self, typ: TypeId) -> bool {
         self.is_i1(typ) || self.is_integer(typ) || self.is_pointer(typ)
     }

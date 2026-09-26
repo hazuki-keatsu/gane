@@ -52,10 +52,12 @@ impl<'package, 'analysis> FunctionLowerer<'package, 'analysis> {
         object: ObjectId,
         node: AstNodeId,
     ) -> Result<Self, LowerError> {
+        // Get the entry of the function
         let block = package
             .builder
             .entry_block(lowered.id)
             .map_err(|source| LowerError::Build { node, source })?;
+        // Build FunctionLowerer
         let mut lowerer = Self {
             package,
             function: lowered.id,
@@ -65,6 +67,7 @@ impl<'package, 'analysis> FunctionLowerer<'package, 'analysis> {
             known_non_null: HashSet::new(),
             loops: Vec::new(),
         };
+        // Use the information from `sema` to initialize lowerer
         lowerer.initialize_parameters(object, node)?;
         Ok(lowerer)
     }
@@ -89,13 +92,16 @@ impl<'package, 'analysis> FunctionLowerer<'package, 'analysis> {
         function: ObjectId,
         node: AstNodeId,
     ) -> Result<(), LowerError> {
+        // Get function signature
         let ObjectKind::Func { signature } = self.package.analysis.object(function).kind else {
             return Err(self.missing(node, "function signature"));
         };
+        // Get parameters of the function
         let TypeKind::Signature { params, .. } = &self.package.analysis.type_of(signature).kind
         else {
             return Err(self.missing(node, "function signature type"));
         };
+        // Get Object whose kind is ObjectKind::Param
         let parameter_objects = self
             .package
             .analysis
@@ -103,6 +109,7 @@ impl<'package, 'analysis> FunctionLowerer<'package, 'analysis> {
             .ok_or_else(|| self.missing(node, "function parameters"))?
             .vars
             .clone();
+        // Get the entry block's parameter
         let entry_parameters = self
             .package
             .builder
@@ -113,9 +120,11 @@ impl<'package, 'analysis> FunctionLowerer<'package, 'analysis> {
             let Some(name) = self.package.analysis.name(parameter.name) else {
                 continue;
             };
+            // Non-named parameter and _ parameter cannot be referred in block
             if name.is_empty() || name == "_" {
                 continue;
             }
+            // Used for diagnostics
             let parameter_node = parameter.declaration.unwrap_or(node);
             let typ = self.lower_type(parameter.typ, parameter_node)?;
             let slot = self.build(parameter_node, |builder, function, _| {

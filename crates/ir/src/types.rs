@@ -17,6 +17,9 @@ pub enum IrTypeKind {
     I16,
     I32,
     I64,
+    /// `address_space` is used for distinguishing between different memory domains.
+    /// 
+    /// In v0 design, `address_space` is set as 0 forever. And [`verify`](crate::verify::verify) will check this.
     Ptr { pointee: TypeId, address_space: u32 },
     Array { length: u64, element: TypeId },
     Struct { fields: Vec<TypeId> },

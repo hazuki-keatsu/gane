@@ -17,30 +17,61 @@ use std::{
     fmt,
 };
 
+/// Lower expression into SSA value and `Place`. 
+/// It includes constant, binary, call, &&/||, field selection, array index and pointer dereference.
 mod expressions;
+/// The context for single function lowering. Saving the current function, block, local variable, loop stack and known not null pointer.
+/// Used for parameter initialization, appending of instruction, setting of terminator and generation of trap guard.
 mod function;
+/// Used for the reading and writing of `Place` and the aggregate operation, 
+/// including `load`, `store`, assignment, aggregate copy/zero, snapshot, and null check.
 mod memory;
+/// The whole procession of lowering.
+/// It will set up `global` and all the function declaration first. 
+/// Then, create the `FunctionLowerer` body one by one. And also, it will maintain the map from `sema` object to IR global/function.
 mod package;
+/// Organize the statement of source code into context free grammar.
+/// It includes local var, assignment, return, if, for, break, continue, ++/--, and more.
 mod statements;
+/// Turn `sema` types and constants into IR types and IR constant. 
+/// And it will maintain type cache and pointer type cache, and process recursive type and target-relative int byte-width.
 mod types;
 
 #[derive(Debug)]
 pub enum LowerError {
+    /// If there is any error in `AnalysisResult.diagnostics`, 
+    /// `SemanticErrors` will be generated, 
+    /// and `node` is the first error's `AstNodeId` and `count` is the number of errors.
     SemanticErrors {
         node: AstNodeId,
         count: usize,
     },
+    /// When lowerer try to look up any semantic info in `AnalysisResult` but get none,
+    /// it will be generated.
     MissingSemanticFact {
         node: AstNodeId,
         fact: &'static str,
     },
+    /// A guard for unsupported syntax.
     Unsupported {
         node: AstNodeId,
         construct: &'static str,
     },
+    /// When `sema` give out the constant but it cannot be porting to the target ir type,
+    /// it will be generated.
+    /// 
+    /// For example, integer constant exceeds the range of i32/i64,
+    /// byte constant is not in the range of `0..=255`,
+    /// the length of array is not positive integer,
+    /// in the 32-bit target, the length of array exceeds the max value of u32,
+    /// constant type does not match the target type,
+    /// there is any constant type not being supported by v0,
+    /// and so on.
     InvalidConstant {
         node: AstNodeId,
     },
+    /// When lowerer try to build an IR by calling `IrBuilder` but builder rejects the request,
+    /// it will be generated.
     Build {
         node: AstNodeId,
         source: BuildError,
@@ -148,19 +179,41 @@ struct PackageLowerer<'a> {
     analysis: &'a AnalysisResult,
     builder: IrBuilder,
     target_width: u8,
+    /// The mapping from `sema` global object to IR global variable Id.
+    /// It will be filled when lowering global declaration.
+    /// It will be used when processing the global reference.
     globals: HashMap<ObjectId, GlobalId>,
+    /// The mapping from `sema` function object to IR lowered function.
+    /// It will be used when processing function calling and function lowering.
     functions: HashMap<ObjectId, LoweredFunction>,
+    /// The cache from IR pointee type to the corresponding Ptr<T> type, 
+    /// avoiding creating the same pointer type repeatedly.
     pointer_types: HashMap<TypeId, TypeId>,
+    /// The mapping from `sema` type id to IR type id.
+    /// It will guarantee the same semantic type will matching the same IR type stably.
+    /// And it supports the reservation and setting of the recursive struct / array type.
     type_map: HashMap<gane_sema::TypeId, TypeId>,
 }
 
 struct FunctionLowerer<'package, 'analysis> {
     package: &'package mut PackageLowerer<'analysis>,
+    /// The `LoweredFunction`'s Id in working. 
+    /// The target for adding instruction, creating block and setting terminator.
     function: FunctionId,
+    /// The position for the insert of instruction.
+    /// When encounter `if`, loop, short-circuit expression or null check, it will switch to another block.
     block: BlockId,
+    /// The return type of current function.
     results: Vec<TypeId>,
+    /// The mapping from `sema` local variable object to IR `Place`.
+    /// `Place` normally contains a pointer to stack slot and variable type.
     locals: HashMap<ObjectId, Place>,
+    /// The set of the known non-null pointers.
+    /// When take an operation on these pointer such as load, store, field access and so on,
+    /// the null check will be ignored.
     known_non_null: HashSet<ValueId>,
+    /// The current nested-loop stack. 
+    /// Each `Loop` stores the loop header and exit block, which are used to implement continue and break.
     loops: Vec<Loop>,
 }
 

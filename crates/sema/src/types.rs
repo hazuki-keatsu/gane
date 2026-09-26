@@ -9,19 +9,67 @@ use std::collections::{BTreeMap, HashMap};
 
 macro_rules! arena_id {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
-        pub struct $name(u32);
-
         impl $name {
+            /// Constructs an ID from its arena index.
             pub const fn from_raw(raw: u32) -> Self {
                 Self(raw)
             }
+
+            /// Returns the arena index represented by this ID.
             pub const fn raw(self) -> u32 {
                 self.0
             }
         }
     };
 }
+
+/// An index into `TypeArena::types`.
+///
+/// It identifies semantic types such as `int`, pointers, arrays, structs,
+/// function signatures, and named types.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct TypeId(u32);
+
+/// An index into the symbol/object arena.
+///
+/// It identifies semantic entities such as variables, constants, functions,
+/// type names, fields, and parameters.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ObjectId(u32);
+
+/// An index into the lexical-scope table.
+///
+/// It identifies universe, package, file, function, and block scopes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ScopeId(u32);
+
+/// An interned identifier spelling in the symbol table.
+///
+/// Names are stored once and referenced by `NameId` instead of being copied
+/// into every object and scope binding.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct NameId(u32);
+
+/// The identity of a semantically analyzed package.
+///
+/// Objects use this ID to record package ownership, while the package itself
+/// also owns its package scope and input-file IDs.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct PackageId(u32);
+
+/// The identity of an input source file within a package.
+///
+/// It is used to associate file scopes and source declarations with the file
+/// in which they were parsed.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct FileId(u32);
+
+/// An index into `TypeArena::tuples`.
+///
+/// A tuple stores the [`ObjectId`]s of a function's parameters or results. It
+/// is a signature component, not a first-class language type.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct TupleId(u32);
 
 arena_id!(TypeId);
 arena_id!(ObjectId);
@@ -64,6 +112,7 @@ pub enum ObjectKind {
     Invalid,
     Const { value: ConstValue },
     Var { embedded: bool },
+    /// signature see: [`TypeKind::Signature`]
     Func { signature: TypeId },
     TypeName { named: TypeId, is_alias: bool },
     Field { index: u32, embedded: bool },
@@ -225,6 +274,7 @@ pub enum TypeKind {
         receiver: Option<ObjectId>,
         params: TupleId,
         results: TupleId,
+        /// For the variable number of parameters.
         variadic: bool,
     },
 
@@ -285,6 +335,9 @@ pub enum ChanDirection {
 /// first-class Go type.
 #[derive(Clone, Debug, Default)]
 pub struct Tuple {
+    /// The objects in this tuple are the variables of a function's parameter
+    /// or result list. They are currently represented as [`ObjectKind::Param`]
+    /// objects.
     pub vars: Vec<ObjectId>,
 }
 

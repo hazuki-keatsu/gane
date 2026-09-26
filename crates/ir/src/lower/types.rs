@@ -6,11 +6,13 @@ impl PackageLowerer<'_> {
         typ: gane_sema::TypeId,
         node: AstNodeId,
     ) -> Result<TypeId, LowerError> {
+        // Get type cache from `type_map`
         if let Some(ir_type) = self.type_map.get(&typ) {
             return Ok(*ir_type);
         }
         let underlying = self.analysis.underlying_type(typ);
         if let Some(ir_type) = self.type_map.get(&underlying).copied() {
+            // Add cache for the named type
             self.type_map.insert(typ, ir_type);
             return Ok(ir_type);
         }
@@ -66,7 +68,7 @@ impl PackageLowerer<'_> {
         Ok(result)
     }
 
-    pub(super) fn array_length(
+    fn array_length(
         &self,
         length: ConstValue,
         node: AstNodeId,

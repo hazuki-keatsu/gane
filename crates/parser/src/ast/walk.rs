@@ -8,9 +8,6 @@
 //!   `false` skips that node's whole subtree (and no trailing `f(None)` is
 //!   emitted for it, exactly like Go's inspector returning nil); returning
 //!   `true` visits the children and then calls `f(None)` once, recursively.
-//! - Go's `type switch` in `Walk` becomes an exhaustive match in
-//!   [`children`]; the `default: panic` arm disappears (exhaustiveness proves
-//!   no node type is missed).
 //!
 //! Note: Go's `Walk` dereferences several always-non-nil pointer fields
 //! unconditionally (e.g. `StructType.Fields`), which panics on malformed
