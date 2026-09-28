@@ -34,12 +34,11 @@ out of `lib.rs`.
 
 ## Agent Workflow and Change Authorization
 
-Before starting a task, read `PROGRESS.md` to establish the current milestone,
-then read the relevant design documents in `docs/` (for example,
+Before starting a task, read the relevant design documents in `docs/` (for example,
 `docs/ir-design.md` for IR work). Inspect the affected crate only after that.
 Treat existing worktree changes as user-owned.
 
-After completing and verifying a milestone, update its status in `PROGRESS.md`
+After completing and verifying a milestone, update its status in the document
 as part of the same change.
 
 Write or modify source code only when the user explicitly requests implementation

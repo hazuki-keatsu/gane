@@ -378,6 +378,31 @@ mod tests {
         }
     }
 
+    fn pointer_type(builder: &mut IrBuilder, pointee: TypeId) -> TypeId {
+        builder.add_type(IrTypeKind::Ptr {
+            pointee,
+            address_space: 0,
+        })
+    }
+
+    fn add_empty_main(builder: &mut IrBuilder) {
+        let main = builder.declare_function(
+            "gane.main".into(),
+            signature(vec![], vec![]),
+            FunctionAttributes::default(),
+        );
+        builder.set_entry(main).unwrap();
+        let entry = builder.entry_block(main).unwrap();
+        builder
+            .set_terminator(main, entry, Terminator::Return { values: vec![] })
+            .unwrap();
+    }
+
+    fn assert_current_escape_check_misses(package: UnverifiedIrPackage) {
+        assert!(verify(&package).is_ok());
+        assert!(verify_and_check_escape(package).is_ok());
+    }
+
     fn empty_main() -> UnverifiedIrPackage {
         let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i32 = builder.types().i32();
@@ -652,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_stack_pointer_passed_to_escaping_parameter() {
+    fn rejects_stack_pointer_passed_to_borrowed_identity_when_result_is_discarded() {
         let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i32 = builder.types().i32();
         let pointer = builder.add_type(IrTypeKind::Ptr {
@@ -710,6 +735,674 @@ mod tests {
             .unwrap();
 
         assert!(escape_messages(builder.finish().unwrap()).contains("escaping parameter"));
+    }
+
+    #[test]
+    fn currently_misses_pointer_aggregate_copy_through_block_parameter() {
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
+        let i64 = builder.types().i64();
+        let pointer = pointer_type(&mut builder, i64);
+        let pointer_pointer = pointer_type(&mut builder, pointer);
+        let aggregate = builder.add_type(IrTypeKind::Struct {
+            fields: vec![pointer],
+        });
+        let aggregate_pointer = pointer_type(&mut builder, aggregate);
+        let global = builder.add_global(IrGlobal {
+            symbol: "gane.saved".into(),
+            typ: aggregate,
+            initializer: GlobalInitializer::Zero,
+        });
+        let main = builder.declare_function(
+            "gane.main".into(),
+            signature(vec![], vec![]),
+            FunctionAttributes::default(),
+        );
+        builder.set_entry(main).unwrap();
+        let entry = builder.entry_block(main).unwrap();
+        let copy = builder.create_block(main).unwrap();
+        let source = builder
+            .append_block_parameter(main, copy, aggregate_pointer, None)
+            .unwrap();
+        let value_slot = builder.add_stack_slot(main, i64, None, None).unwrap();
+        let aggregate_slot = builder.add_stack_slot(main, aggregate, None, None).unwrap();
+        let value = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr { slot: value_slot },
+                [pointer],
+                None,
+            )
+            .unwrap()[0];
+        let aggregate_address = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr {
+                    slot: aggregate_slot,
+                },
+                [aggregate_pointer],
+                None,
+            )
+            .unwrap()[0];
+        let field = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::GepField {
+                    base: aggregate_address,
+                    field: 0,
+                },
+                [pointer_pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::Store {
+                    pointer: field,
+                    value,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        builder
+            .set_terminator(
+                main,
+                entry,
+                Terminator::Branch {
+                    target: copy,
+                    arguments: vec![aggregate_address],
+                },
+            )
+            .unwrap();
+        let destination = builder
+            .append_instruction(
+                main,
+                copy,
+                InstructionKind::GlobalAddr { global },
+                [aggregate_pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .append_instruction(
+                main,
+                copy,
+                InstructionKind::AggregateCopy {
+                    destination,
+                    source,
+                    typ: aggregate,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        builder
+            .set_terminator(main, copy, Terminator::Return { values: vec![] })
+            .unwrap();
+
+        assert_current_escape_check_misses(builder.finish().unwrap());
+    }
+
+    #[test]
+    fn currently_misses_pointer_aggregate_copy_through_loaded_alias() {
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
+        let i64 = builder.types().i64();
+        let pointer = pointer_type(&mut builder, i64);
+        let pointer_pointer = pointer_type(&mut builder, pointer);
+        let aggregate = builder.add_type(IrTypeKind::Struct {
+            fields: vec![pointer],
+        });
+        let aggregate_pointer = pointer_type(&mut builder, aggregate);
+        let aggregate_pointer_pointer = pointer_type(&mut builder, aggregate_pointer);
+        let global = builder.add_global(IrGlobal {
+            symbol: "gane.saved".into(),
+            typ: aggregate,
+            initializer: GlobalInitializer::Zero,
+        });
+        let main = builder.declare_function(
+            "gane.main".into(),
+            signature(vec![], vec![]),
+            FunctionAttributes::default(),
+        );
+        builder.set_entry(main).unwrap();
+        let entry = builder.entry_block(main).unwrap();
+        let value_slot = builder.add_stack_slot(main, i64, None, None).unwrap();
+        let aggregate_slot = builder.add_stack_slot(main, aggregate, None, None).unwrap();
+        let alias_slot = builder
+            .add_stack_slot(main, aggregate_pointer, None, None)
+            .unwrap();
+        let value = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr { slot: value_slot },
+                [pointer],
+                None,
+            )
+            .unwrap()[0];
+        let aggregate_address = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr {
+                    slot: aggregate_slot,
+                },
+                [aggregate_pointer],
+                None,
+            )
+            .unwrap()[0];
+        let field = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::GepField {
+                    base: aggregate_address,
+                    field: 0,
+                },
+                [pointer_pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::Store {
+                    pointer: field,
+                    value,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        let alias = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr { slot: alias_slot },
+                [aggregate_pointer_pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::Store {
+                    pointer: alias,
+                    value: aggregate_address,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        let source = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::Load { pointer: alias },
+                [aggregate_pointer],
+                None,
+            )
+            .unwrap()[0];
+        let destination = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::GlobalAddr { global },
+                [aggregate_pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::AggregateCopy {
+                    destination,
+                    source,
+                    typ: aggregate,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        builder
+            .set_terminator(main, entry, Terminator::Return { values: vec![] })
+            .unwrap();
+
+        assert_current_escape_check_misses(builder.finish().unwrap());
+    }
+
+    #[test]
+    fn currently_misses_callee_publishing_pointer_loaded_from_parameter_memory() {
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
+        let i64 = builder.types().i64();
+        let pointer = pointer_type(&mut builder, i64);
+        let pointer_pointer = pointer_type(&mut builder, pointer);
+        let global = builder.add_global(IrGlobal {
+            symbol: "gane.saved".into(),
+            typ: pointer,
+            initializer: GlobalInitializer::Zero,
+        });
+        let publish = builder.declare_function(
+            "gane.publish".into(),
+            signature(
+                vec![IrParameter {
+                    typ: pointer_pointer,
+                }],
+                vec![],
+            ),
+            FunctionAttributes::default(),
+        );
+        let publish_entry = builder.entry_block(publish).unwrap();
+        let parameter = builder.entry_parameters(publish).unwrap()[0];
+        let loaded = builder
+            .append_instruction(
+                publish,
+                publish_entry,
+                InstructionKind::Load { pointer: parameter },
+                [pointer],
+                None,
+            )
+            .unwrap()[0];
+        let destination = builder
+            .append_instruction(
+                publish,
+                publish_entry,
+                InstructionKind::GlobalAddr { global },
+                [pointer_pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .append_instruction(
+                publish,
+                publish_entry,
+                InstructionKind::Store {
+                    pointer: destination,
+                    value: loaded,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        builder
+            .set_terminator(
+                publish,
+                publish_entry,
+                Terminator::Return { values: vec![] },
+            )
+            .unwrap();
+
+        let main = builder.declare_function(
+            "gane.main".into(),
+            signature(vec![], vec![]),
+            FunctionAttributes::default(),
+        );
+        builder.set_entry(main).unwrap();
+        let entry = builder.entry_block(main).unwrap();
+        let value_slot = builder.add_stack_slot(main, i64, None, None).unwrap();
+        let pointer_slot = builder.add_stack_slot(main, pointer, None, None).unwrap();
+        let value = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr { slot: value_slot },
+                [pointer],
+                None,
+            )
+            .unwrap()[0];
+        let argument = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr { slot: pointer_slot },
+                [pointer_pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::Store {
+                    pointer: argument,
+                    value,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::Call {
+                    callee: Callee::Function(publish),
+                    arguments: vec![argument],
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        builder
+            .set_terminator(main, entry, Terminator::Return { values: vec![] })
+            .unwrap();
+
+        assert_current_escape_check_misses(builder.finish().unwrap());
+    }
+
+    #[test]
+    fn currently_misses_callee_publishing_pointer_through_multiple_loads() {
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
+        let i64 = builder.types().i64();
+        let pointer = pointer_type(&mut builder, i64);
+        let pointer_pointer = pointer_type(&mut builder, pointer);
+        let pointer_pointer_pointer = pointer_type(&mut builder, pointer_pointer);
+        let global = builder.add_global(IrGlobal {
+            symbol: "gane.saved".into(),
+            typ: pointer,
+            initializer: GlobalInitializer::Zero,
+        });
+        let publish = builder.declare_function(
+            "gane.publish".into(),
+            signature(
+                vec![IrParameter {
+                    typ: pointer_pointer_pointer,
+                }],
+                vec![],
+            ),
+            FunctionAttributes::default(),
+        );
+        let publish_entry = builder.entry_block(publish).unwrap();
+        let parameter = builder.entry_parameters(publish).unwrap()[0];
+        let inner = builder
+            .append_instruction(
+                publish,
+                publish_entry,
+                InstructionKind::Load { pointer: parameter },
+                [pointer_pointer],
+                None,
+            )
+            .unwrap()[0];
+        let loaded = builder
+            .append_instruction(
+                publish,
+                publish_entry,
+                InstructionKind::Load { pointer: inner },
+                [pointer],
+                None,
+            )
+            .unwrap()[0];
+        let destination = builder
+            .append_instruction(
+                publish,
+                publish_entry,
+                InstructionKind::GlobalAddr { global },
+                [pointer_pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .append_instruction(
+                publish,
+                publish_entry,
+                InstructionKind::Store {
+                    pointer: destination,
+                    value: loaded,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        builder
+            .set_terminator(
+                publish,
+                publish_entry,
+                Terminator::Return { values: vec![] },
+            )
+            .unwrap();
+
+        let main = builder.declare_function(
+            "gane.main".into(),
+            signature(vec![], vec![]),
+            FunctionAttributes::default(),
+        );
+        builder.set_entry(main).unwrap();
+        let entry = builder.entry_block(main).unwrap();
+        let value_slot = builder.add_stack_slot(main, i64, None, None).unwrap();
+        let pointer_slot = builder.add_stack_slot(main, pointer, None, None).unwrap();
+        let pointer_pointer_slot = builder
+            .add_stack_slot(main, pointer_pointer, None, None)
+            .unwrap();
+        let value = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr { slot: value_slot },
+                [pointer],
+                None,
+            )
+            .unwrap()[0];
+        let inner = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr { slot: pointer_slot },
+                [pointer_pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::Store {
+                    pointer: inner,
+                    value,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        let argument = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr {
+                    slot: pointer_pointer_slot,
+                },
+                [pointer_pointer_pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::Store {
+                    pointer: argument,
+                    value: inner,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::Call {
+                    callee: Callee::Function(publish),
+                    arguments: vec![argument],
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        builder
+            .set_terminator(main, entry, Terminator::Return { values: vec![] })
+            .unwrap();
+
+        assert_current_escape_check_misses(builder.finish().unwrap());
+    }
+
+    #[test]
+    fn accepts_copying_integer_aggregate_from_stack_to_global() {
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
+        let i64 = builder.types().i64();
+        let aggregate = builder.add_type(IrTypeKind::Struct { fields: vec![i64] });
+        let aggregate_pointer = pointer_type(&mut builder, aggregate);
+        let global = builder.add_global(IrGlobal {
+            symbol: "gane.saved".into(),
+            typ: aggregate,
+            initializer: GlobalInitializer::Zero,
+        });
+        let main = builder.declare_function(
+            "gane.main".into(),
+            signature(vec![], vec![]),
+            FunctionAttributes::default(),
+        );
+        builder.set_entry(main).unwrap();
+        let entry = builder.entry_block(main).unwrap();
+        let slot = builder.add_stack_slot(main, aggregate, None, None).unwrap();
+        let source = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr { slot },
+                [aggregate_pointer],
+                None,
+            )
+            .unwrap()[0];
+        let destination = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::GlobalAddr { global },
+                [aggregate_pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::AggregateCopy {
+                    destination,
+                    source,
+                    typ: aggregate,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        builder
+            .set_terminator(main, entry, Terminator::Return { values: vec![] })
+            .unwrap();
+
+        let package = builder.finish().unwrap();
+        assert!(verify(&package).is_ok());
+        assert!(verify_and_check_escape(package).is_ok());
+    }
+
+    #[test]
+    fn rejects_return_after_overwriting_stack_pointer_with_null() {
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
+        let i64 = builder.types().i64();
+        let pointer = pointer_type(&mut builder, i64);
+        let pointer_pointer = pointer_type(&mut builder, pointer);
+        let escape = builder.declare_function(
+            "gane.escape".into(),
+            signature(vec![], vec![pointer]),
+            FunctionAttributes::default(),
+        );
+        let entry = builder.entry_block(escape).unwrap();
+        let value_slot = builder.add_stack_slot(escape, i64, None, None).unwrap();
+        let pointer_slot = builder.add_stack_slot(escape, pointer, None, None).unwrap();
+        let value = builder
+            .append_instruction(
+                escape,
+                entry,
+                InstructionKind::StackAddr { slot: value_slot },
+                [pointer],
+                None,
+            )
+            .unwrap()[0];
+        let destination = builder
+            .append_instruction(
+                escape,
+                entry,
+                InstructionKind::StackAddr { slot: pointer_slot },
+                [pointer_pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .append_instruction(
+                escape,
+                entry,
+                InstructionKind::Store {
+                    pointer: destination,
+                    value,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        let null = builder
+            .append_instruction(
+                escape,
+                entry,
+                InstructionKind::Const {
+                    value: Constant::Null,
+                    typ: pointer,
+                },
+                [pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .append_instruction(
+                escape,
+                entry,
+                InstructionKind::Store {
+                    pointer: destination,
+                    value: null,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        let loaded = builder
+            .append_instruction(
+                escape,
+                entry,
+                InstructionKind::Load {
+                    pointer: destination,
+                },
+                [pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .set_terminator(
+                escape,
+                entry,
+                Terminator::Return {
+                    values: vec![loaded],
+                },
+            )
+            .unwrap();
+        add_empty_main(&mut builder);
+
+        assert!(escape_messages(builder.finish().unwrap()).contains("returned from function"));
     }
 
     #[test]
