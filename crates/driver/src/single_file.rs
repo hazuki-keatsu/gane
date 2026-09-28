@@ -4,13 +4,13 @@ use std::process::ExitCode;
 
 use gane_codegen::LlvmBackend;
 use gane_diagnostics::{DiagnosticMode, Diagnostics};
-use gane_interpreter::interpret;
+use gane_interpreter::{interpret, interpret_with_stack_details};
 use gane_ir::{lower_package, verify_and_check_escape};
 use gane_parser::parser::{Mode, parse_file};
 use gane_parser::token::FileSet;
 use gane_sema::{FileId, PackageInput, analyze_package};
 
-pub(crate) fn run(input: PathBuf, out_dir: PathBuf, disable_color: bool) -> ExitCode {
+pub(crate) fn run(input: PathBuf, out_dir: PathBuf, disable_color: bool, trace: bool) -> ExitCode {
     colored::control::set_override(!disable_color);
     // --- src -> AST -------------------------------------------------------
     let src = match fs::read(&input) {
@@ -208,14 +208,27 @@ pub(crate) fn run(input: PathBuf, out_dir: PathBuf, disable_color: bool) -> Exit
         llvm_ir.len()
     );
 
-    match interpret(&ir) {
-        Ok(()) => {
-            println!("gane-driver: interpreter completed successfully");
-            ExitCode::SUCCESS
+    if trace {
+        match interpret_with_stack_details(&ir) {
+            Ok(()) => {
+                println!("gane-driver: interpreter completed successfully");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("gane-driver: interpreter failed: {error}");
+                ExitCode::FAILURE
+            }
         }
-        Err(error) => {
-            eprintln!("gane-driver: interpreter failed: {error}");
-            ExitCode::FAILURE
+    } else {
+        match interpret(&ir) {
+            Ok(()) => {
+                println!("gane-driver: interpreter completed successfully");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("gane-driver: interpreter failed: {error}");
+                ExitCode::FAILURE
+            }
         }
     }
 }

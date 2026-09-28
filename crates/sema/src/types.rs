@@ -110,20 +110,38 @@ pub struct Object {
 #[derive(Clone, Debug)]
 pub enum ObjectKind {
     Invalid,
-    Const { value: ConstValue },
-    Var { embedded: bool },
+    Const {
+        value: ConstValue,
+    },
+    Var {
+        embedded: bool,
+    },
     /// signature see: [`TypeKind::Signature`]
-    Func { signature: TypeId },
-    TypeName { named: TypeId, is_alias: bool },
-    Field { index: u32, embedded: bool },
-    Param { index: u32 },
+    Func {
+        signature: TypeId,
+    },
+    TypeName {
+        named: TypeId,
+        is_alias: bool,
+    },
+    Field {
+        index: u32,
+        embedded: bool,
+    },
+    Param {
+        index: u32,
+    },
 
     // Reserved for Go features outside the MVP.
     Builtin,
     Nil,
-    PkgName { package: PackageId },
+    PkgName {
+        package: PackageId,
+    },
     Label,
-    TypeParam { index: u32 },
+    TypeParam {
+        index: u32,
+    },
 }
 
 /// A compile-time constant. `IntegerValue` is arbitrary precision without

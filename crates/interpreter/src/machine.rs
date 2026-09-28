@@ -1,3 +1,5 @@
+use core::fmt;
+
 use crate::{
     errors::InterpreterError,
     memory::{Object, project_object, project_object_mut, zero_object},
@@ -8,26 +10,73 @@ use crate::{
 };
 
 use gane_ir::{
-    Callee, ComparePredicate, FunctionId, GlobalInitializer, Instruction, InstructionKind,
+    BlockId, Callee, ComparePredicate, FunctionId, GlobalInitializer, Instruction, InstructionKind,
     IntCastKind, IrFunction, IrTypeKind, Terminator, TrapReason, TypeId, UnaryOp, ValueId,
     VerifiedIrPackage,
 };
 
 struct Frame {
+    function: FunctionId,
+    block: BlockId,
+    /// `instruction == instructions.len()` means terminator is under execution.
+    instruction: usize,
     values: Vec<Option<RuntimeValue>>,
     slots: Vec<Object>,
 }
 
+struct StackDisplay<'a> {
+    package: &'a VerifiedIrPackage,
+    frames: &'a [Frame],
+}
+
 pub(crate) struct Interpreter<'a> {
     package: &'a VerifiedIrPackage,
+    display_stack_details: bool,
+    /// Global variable object
     globals: Vec<Object>,
-    // ponytail: retain frames for the whole run; reclaim proven-dead frames if recursion becomes
-    // a measured memory problem.
+    /// Calling stack frames
     frames: Vec<Frame>,
 }
 
+impl fmt::Display for StackDisplay<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (trace_index, frame) in self.frames.iter().rev().enumerate() {
+            let function = self
+                .package
+                .function(frame.function)
+                .expect("active frame has a valid function");
+            writeln!(
+                f,
+                "#{} {} bb{}:{}",
+                trace_index,
+                function.symbol,
+                frame.block.raw(),
+                frame.instruction
+            )?;
+
+            writeln!(f, "  values:")?;
+            for (value_index, value) in frame.values.iter().enumerate() {
+                match value {
+                    Some(value) => {
+                        writeln!(f, "     %{} = {:?}", value_index + 1, value)?;
+                    }
+                    None => {
+                        writeln!(f, "     %{} = <unavailable>", value_index + 1)?;
+                    }
+                }
+            }
+
+            writeln!(f, "  slots:")?;
+            for (slot_index, object) in frame.slots.iter().enumerate() {
+                writeln!(f, "    ${} = {:?}", slot_index + 1, object)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl<'a> Interpreter<'a> {
-    pub(crate) fn new(package: &'a VerifiedIrPackage) -> Self {
+    pub(crate) fn new(package: &'a VerifiedIrPackage, display_stack_details: bool) -> Self {
         let globals = package
             .globals()
             .map(|(_, global)| match global.initializer {
@@ -37,14 +86,18 @@ impl<'a> Interpreter<'a> {
             .collect();
         Self {
             package,
+            display_stack_details,
             globals,
             frames: Vec::new(),
         }
     }
 
     pub(crate) fn run(mut self) -> Result<(), InterpreterError> {
-        self.execute_function(self.package.entry(), Vec::new())?;
-        Ok(())
+        let result = self
+            .execute_function(self.package.entry(), Vec::new())
+            .map(|_| ());
+        debug_assert!(self.frames.is_empty());
+        result
     }
 
     fn execute_function(
@@ -58,6 +111,9 @@ impl<'a> Interpreter<'a> {
             .expect("verified IR has valid function IDs");
         let frame_id = self.frames.len();
         self.frames.push(Frame {
+            function: function_id,
+            block: function.entry,
+            instruction: 0,
             values: vec![None; function.values.len()],
             slots: function
                 .stack_slots
@@ -66,9 +122,31 @@ impl<'a> Interpreter<'a> {
                 .collect(),
         });
 
+        let mut result = self.execute_frame(frame_id, function, arguments);
+        if self.display_stack_details {
+            if let Err(error) = &mut result {
+                error.attach_trace_with(|| self.stack_frame_to_string());
+            }
+        }
+
+        debug_assert_eq!(self.frames.len(), frame_id + 1);
+        self.frames
+            .pop()
+            .expect("executing function has an active stack frame");
+        debug_assert_eq!(self.frames.len(), frame_id);
+        result
+    }
+
+    fn execute_frame(
+        &mut self,
+        frame_id: usize,
+        function: &IrFunction,
+        arguments: Vec<RuntimeValue>,
+    ) -> Result<Option<RuntimeValue>, InterpreterError> {
         let mut block_id = function.entry;
         let mut block_arguments = arguments;
         loop {
+            self.frames[frame_id].block = block_id;
             let block = function
                 .block(block_id)
                 .expect("verified IR has valid block IDs");
@@ -77,11 +155,14 @@ impl<'a> Interpreter<'a> {
             let terminator = block.terminator.clone();
             self.bind_block_parameters(frame_id, &parameters, block_arguments);
 
-            for instruction in &instructions {
+            for (instruction_index, instruction) in instructions.iter().enumerate() {
+                self.frames[frame_id].instruction = instruction_index;
+
                 let results = self.execute_instruction(frame_id, function, instruction)?;
                 self.bind_instruction_results(frame_id, &instruction.results, results);
             }
 
+            self.frames[frame_id].instruction = instructions.len();
             match terminator {
                 Terminator::Branch { target, arguments } => {
                     block_id = target;
@@ -105,8 +186,12 @@ impl<'a> Interpreter<'a> {
                 Terminator::Return { values } => {
                     return Ok(values.first().map(|value| self.value(frame_id, *value)));
                 }
-                Terminator::Trap { reason } => return Err(InterpreterError::Trap(reason)),
-                Terminator::Unreachable => return Err(InterpreterError::ReachedUnreachable),
+                Terminator::Trap { reason } => {
+                    return Err(InterpreterError::trap(reason));
+                }
+                Terminator::Unreachable => {
+                    return Err(InterpreterError::ReachedUnreachable { trace: None });
+                }
             }
         }
     }
@@ -187,7 +272,7 @@ impl<'a> Interpreter<'a> {
             InstructionKind::GepIndex { base, index: value } => {
                 let base_value = self.value(frame, *base);
                 if base_value.pointer() == &Pointer::Null {
-                    return Err(InterpreterError::Trap(TrapReason::NullDereference));
+                    return Err(InterpreterError::trap(TrapReason::NullDereference));
                 }
                 let base_type = value_type(function, *base);
                 let array = pointee(self.package.types(), base_type);
@@ -203,7 +288,7 @@ impl<'a> Interpreter<'a> {
                 };
                 let index_value = self.value(frame, *value).bits();
                 if index_value >= length {
-                    return Err(InterpreterError::Trap(TrapReason::BoundsError));
+                    return Err(InterpreterError::trap(TrapReason::BoundsError));
                 }
                 one(RuntimeValue::Pointer(self.project(
                     base_value.pointer(),
@@ -295,7 +380,7 @@ impl<'a> Interpreter<'a> {
         projection: Projection,
     ) -> Result<Pointer, InterpreterError> {
         match pointer {
-            Pointer::Null => Err(InterpreterError::Trap(TrapReason::NullDereference)),
+            Pointer::Null => Err(InterpreterError::trap(TrapReason::NullDereference)),
             Pointer::Address { root, projections } => {
                 let mut projections = projections.clone();
                 projections.push(projection);
@@ -325,6 +410,7 @@ impl<'a> Interpreter<'a> {
         Ok(project_object_mut(object, projections))
     }
 
+    /// Fill the block parameters by SSA value of the stack frame
     fn bind_block_parameters(
         &mut self,
         frame: usize,
@@ -368,5 +454,13 @@ impl<'a> Interpreter<'a> {
             .iter()
             .map(|value| self.value(frame, *value))
             .collect()
+    }
+
+    fn stack_frame_to_string(&self) -> String {
+        StackDisplay {
+            package: self.package,
+            frames: &self.frames,
+        }
+        .to_string()
     }
 }

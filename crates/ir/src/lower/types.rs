@@ -68,11 +68,7 @@ impl PackageLowerer<'_> {
         Ok(result)
     }
 
-    fn array_length(
-        &self,
-        length: ConstValue,
-        node: AstNodeId,
-    ) -> Result<u64, LowerError> {
+    fn array_length(&self, length: ConstValue, node: AstNodeId) -> Result<u64, LowerError> {
         let ConstValue::Int(length) = length else {
             return Err(LowerError::InvalidConstant { node });
         };

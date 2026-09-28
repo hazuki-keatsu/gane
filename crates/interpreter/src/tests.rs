@@ -27,6 +27,13 @@ fn verified(builder: IrBuilder) -> VerifiedIrPackage {
     verify_and_check_escape(builder.finish().unwrap()).unwrap()
 }
 
+fn trap(reason: TrapReason) -> InterpreterError {
+    InterpreterError::Trap {
+        reason,
+        trace: None,
+    }
+}
+
 fn constant(
     builder: &mut IrBuilder,
     function: FunctionId,
@@ -862,11 +869,11 @@ fn binary_error(op: BinaryOp, left: u64, right: u64) -> InterpreterError {
 fn reports_total_operation_and_terminator_traps() {
     assert_eq!(
         binary_error(BinaryOp::SignedDiv, 1, 0),
-        InterpreterError::Trap(TrapReason::DivisionByZero)
+        trap(TrapReason::DivisionByZero)
     );
     assert_eq!(
         binary_error(BinaryOp::Shl, 1, u64::MAX),
-        InterpreterError::Trap(TrapReason::NegativeShift)
+        trap(TrapReason::NegativeShift)
     );
 
     let mut builder = IrBuilder::new(TargetSpec::for_test_64());
@@ -912,7 +919,7 @@ fn reports_total_operation_and_terminator_traps() {
         .unwrap();
     assert_eq!(
         interpret(&verified(builder)),
-        Err(InterpreterError::Trap(TrapReason::BoundsError))
+        Err(trap(TrapReason::BoundsError))
     );
 
     let mut builder = IrBuilder::new(TargetSpec::for_test_64());
@@ -937,7 +944,7 @@ fn reports_total_operation_and_terminator_traps() {
         .unwrap();
     assert_eq!(
         interpret(&verified(builder)),
-        Err(InterpreterError::Trap(TrapReason::NullDereference))
+        Err(trap(TrapReason::NullDereference))
     );
 
     let mut builder = IrBuilder::new(TargetSpec::for_test_64());
@@ -953,7 +960,7 @@ fn reports_total_operation_and_terminator_traps() {
         .unwrap();
     assert_eq!(
         interpret(&verified(builder)),
-        Err(InterpreterError::Trap(TrapReason::ExplicitPanic))
+        Err(trap(TrapReason::ExplicitPanic))
     );
 
     let mut builder = IrBuilder::new(TargetSpec::for_test_64());
@@ -961,8 +968,93 @@ fn reports_total_operation_and_terminator_traps() {
     builder
         .set_terminator(main, block, Terminator::Unreachable)
         .unwrap();
+    let package = verified(builder);
     assert_eq!(
-        interpret(&verified(builder)),
-        Err(InterpreterError::ReachedUnreachable)
+        interpret(&package),
+        Err(InterpreterError::ReachedUnreachable { trace: None })
     );
+    let error = interpret_with_stack_details(&package).unwrap_err();
+    let InterpreterError::ReachedUnreachable { trace: Some(trace) } = error else {
+        panic!("expected unreachable with stack details");
+    };
+    assert!(trace.contains("#0 gane.main"));
+}
+
+#[test]
+fn reports_nested_stack_details_when_a_callee_traps() {
+    let mut builder = IrBuilder::new(TargetSpec::for_test_64());
+    let i64 = builder.types().i64();
+    let callee = builder.declare_function(
+        "gane.fail".into(),
+        signature(Vec::new(), Vec::new()),
+        FunctionAttributes::default(),
+    );
+    let callee_entry = builder.entry_block(callee).unwrap();
+    let callee_body = builder.create_block(callee).unwrap();
+    builder
+        .set_terminator(
+            callee,
+            callee_entry,
+            Terminator::Branch {
+                target: callee_body,
+                arguments: Vec::new(),
+            },
+        )
+        .unwrap();
+    let one = constant(&mut builder, callee, callee_body, i64, Constant::Integer(1));
+    let zero = constant(&mut builder, callee, callee_body, i64, Constant::Integer(0));
+    builder
+        .append_instruction(
+            callee,
+            callee_body,
+            InstructionKind::Binary {
+                op: BinaryOp::SignedDiv,
+                left: one,
+                right: zero,
+            },
+            [i64],
+            None,
+        )
+        .unwrap();
+    builder
+        .set_terminator(
+            callee,
+            callee_body,
+            Terminator::Return { values: Vec::new() },
+        )
+        .unwrap();
+
+    let (main, main_entry) = main_function(&mut builder);
+    builder
+        .append_instruction(
+            main,
+            main_entry,
+            InstructionKind::Call {
+                callee: Callee::Function(callee),
+                arguments: Vec::new(),
+            },
+            [],
+            None,
+        )
+        .unwrap();
+    builder
+        .set_terminator(main, main_entry, Terminator::Return { values: Vec::new() })
+        .unwrap();
+
+    let error = interpret_with_stack_details(&verified(builder)).unwrap_err();
+    let rendered = error.to_string();
+    assert!(rendered.starts_with("IR trapped: DivisionByZero\n#0 gane.fail"));
+    assert!(!rendered.ends_with('\n'));
+    let InterpreterError::Trap {
+        reason,
+        trace: Some(trace),
+    } = error
+    else {
+        panic!("expected a trap with stack details");
+    };
+    assert_eq!(reason, TrapReason::DivisionByZero);
+    assert!(trace.contains(&format!("#0 gane.fail bb{}:2", callee_body.raw())));
+    assert!(trace.contains("#1 gane.main"));
+    assert!(trace.contains("  values:"));
+    assert!(trace.contains("  slots:"));
 }

@@ -35,10 +35,16 @@ struct SingleArgs {
     /// Render diagnostics with ANSI colors on stderr.
     #[arg(long)]
     disable_color: bool,
+
+    /// Display trace information if Trapped or Unreachable.
+    #[arg(long)]
+    verbose: bool,
 }
 
 fn main() -> ExitCode {
     match Cli::parse().command {
-        Command::Single(args) => single_file::run(args.input, args.out_dir, args.disable_color),
+        Command::Single(args) => {
+            single_file::run(args.input, args.out_dir, args.disable_color, args.verbose)
+        }
     }
 }

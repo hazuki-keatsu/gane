@@ -210,10 +210,7 @@ impl<'a> PackageLowerer<'a> {
     /// The initializer has already been classified by sema as either zero
     /// initialization or a supported scalar constant. This method only
     /// translates that result and records the sema-object-to-IR-global mapping.
-    fn lower_global_declaration(
-        &mut self,
-        declaration: &ast::GenDecl,
-    ) -> Result<(), LowerError> {
+    fn lower_global_declaration(&mut self, declaration: &ast::GenDecl) -> Result<(), LowerError> {
         for spec in &declaration.specs {
             let ast::Spec::ValueSpec(spec) = spec else {
                 return Err(self.unsupported(spec.node_id(), "global variable declaration"));

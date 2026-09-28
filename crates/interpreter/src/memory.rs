@@ -9,6 +9,7 @@ pub(crate) enum Object {
     Struct(Vec<Object>),
 }
 
+/// Initializer for zero
 pub(crate) fn zero_object(types: &TypeArena, typ: TypeId) -> Object {
     match types
         .get(typ)
@@ -33,6 +34,7 @@ pub(crate) fn zero_object(types: &TypeArena, typ: TypeId) -> Object {
     }
 }
 
+/// Find out the [`Object`] by projection chain. [`Object`] is immutable reference.
 pub(crate) fn project_object<'a>(mut object: &'a Object, projections: &[Projection]) -> &'a Object {
     for projection in projections {
         object = match (object, projection) {
@@ -44,6 +46,7 @@ pub(crate) fn project_object<'a>(mut object: &'a Object, projections: &[Projecti
     object
 }
 
+/// Find out the [`Object`] by projection chain. [`Object`] is mutable reference.
 pub(crate) fn project_object_mut<'a>(
     mut object: &'a mut Object,
     projections: &[Projection],

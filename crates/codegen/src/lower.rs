@@ -1561,9 +1561,10 @@ mod tests {
         let package = trap_program(&backend);
         assert!(matches!(
             gane_interpreter::interpret(&package),
-            Err(gane_interpreter::InterpreterError::Trap(
-                TrapReason::ExplicitPanic
-            ))
+            Err(gane_interpreter::InterpreterError::Trap {
+                reason: TrapReason::ExplicitPanic,
+                ..
+            })
         ));
         let llvm_ir = backend.emit_llvm_ir(&package).unwrap();
         assert!(llvm_ir.contains("@__gane_trap"));

@@ -21,9 +21,9 @@ pub(crate) fn check(package: &UnverifiedIrPackage) -> Result<(), Vec<IrDiagnosti
 }
 
 /// Return a [`Vec<Vec<bool>>`] to describe that if
-/// `summaries[FunctionId][IrParameter as index] == true`, 
+/// `summaries[FunctionId][IrParameter as index] == true`,
 /// the [`IrParameter`](crate::ir::IrParameter) of the [`IrFunction`] may escape.
-/// 
+///
 /// 1. Assume that all the parameter won't escape.
 /// 2. Mark every pointer parameter with taint.
 /// 3. [`propagate()`] will track the taint pointer by Gep, stack slot, branch parameter, load/store and etc.
