@@ -2,7 +2,6 @@
 
 pub use crate::builder::{BuildError, IrBuilder};
 pub use crate::id::{BlockId, FunctionId, GlobalId, StackSlotId, TypeId, ValueId};
-pub use crate::interpreter::{InterpreterError, interpret};
 pub use crate::ir::{
     BinaryOp, Callee, ComparePredicate, Constant, FunctionAttributes, GlobalInitializer,
     Instruction, InstructionKind, IntCastKind, IrBlock, IrFunction, IrGlobal, IrParameter,

@@ -12,3 +12,4 @@ gane_codegen = { path = "../codegen" }
 gane_ir = { path = "../ir" }
 gane_parser = { path= "../parser" }
 gane_sema = { path = "../sema" }
+gane_interpreter = { path = "../interpreter" }

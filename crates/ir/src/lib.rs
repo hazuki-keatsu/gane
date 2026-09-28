@@ -2,7 +2,6 @@ mod builder;
 mod escape;
 mod id;
 mod interface;
-mod interpreter;
 mod ir;
 mod lower;
 mod printer;

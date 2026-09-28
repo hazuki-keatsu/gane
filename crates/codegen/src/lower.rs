@@ -1538,7 +1538,7 @@ mod tests {
     fn builds_phi_and_stack_slots_with_inkwell() {
         let backend = LlvmBackend::for_host().unwrap();
         let package = verified_program(&backend);
-        assert_eq!(gane_ir::interpret(&package), Ok(()));
+        assert_eq!(gane_interpreter::interpret(&package), Ok(()));
         let llvm_ir = backend.emit_llvm_ir(&package).unwrap();
         assert!(llvm_ir.contains("phi i64"));
         assert!(!llvm_ir.contains("nsw"));
@@ -1549,7 +1549,7 @@ mod tests {
     fn builds_aggregate_copy_with_target_data_memmove() {
         let backend = LlvmBackend::for_host().unwrap();
         let package = aggregate_program(&backend);
-        assert_eq!(gane_ir::interpret(&package), Ok(()));
+        assert_eq!(gane_interpreter::interpret(&package), Ok(()));
         let llvm_ir = backend.emit_llvm_ir(&package).unwrap();
         assert!(llvm_ir.contains("llvm.memmove.p0.p0"));
         assert!(run_lli(&llvm_ir).is_none_or(|status| status.success()));
@@ -1560,8 +1560,10 @@ mod tests {
         let backend = LlvmBackend::for_host().unwrap();
         let package = trap_program(&backend);
         assert!(matches!(
-            gane_ir::interpret(&package),
-            Err(gane_ir::InterpreterError::Trap(TrapReason::ExplicitPanic))
+            gane_interpreter::interpret(&package),
+            Err(gane_interpreter::InterpreterError::Trap(
+                TrapReason::ExplicitPanic
+            ))
         ));
         let llvm_ir = backend.emit_llvm_ir(&package).unwrap();
         assert!(llvm_ir.contains("@__gane_trap"));

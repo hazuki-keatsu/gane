@@ -4,7 +4,8 @@ use std::process::ExitCode;
 
 use gane_codegen::LlvmBackend;
 use gane_diagnostics::{DiagnosticMode, Diagnostics};
-use gane_ir::{interpret, lower_package, verify_and_check_escape};
+use gane_interpreter::interpret;
+use gane_ir::{lower_package, verify_and_check_escape};
 use gane_parser::parser::{Mode, parse_file};
 use gane_parser::token::FileSet;
 use gane_sema::{FileId, PackageInput, analyze_package};
