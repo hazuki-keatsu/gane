@@ -1,6 +1,6 @@
 ---
-version: v1.3
-date: 2026-09-26
+version: v1.4
+date: 2026-09-29
 author: hazuki-keatsu
 tag: ir
 state: v0
@@ -10,7 +10,7 @@ state: v0
 
 本计划以当前 `InstructionKind` / `Terminator` 为覆盖范围，面向所有通过普通 verifier 的 IR，包括手写 IR，不依赖 sema 或 canonical lowering 的生成习惯。
 
-相关基线：[IR 设计](ir-design.md)第 7、9、12、14 节，以及 `crates/ir/src/escape.rs`、`verify.rs`、`ir.rs`。
+相关基线：[IR 设计](ir-design.md)第 7、9、12、14 节，以及 `crates/ir/src/escape/`、`verify.rs`、`ir.rs`。
 
 ## 1. 目标与范围
 
@@ -24,9 +24,9 @@ state: v0
 
 无需实现独占借用、move、析构或完整 borrow checker。生命周期约束的含义是“来源对象必须覆盖使用期间”，并不意味着函数返回的所有指针都必须是全局生命周期：返回 caller 借入指针理论上可以安全，只是首版仍采用上述较严格策略。
 
-## 2. 现有实现的缺口与反例
+## 2. 替换前实现的缺口与反例
 
-当前实现通过 `Taint.values` 和 `Taint.slots` 标记污染，`storage()` 仅识别 `StackAddr`、`GlobalAddr` 及其 GEP 链。地址经过 `Load`、block parameter 或 `Call` 后，`storage()` 无法识别原对象。
+替换前实现通过 `Taint.values` 和 `Taint.slots` 标记污染，`storage()` 仅识别 `StackAddr`、`GlobalAddr` 及其 GEP 链。地址经过 `Load`、block parameter 或 `Call` 后，`storage()` 无法识别原对象。
 
 这至少影响两类路径：
 
@@ -204,7 +204,7 @@ pointer entry parameter i 的种子是 `Borrowed(i)`。执行函数内转移规�
 - 不修改 backend/interpreter 的输入包装或指针运行时表示。
 - 不引入通用图框架、第三方分析器或 Rust 编译器内部依赖。
 
-当前问题集中在分析信息丢失；没有证据需要重写整个编译器。若实施时发现普通 verifier 本身缺少某条必要类型不变量，应单列小修复及测试，不能把未证明的前提偷偷加入逃逸分析。
+原问题集中在分析信息丢失；没有证据需要重写整个编译器。若实施时发现普通 verifier 本身缺少某条必要类型不变量，应单列小修复及测试，不能把未证明的前提偷偷加入逃逸分析。
 
 ## 8. 分阶段实施与验收
 
@@ -215,7 +215,7 @@ pointer entry parameter i 的种子是 `Borrowed(i)`。执行函数内转移规�
 - [x] 增加纯整数 aggregate 复制到 global 的正例，避免以“拒绝所有 stack source”掩盖缺口。
 - [x] 固定借入返回仍算 capture、weak update 不消除污染等兼容规则。
 
-阶段 A 的验收是有可运行的反例，不以代码阅读替代复现。上述用例已确认通过普通 verifier，且当前 escape check 会漏检四条危险路径。
+阶段 A 的验收是有可运行的反例，不以代码阅读替代复现。上述用例已确认通过普通 verifier，且替换前 escape check 会漏检四条危险路径。
 
 ### 阶段 B：替换函数内传播
 
@@ -251,23 +251,27 @@ pointer entry parameter i 的种子是 `Borrowed(i)`。执行函数内转移规�
 | 策略 | 清零前已外传、borrowed identity 接收栈参数 | 全局参数传给 borrowed identity |
 | 完整性 | 任意 Unknown 不能使危险路径静默通过 | null、整数运算/比较不产生虚假 pointer 事实 |
 
-- [ ] 多个受污染 branch argument 必须全部传播；不要使用有副作用的 `.any(insert)` 作为“一次遍历处理全部元素”的实现。
-- [ ] 每类 aggregate 用例同时覆盖 struct/array、嵌套字段、动态 index、自复制与可能重叠复制。
-- [ ] 变形测试：同一路径分别经过直接值、局部 pointer slot、GEP、block 参数；危险路径均拒绝。
-- [ ] 调整函数声明顺序、合法 block 排列与分支参数顺序，接受/拒绝结果保持一致。
-- [ ] 新增 opcode 时让穷尽 `match` 强制审查其逃逸语义，不用兜底 `_ => {}` 吞掉扩展。
+- [x] 多个受污染 branch argument 必须全部传播；不要使用有副作用的 `.any(insert)` 作为“一次遍历处理全部元素”的实现。
+- [x] 每类 aggregate 用例同时覆盖 struct/array、嵌套字段、动态 index、自复制与可能重叠复制。
+- [x] 变形测试：同一路径分别经过直接值、局部 pointer slot、GEP、block 参数；危险路径均拒绝。
+- [x] 调整函数声明顺序、合法 block 排列与分支参数顺序，接受/拒绝结果保持一致。
+- [x] 新增 opcode 时让穷尽 `match` 强制审查其逃逸语义，不用兜底 `_ => {}` 吞掉扩展。
+
+验收：覆盖矩阵中的拒绝与接受路径均有 raw `IrBuilder` 回归；escape 专项测试共 34 项，完整 workspace 检查与测试通过。
 
 测试以 `IrBuilder` 构造的 IR 为主，源码测试只补充真实 lowering 路径。不能用当前 interpreter 作为悬空引用检测 oracle：它会在函数返回时弹出 frame，但 frame 索引可以被后续调用复用，执行成功不等于生命周期安全。若后续加入动态活跃帧检测，也只能作为有界执行的补充证据。
 
 ### 阶段 E：替换上线与同步文档
 
-- [ ] 删除旧算法，保留并扩展现有回归；新旧结果差异分类为修复漏检、减少误报或新增保守误报。
-- [ ] 定向运行 `cargo test -p gane_ir`，再执行 `cargo check --workspace`、`cargo test --workspace`、`cargo fmt --check`；如 LLVM 环境阻塞，明确记录未完成项。
-- [ ] 确认 driver 仍经 `verify_and_check_escape` 才把 package 交给 interpreter/codegen。
-- [ ] 在 `docs/ir-design.md` 第 12/14 节同步新的分析契约，并纠正“逃逸局部地址由 sema 拒绝”的过时表述。
-- [ ] 在 `PROGRESS.md` 单列加强逃逸检测里程碑；完成上述验收后标记完成，不覆盖原简化版已完成的历史。
+- [x] 删除旧算法与预期漏检测试，保留并扩展现行方案的行为回归；新旧结果差异已分类。
+- [x] 定向运行 `cargo test -p gane_ir`，再执行 `cargo check --workspace`、`cargo test --workspace`、`cargo fmt --check`；LLVM 环境未阻塞。
+- [x] 确认 driver 仍经 `verify_and_check_escape` 才把 package 交给 interpreter/codegen。
+- [x] 在 `docs/ir-design.md` 第 12/14 节同步新的分析契约，并纠正“逃逸局部地址由 sema 拒绝”的过时表述。
+- [x] 在 `PROGRESS.md` 单列加强逃逸检测里程碑；完成上述验收后标记完成，不覆盖原简化版已完成的历史。
 
-本次仅新增计划，不将上述实施阶段标记为完成。
+结果差异：修复了经 alias、CFG、aggregate、callee 间接内存和调用写回的漏检；静态地址经调用返回不再因 Unknown 误报；字段/元素合并、共享外部内存、weak update、调用 havoc 与 borrowed return-as-capture 仍是明确的保守误报来源。
+
+阶段 E 验收完成：生产路径只保留新分析器，driver、interpreter 与 codegen 之间没有旧检查器或双轨入口。
 
 ## 9. 终验标准与后续精度提升
 

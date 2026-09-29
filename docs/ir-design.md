@@ -1,6 +1,6 @@
 ---
-version: v1.1
-date: 2026-09-17
+version: v1.2
+date: 2026-09-29
 author: hazuki-keatsu
 tag: ir
 state: v0
@@ -503,7 +503,7 @@ join(%result: i64):
 - 源语言入口仍是 `func main()`，IR 内部符号为 mangled Gane ABI `void gane.main()`；
 - hosted codegen 自动生成 C ABI wrapper `i32 main()`，调用 `gane.main()` 并在正常结束后返回 `0`；
 - freestanding `_start`、初始化栈和退出/停机方式属于未来 target-specific 设计；
-- 没有隐式 heap allocation；`new`、`make` 和发生逃逸的局部地址由 sema 拒绝；
+- 没有隐式 heap allocation；`new`、`make` 由 sema 拒绝，局部地址逃逸由 raw IR escape check 拒绝；
 - panic、越界、除零等失败在 V0 进入对应 `Trap`；
 - V0 没有 I/O，也不接受无函数体的函数声明。
 
@@ -514,9 +514,13 @@ join(%result: i64):
 - 禁止从函数返回 stack-derived pointer；
 - 禁止把 stack-derived pointer 存入 global；
 - 可以在当前函数内读写和传给内部调用；内部函数同样必须满足不逃逸规则；
-- stack-derived taint 必须穿过 `GepField`、`GepIndex`、stack slot 的 store/load 和函数参数传播。
+- stack-derived 来源必须穿过 `GepField`、`GepIndex`、stack slot 的 store/load、aggregate copy、CFG 参数和函数调用传播。
 
-这些规则由独立的保守 escape check 负责，而不是普通 IR verifier。它在 raw IR 构造后运行，对内部调用图计算 noescape summary；递归调用组通过不动点迭代求解。无法证明不逃逸时一律拒绝，不自动提升到 heap。普通 verifier 与 escape check 均成功后才能构造 `VerifiedIrPackage`。
+这些规则由独立的保守 escape check 负责，而不是普通 IR verifier。它为 pointer SSA value 维护 points-to 集合，为局部、借入、静态和未知对象维护 pointer 内容集合，并沿内容闭包检查 return、外部写入和捕获调用。aggregate 只传播按值包含的 pointer 内容；无法建立来源上界时传播 `Unknown`，不能默认为安全。
+
+跨函数分析使用由函数体推导的 capture、返回来源和外部写入效果摘要。每个函数先在当前摘要下求函数内不动点，全 package 再迭代摘要直到稳定，因此直接递归、互递归和 caller 可达内存写回使用同一套规则。所有函数都参与分析，包括 main 未调用的函数；普通 verifier 与 escape check 均成功后才能构造 `VerifiedIrPackage`。
+
+V0 有意采用 weak update、合并 aggregate 根对象和共享外部内存视图，并对调用写效果做保守 havoc。这些选择可以产生误报，但不得遗漏已知来源；不自动提升到 heap。
 
 verifier 只检查 IR 中直接可见的类型和 attribute 一致性，不声称重新完成跨函数 escape analysis。escape check 必须有返回局部地址、经临时 slot 传播、存 global、内部调用传播和递归调用的专项测试。
 
@@ -570,6 +574,8 @@ interpreter、codegen 和 JIT 的 API 只接受 `VerifiedIrPackage`。`verify_an
 21. primitive types 已 canonical intern；类型图只通过 pointer 成环，所有 array/struct 均为非零有限尺寸。verifier 不检查不同 aggregate ID 的结构图同构；sema representation 映射稳定性由 lowering tests 检查。
 22. pointer 只能进行 `Equal/NotEqual` 比较；signed/unsigned ordering predicate 只接受 integer。
 23. Array length 能由目标 pointer-width unsigned integer 表示。
+
+普通 verifier 成功后，escape check 额外保证：任何可达 return、global/借入内存写入或捕获调用都不含本函数的 `Local` 来源；`Unknown` 到达这些 sink 时必须拒绝。调用返回来源与可达内存写回必须由稳定的函数摘要实例化，不能只检查实参值本身。
 
 verifier 必须包含反向测试：跨分支非法 use、跳转到 function entry、错误 block argument、错误 GEP、错误 store/call、不可表示常量、symbol collision、非法递归/零尺寸类型和 `Void` value 都应被拒绝。escape violations 属于独立 escape check 的反向测试，不混入普通 verifier 测试集。
 
