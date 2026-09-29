@@ -228,12 +228,12 @@ pointer entry parameter i 的种子是 `Borrowed(i)`。执行函数内转移规�
 
 ### 阶段 C：替换跨函数摘要
 
-- [ ] 实现 capture、return dependency、external write、local violation 摘要。
-- [ ] 应用摘要时同时更新实参约束、返回来源和 caller 内存。
-- [ ] 实现双层不动点，覆盖直接递归、互递归及输入参数别名。
-- [ ] 分析所有函数，包括 main 不调用的函数；直到全包稳定后才构造最终诊断。
+- [x] 实现 capture、return dependency、external write、local violation 摘要。
+- [x] 应用摘要时同时更新实参约束、返回来源和 caller 内存。
+- [x] 实现双层不动点，覆盖直接递归、互递归及输入参数别名。
+- [x] 分析所有函数，包括 main 不调用的函数；直到全包稳定后才构造最终诊断。
 
-验收：跨函数间接读取/复制的漏检被修复，现有非逃逸递归正例仍通过。写效果导致的保守误报必须有明确测试，不允许以忽略写效果消除误报。
+验收：跨函数间接读取和 aggregate 复制的漏检已修复，非逃逸递归正例仍通过；写效果的保守 havoc 由专门测试固定，不以忽略写效果消除误报。
 
 ### 阶段 D：覆盖矩阵与边界验证
 
