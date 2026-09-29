@@ -219,12 +219,12 @@ pointer entry parameter i 的种子是 `Borrowed(i)`。执行函数内转移规�
 
 ### 阶段 B：替换函数内传播
 
-- [ ] 实现有限对象节点、P/M 集合、`Reach`、pointer-content 类型查询。
-- [ ] 为 GEP、pointer load/store、CFG 参数、aggregate copy/zero 实现第 4 节规则。
-- [ ] 实现共享外部内存及 Unknown 处理，禁止默认丢弃来源。
-- [ ] 用同一 sink 收集逻辑生成逃逸事实与诊断。
+- [x] 实现有限对象节点、P/M 集合、`Reach`、pointer-content 类型查询。
+- [x] 为 GEP、pointer load/store、CFG 参数、aggregate copy/zero 实现第 4 节规则。
+- [x] 实现共享外部内存及 Unknown 处理，禁止默认丢弃来源。
+- [x] 用同一 sink 收集逻辑生成逃逸事实与诊断。
 
-验收：单函数别名反例被拒绝，非逃逸局部访问和无 pointer 的复制仍通过；集合收敛不依赖 block 存储顺序。
+验收：单函数别名反例已拒绝，非逃逸局部访问和无 pointer 的复制仍通过；逆 block 存储顺序的回归确认集合收敛。跨函数返回来源与写回效果仍由阶段 C 实现。
 
 ### 阶段 C：替换跨函数摘要
 

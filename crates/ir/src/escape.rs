@@ -1,16 +1,17 @@
 use crate::{
-    Callee, FunctionId, InstructionKind, IrDiagnostic, IrFunction, StackSlotId, Terminator,
-    UnverifiedIrPackage, ValueId, ValueOrigin,
+    BlockId, Callee, FunctionId, InstructionKind, IrDiagnostic, IrFunction, IrTypeKind,
+    StackSlotId, Terminator, TypeId, UnverifiedIrPackage, ValueId, ValueOrigin,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 pub(crate) fn check(package: &UnverifiedIrPackage) -> Result<(), Vec<IrDiagnostic>> {
     let summaries = summaries(package);
     let mut diagnostics = Vec::new();
 
     for (function_id, function) in package.functions() {
-        let taint = propagate(function, stack_addresses(function));
-        report_escapes(function_id, function, &taint, &summaries, &mut diagnostics);
+        let mut analysis = Analysis::new(package, function);
+        analysis.solve();
+        diagnostics.extend(analysis.diagnostics(function_id, &summaries));
     }
 
     if diagnostics.is_empty() {
@@ -20,6 +21,8 @@ pub(crate) fn check(package: &UnverifiedIrPackage) -> Result<(), Vec<IrDiagnosti
     }
 }
 
+// ponytail: phase B keeps the bool-only call summary; phase C replaces it with return and
+// external-write effects while reusing `Analysis` for each function.
 /// Return a [`Vec<Vec<bool>>`] to describe that if
 /// `summaries[FunctionId][IrParameter as index] == true`,
 /// the [`IrParameter`](crate::ir::IrParameter) of the [`IrFunction`] may escape.
@@ -71,6 +74,470 @@ fn is_pointer(package: &UnverifiedIrPackage, typ: crate::TypeId) -> bool {
         .is_some_and(|typ| matches!(typ.kind, crate::IrTypeKind::Ptr { .. }))
 }
 
+/// Find out the pointer in types recursively
+fn contains_pointer(package: &UnverifiedIrPackage, typ: TypeId) -> bool {
+    match package.types().get(typ).map(|typ| &typ.kind) {
+        Some(IrTypeKind::Ptr { .. }) => true,
+        Some(IrTypeKind::Array { element, .. }) => contains_pointer(package, *element),
+        Some(IrTypeKind::Struct { fields }) => {
+            fields.iter().any(|field| contains_pointer(package, *field))
+        }
+        Some(
+            IrTypeKind::Void
+            | IrTypeKind::I1
+            | IrTypeKind::I8
+            | IrTypeKind::I16
+            | IrTypeKind::I32
+            | IrTypeKind::I64,
+        )
+        | None => false,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum Object {
+    /// The local object on the current call stack
+    Local(StackSlotId),
+    /// The external object borrowed by the usize-th argument
+    Borrowed(usize),
+    /// All the global objects and its sub-objects
+    Static,
+    Unknown,
+}
+
+type ObjectSet = BTreeSet<Object>;
+
+struct Analysis<'a> {
+    package: &'a UnverifiedIrPackage,
+    function: &'a IrFunction,
+    reachable: Vec<bool>,
+    points_to: Vec<ObjectSet>,
+    // ponytail: fields and array elements share their root slot; split paths only if false
+    // positives show that root-object precision is insufficient.
+    local_memory: Vec<ObjectSet>,
+    // ponytail: all borrowed objects and globals share one external view; add per-parameter
+    // views only when this conservative aliasing rejects valid programs.
+    external_memory: ObjectSet,
+}
+
+impl<'a> Analysis<'a> {
+    fn new(package: &'a UnverifiedIrPackage, function: &'a IrFunction) -> Self {
+        let mut analysis = Self {
+            package,
+            function,
+            reachable: reachable_blocks(function),
+            points_to: vec![ObjectSet::new(); function.values.len()],
+            local_memory: vec![ObjectSet::new(); function.stack_slots.len()],
+            external_memory: ObjectSet::from([Object::Static]),
+        };
+        if let Some(entry) = function.block(function.entry) {
+            for (index, parameter) in function.signature.parameters.iter().enumerate() {
+                if is_pointer(package, parameter.typ)
+                    && let Some(value) = entry.parameters.get(index).copied()
+                {
+                    analysis.insert_point(value, Object::Borrowed(index));
+                    analysis.external_memory.insert(Object::Borrowed(index));
+                }
+            }
+        }
+        analysis
+    }
+
+    fn solve(&mut self) {
+        loop {
+            let mut changed = false;
+            for block_index in 0..self.function.blocks.len() {
+                if !self.reachable[block_index] {
+                    continue;
+                }
+                let instructions = self.function.blocks[block_index].instructions.clone();
+                for instruction in instructions {
+                    changed |= self.transfer(&instruction.kind, &instruction.results);
+                }
+                let terminator = self.function.blocks[block_index].terminator.clone();
+                changed |= self.transfer_terminator(&terminator);
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    fn transfer(&mut self, kind: &InstructionKind, results: &[ValueId]) -> bool {
+        match kind {
+            InstructionKind::Const { .. }
+            | InstructionKind::Unary { .. }
+            | InstructionKind::Binary { .. }
+            | InstructionKind::Compare { .. }
+            | InstructionKind::IntCast { .. } => false,
+            // ponytail: weak updates retain old pointer facts across zeroing; add
+            // CFG-sensitive strong updates only when valid programs need them.
+            InstructionKind::AggregateZero { .. } => false,
+            InstructionKind::StackAddr { slot } => results
+                .first()
+                .is_some_and(|result| self.insert_point(*result, Object::Local(*slot))),
+            InstructionKind::GlobalAddr { .. } => results
+                .first()
+                .is_some_and(|result| self.insert_point(*result, Object::Static)),
+            InstructionKind::GepField { base, .. } | InstructionKind::GepIndex { base, .. } => {
+                let sources = self.points(*base).clone();
+                results
+                    .first()
+                    .is_some_and(|result| self.extend_points(*result, &sources))
+            }
+            InstructionKind::Load { pointer } => {
+                let Some(result) = results.first().copied().filter(|result| {
+                    self.function
+                        .value(*result)
+                        .is_some_and(|value| is_pointer(self.package, value.typ))
+                }) else {
+                    return false;
+                };
+                let sources = self.contents(self.points(*pointer));
+                self.extend_points(result, &sources)
+            }
+            InstructionKind::Store { pointer, value } => {
+                if !self
+                    .function
+                    .value(*value)
+                    .is_some_and(|value| is_pointer(self.package, value.typ))
+                {
+                    return false;
+                }
+                let targets = self.points(*pointer).clone();
+                let sources = self.points(*value).clone();
+                self.update_memory(&targets, &sources)
+            }
+            InstructionKind::AggregateCopy {
+                destination,
+                source,
+                typ,
+            } => {
+                if !contains_pointer(self.package, *typ) {
+                    return false;
+                }
+                let targets = self.points(*destination).clone();
+                let sources = self.contents(self.points(*source));
+                self.update_memory(&targets, &sources)
+            }
+            InstructionKind::Call { .. } => {
+                // ponytail: pointer call results remain Unknown until phase C provides return
+                // effect summaries.
+                let mut changed = false;
+                for result in results {
+                    if self
+                        .function
+                        .value(*result)
+                        .is_some_and(|value| is_pointer(self.package, value.typ))
+                    {
+                        changed |= self.insert_point(*result, Object::Unknown);
+                    }
+                }
+                changed
+            }
+        }
+    }
+
+    fn transfer_terminator(&mut self, terminator: &Terminator) -> bool {
+        match terminator {
+            Terminator::Branch { target, arguments } => self.transfer_edge(*target, arguments),
+            Terminator::CondBranch {
+                then_target,
+                then_arguments,
+                else_target,
+                else_arguments,
+                ..
+            } => {
+                self.transfer_edge(*then_target, then_arguments)
+                    | self.transfer_edge(*else_target, else_arguments)
+            }
+            Terminator::Return { .. } | Terminator::Trap { .. } | Terminator::Unreachable => false,
+        }
+    }
+
+    fn transfer_edge(&mut self, target: BlockId, arguments: &[ValueId]) -> bool {
+        let Some(parameters) = self
+            .function
+            .block(target)
+            .map(|block| block.parameters.clone())
+        else {
+            return false;
+        };
+        let mut changed = false;
+        for (parameter, argument) in parameters.into_iter().zip(arguments) {
+            let sources = self.points(*argument).clone();
+            changed |= self.extend_points(parameter, &sources);
+        }
+        changed
+    }
+
+    fn update_memory(&mut self, targets: &ObjectSet, sources: &ObjectSet) -> bool {
+        let mut changed = false;
+        let unknown = targets.contains(&Object::Unknown);
+        for target in targets {
+            match target {
+                Object::Local(slot) => {
+                    if let Some(memory) = self.local_memory.get_mut(slot.raw() as usize - 1) {
+                        changed |= extend(memory, sources);
+                    }
+                }
+                Object::Borrowed(_) | Object::Static => {
+                    changed |= extend(&mut self.external_memory, sources);
+                }
+                Object::Unknown => {}
+            }
+        }
+        if unknown {
+            for memory in &mut self.local_memory {
+                changed |= extend(memory, sources);
+            }
+            changed |= extend(&mut self.external_memory, sources);
+        }
+        changed
+    }
+
+    fn contents(&self, objects: &ObjectSet) -> ObjectSet {
+        let mut contents = ObjectSet::new();
+        for object in objects {
+            match object {
+                Object::Local(slot) => {
+                    if let Some(memory) = self.local_memory.get(slot.raw() as usize - 1) {
+                        extend(&mut contents, memory);
+                    }
+                }
+                Object::Borrowed(_) | Object::Static => {
+                    extend(&mut contents, &self.external_memory);
+                }
+                Object::Unknown => {
+                    contents.insert(Object::Unknown);
+                    extend(&mut contents, &self.external_memory);
+                    for memory in &self.local_memory {
+                        extend(&mut contents, memory);
+                    }
+                }
+            }
+        }
+        contents
+    }
+
+    fn reach(&self, seeds: &ObjectSet) -> ObjectSet {
+        let mut reached = ObjectSet::new();
+        let mut pending = VecDeque::from_iter(seeds.iter().copied());
+        while let Some(object) = pending.pop_front() {
+            if !reached.insert(object) {
+                continue;
+            }
+            pending.extend(self.contents(&ObjectSet::from([object])));
+        }
+        reached
+    }
+
+    fn diagnostics(&self, function_id: FunctionId, summaries: &[Vec<bool>]) -> Vec<IrDiagnostic> {
+        let mut diagnostics = Vec::new();
+        for (block_index, block) in self.function.blocks.iter().enumerate() {
+            if !self.reachable[block_index] {
+                continue;
+            }
+            for (instruction_index, instruction) in block.instructions.iter().enumerate() {
+                let location = format!(
+                    "function @{} block ^{} instruction #{}",
+                    function_id.raw(),
+                    block_index + 1,
+                    instruction_index + 1
+                );
+                match &instruction.kind {
+                    InstructionKind::Store { pointer, value }
+                        if self
+                            .function
+                            .value(*value)
+                            .is_some_and(|value| is_pointer(self.package, value.typ)) =>
+                    {
+                        self.push_external_sink(
+                            &mut diagnostics,
+                            location,
+                            self.points(*pointer),
+                            self.points(*value),
+                            "stored",
+                        );
+                    }
+                    InstructionKind::AggregateCopy {
+                        destination,
+                        source,
+                        typ,
+                    } if contains_pointer(self.package, *typ) => {
+                        let sources = self.contents(self.points(*source));
+                        self.push_external_sink(
+                            &mut diagnostics,
+                            location,
+                            self.points(*destination),
+                            &sources,
+                            "copied",
+                        );
+                    }
+                    InstructionKind::Call {
+                        callee: Callee::Function(callee),
+                        arguments,
+                    } => {
+                        let mut sources = ObjectSet::new();
+                        for (index, argument) in arguments.iter().enumerate() {
+                            if parameter_escapes(summaries, *callee, index) {
+                                extend(&mut sources, self.points(*argument));
+                            }
+                        }
+                        self.push_sink(
+                            &mut diagnostics,
+                            location,
+                            &sources,
+                            "passed to an escaping parameter",
+                        );
+                    }
+                    InstructionKind::Const { .. }
+                    | InstructionKind::Unary { .. }
+                    | InstructionKind::Binary { .. }
+                    | InstructionKind::Compare { .. }
+                    | InstructionKind::IntCast { .. }
+                    | InstructionKind::StackAddr { .. }
+                    | InstructionKind::GlobalAddr { .. }
+                    | InstructionKind::GepField { .. }
+                    | InstructionKind::GepIndex { .. }
+                    | InstructionKind::Load { .. }
+                    | InstructionKind::Store { .. }
+                    | InstructionKind::AggregateZero { .. }
+                    | InstructionKind::AggregateCopy { .. } => {}
+                }
+            }
+            if let Terminator::Return { values } = &block.terminator {
+                let mut sources = ObjectSet::new();
+                for value in values {
+                    extend(&mut sources, self.points(*value));
+                }
+                self.push_sink(
+                    &mut diagnostics,
+                    format!(
+                        "function @{} block ^{} terminator",
+                        function_id.raw(),
+                        block_index + 1
+                    ),
+                    &sources,
+                    "returned from function",
+                );
+            }
+        }
+        diagnostics
+    }
+
+    fn push_external_sink(
+        &self,
+        diagnostics: &mut Vec<IrDiagnostic>,
+        location: String,
+        targets: &ObjectSet,
+        sources: &ObjectSet,
+        action: &str,
+    ) {
+        let destination = if targets.contains(&Object::Static) {
+            "global"
+        } else if targets
+            .iter()
+            .any(|target| matches!(target, Object::Borrowed(_)))
+        {
+            "external memory"
+        } else if targets.contains(&Object::Unknown) {
+            "unknown memory"
+        } else {
+            return;
+        };
+        let action = match (action, destination) {
+            ("stored", "global") => "stored in global",
+            ("copied", "global") => "copied into global",
+            ("stored", "external memory") => "stored outside current stack",
+            ("copied", "external memory") => "copied outside current stack",
+            ("stored", "unknown memory") => "stored through unknown pointer",
+            ("copied", "unknown memory") => "copied through unknown pointer",
+            _ => unreachable!(),
+        };
+        self.push_sink(diagnostics, location, sources, action);
+    }
+
+    fn push_sink(
+        &self,
+        diagnostics: &mut Vec<IrDiagnostic>,
+        location: String,
+        sources: &ObjectSet,
+        action: &str,
+    ) {
+        let reached = self.reach(sources);
+        let slots = reached
+            .iter()
+            .filter_map(|object| match object {
+                Object::Local(slot) => Some(format!("${}", slot.raw())),
+                Object::Borrowed(_) | Object::Static | Object::Unknown => None,
+            })
+            .collect::<Vec<_>>();
+        let unknown = reached.contains(&Object::Unknown);
+        if slots.is_empty() && !unknown {
+            return;
+        }
+        let message = if slots.is_empty() {
+            format!("pointer with unknown provenance {action}")
+        } else if unknown {
+            format!(
+                "stack-derived pointer {action} (source stack slots {}; also unknown)",
+                slots.join(", ")
+            )
+        } else {
+            format!(
+                "stack-derived pointer {action} (source stack slots {})",
+                slots.join(", ")
+            )
+        };
+        diagnostics.push(IrDiagnostic::new(location, message));
+    }
+
+    fn points(&self, value: ValueId) -> &ObjectSet {
+        &self.points_to[value.raw() as usize - 1]
+    }
+
+    fn insert_point(&mut self, value: ValueId, object: Object) -> bool {
+        self.points_to[value.raw() as usize - 1].insert(object)
+    }
+
+    fn extend_points(&mut self, value: ValueId, sources: &ObjectSet) -> bool {
+        extend(&mut self.points_to[value.raw() as usize - 1], sources)
+    }
+}
+
+fn extend(target: &mut ObjectSet, sources: &ObjectSet) -> bool {
+    let mut changed = false;
+    for source in sources {
+        changed |= target.insert(*source);
+    }
+    changed
+}
+
+fn reachable_blocks(function: &IrFunction) -> Vec<bool> {
+    let mut reachable = vec![false; function.blocks.len()];
+    let mut pending = VecDeque::from([function.entry]);
+    while let Some(block) = pending.pop_front() {
+        let index = block.raw() as usize - 1;
+        if std::mem::replace(&mut reachable[index], true) {
+            continue;
+        }
+        match &function.blocks[index].terminator {
+            Terminator::Branch { target, .. } => pending.push_back(*target),
+            Terminator::CondBranch {
+                then_target,
+                else_target,
+                ..
+            } => {
+                pending.push_back(*then_target);
+                pending.push_back(*else_target);
+            }
+            Terminator::Return { .. } | Terminator::Trap { .. } | Terminator::Unreachable => {}
+        }
+    }
+    reachable
+}
+
 #[derive(Default)]
 struct Taint {
     values: BTreeSet<ValueId>,
@@ -84,10 +551,14 @@ fn propagate(function: &IrFunction, values: impl IntoIterator<Item = ValueId>) -
         values: values.into_iter().collect(),
         slots: BTreeSet::new(),
     };
+    let reachable = reachable_blocks(function);
 
     loop {
         let mut changed = false;
-        for block in &function.blocks {
+        for (block_index, block) in function.blocks.iter().enumerate() {
+            if !reachable[block_index] {
+                continue;
+            }
             for instruction in &block.instructions {
                 match &instruction.kind {
                     InstructionKind::GepField { base, .. }
@@ -132,10 +603,11 @@ fn propagate(function: &IrFunction, values: impl IntoIterator<Item = ValueId>) -
 }
 
 fn extend_values(taint: &mut Taint, values: &[ValueId]) -> bool {
-    values
-        .iter()
-        .copied()
-        .any(|value| taint.values.insert(value))
+    let mut changed = false;
+    for value in values {
+        changed |= taint.values.insert(*value);
+    }
+    changed
 }
 
 fn propagate_terminator(function: &IrFunction, terminator: &Terminator, taint: &mut Taint) -> bool {
@@ -177,13 +649,19 @@ fn propagate_edge(
 }
 
 fn escapes(function: &IrFunction, taint: &Taint, summaries: &[Vec<bool>]) -> bool {
-    function.blocks.iter().any(|block| {
-        instructions_escape(function, &block.instructions, taint, summaries)
-            || matches!(
-                &block.terminator,
-                Terminator::Return { values } if values.iter().any(|value| taint.values.contains(value))
-            )
-    })
+    let reachable = reachable_blocks(function);
+    function
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| reachable[*index])
+        .any(|(_, block)| {
+            instructions_escape(function, &block.instructions, taint, summaries)
+                || matches!(
+                    &block.terminator,
+                    Terminator::Return { values } if values.iter().any(|value| taint.values.contains(value))
+                )
+        })
 }
 
 fn instructions_escape(
@@ -217,85 +695,6 @@ fn instructions_escape(
             }),
             _ => false,
         })
-}
-
-fn report_escapes(
-    function_id: FunctionId,
-    function: &IrFunction,
-    taint: &Taint,
-    summaries: &[Vec<bool>],
-    diagnostics: &mut Vec<IrDiagnostic>,
-) {
-    for (block_index, block) in function.blocks.iter().enumerate() {
-        for (instruction_index, instruction) in block.instructions.iter().enumerate() {
-            let location = format!(
-                "function @{} block ^{} instruction #{}",
-                function_id.raw(),
-                block_index + 1,
-                instruction_index + 1
-            );
-            match &instruction.kind {
-                InstructionKind::Store { pointer, value } if taint.values.contains(value) => {
-                    match storage(function, *pointer) {
-                        Storage::Stack(_) => {}
-                        Storage::Global => diagnostics.push(IrDiagnostic::new(
-                            location,
-                            "stack-derived pointer stored in global",
-                        )),
-                        Storage::Unknown => diagnostics.push(IrDiagnostic::new(
-                            location,
-                            "stack-derived pointer stored outside current stack",
-                        )),
-                    }
-                }
-                InstructionKind::AggregateCopy {
-                    destination,
-                    source,
-                    ..
-                } if storage(function, *source)
-                    .stack_slot()
-                    .is_some_and(|slot| taint.slots.contains(&slot)) =>
-                {
-                    match storage(function, *destination) {
-                        Storage::Stack(_) => {}
-                        Storage::Global => diagnostics.push(IrDiagnostic::new(
-                            location,
-                            "stack-derived pointer copied into global",
-                        )),
-                        Storage::Unknown => diagnostics.push(IrDiagnostic::new(
-                            location,
-                            "stack-derived pointer copied outside current stack",
-                        )),
-                    }
-                }
-                InstructionKind::Call {
-                    callee: Callee::Function(callee),
-                    arguments,
-                } if arguments.iter().enumerate().any(|(index, argument)| {
-                    taint.values.contains(argument) && parameter_escapes(summaries, *callee, index)
-                }) =>
-                {
-                    diagnostics.push(IrDiagnostic::new(
-                        location,
-                        "stack-derived pointer passed to an escaping parameter",
-                    ))
-                }
-                _ => {}
-            }
-        }
-        if let Terminator::Return { values } = &block.terminator
-            && values.iter().any(|value| taint.values.contains(value))
-        {
-            diagnostics.push(IrDiagnostic::new(
-                format!(
-                    "function @{} block ^{} terminator",
-                    function_id.raw(),
-                    block_index + 1
-                ),
-                "stack-derived pointer returned from function",
-            ));
-        }
-    }
 }
 
 fn parameter_escapes(summaries: &[Vec<bool>], callee: FunctionId, index: usize) -> bool {
@@ -353,16 +752,6 @@ fn storage(function: &IrFunction, value: ValueId) -> Storage {
     }
 }
 
-fn stack_addresses(function: &IrFunction) -> Vec<ValueId> {
-    function
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instructions)
-        .filter(|instruction| matches!(instruction.kind, InstructionKind::StackAddr { .. }))
-        .flat_map(|instruction| instruction.results.iter().copied())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -410,6 +799,7 @@ mod tests {
             pointee: i32,
             address_space: 0,
         });
+        let pointer_pointer = pointer_type(&mut builder, pointer);
         let main = builder.declare_function(
             "gane.main".into(),
             signature(vec![], vec![]),
@@ -417,12 +807,45 @@ mod tests {
         );
         builder.set_entry(main).unwrap();
         let entry = builder.entry_block(main).unwrap();
-        let slot = builder.add_stack_slot(main, i32, None, None).unwrap();
+        let value_slot = builder.add_stack_slot(main, i32, None, None).unwrap();
+        let pointer_slot = builder.add_stack_slot(main, pointer, None, None).unwrap();
+        let value = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr { slot: value_slot },
+                [pointer],
+                None,
+            )
+            .unwrap()[0];
+        let destination = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr { slot: pointer_slot },
+                [pointer_pointer],
+                None,
+            )
+            .unwrap()[0];
         builder
             .append_instruction(
                 main,
                 entry,
-                InstructionKind::StackAddr { slot },
+                InstructionKind::Store {
+                    pointer: destination,
+                    value,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::Load {
+                    pointer: destination,
+                },
                 [pointer],
                 None,
             )
@@ -738,7 +1161,7 @@ mod tests {
     }
 
     #[test]
-    fn currently_misses_pointer_aggregate_copy_through_block_parameter() {
+    fn rejects_pointer_aggregate_copy_through_block_parameter() {
         let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i64 = builder.types().i64();
         let pointer = pointer_type(&mut builder, i64);
@@ -845,11 +1268,11 @@ mod tests {
             .set_terminator(main, copy, Terminator::Return { values: vec![] })
             .unwrap();
 
-        assert_current_escape_check_misses(builder.finish().unwrap());
+        assert!(escape_messages(builder.finish().unwrap()).contains("copied into global"));
     }
 
     #[test]
-    fn currently_misses_pointer_aggregate_copy_through_loaded_alias() {
+    fn rejects_pointer_aggregate_copy_through_loaded_alias_after_zeroing() {
         let mut builder = IrBuilder::new(TargetSpec::for_test_64());
         let i64 = builder.types().i64();
         let pointer = pointer_type(&mut builder, i64);
@@ -950,6 +1373,18 @@ mod tests {
                 None,
             )
             .unwrap()[0];
+        builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::AggregateZero {
+                    destination: aggregate_address,
+                    typ: aggregate,
+                },
+                [],
+                None,
+            )
+            .unwrap();
         let destination = builder
             .append_instruction(
                 main,
@@ -976,7 +1411,91 @@ mod tests {
             .set_terminator(main, entry, Terminator::Return { values: vec![] })
             .unwrap();
 
-        assert_current_escape_check_misses(builder.finish().unwrap());
+        assert!(escape_messages(builder.finish().unwrap()).contains("copied into global"));
+    }
+
+    #[test]
+    fn rejects_escape_when_sink_block_precedes_forwarding_block() {
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
+        let i64 = builder.types().i64();
+        let pointer = pointer_type(&mut builder, i64);
+        let pointer_pointer = pointer_type(&mut builder, pointer);
+        let global = builder.add_global(IrGlobal {
+            symbol: "gane.saved".into(),
+            typ: pointer,
+            initializer: GlobalInitializer::Zero,
+        });
+        let main = builder.declare_function(
+            "gane.main".into(),
+            signature(vec![], vec![]),
+            FunctionAttributes::default(),
+        );
+        builder.set_entry(main).unwrap();
+        let entry = builder.entry_block(main).unwrap();
+        let sink = builder.create_block(main).unwrap();
+        let sink_value = builder
+            .append_block_parameter(main, sink, pointer, None)
+            .unwrap();
+        let forwarding = builder.create_block(main).unwrap();
+        let forwarding_value = builder
+            .append_block_parameter(main, forwarding, pointer, None)
+            .unwrap();
+        let slot = builder.add_stack_slot(main, i64, None, None).unwrap();
+        let value = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::StackAddr { slot },
+                [pointer],
+                None,
+            )
+            .unwrap()[0];
+        let destination = builder
+            .append_instruction(
+                main,
+                entry,
+                InstructionKind::GlobalAddr { global },
+                [pointer_pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .set_terminator(
+                main,
+                entry,
+                Terminator::Branch {
+                    target: forwarding,
+                    arguments: vec![value],
+                },
+            )
+            .unwrap();
+        builder
+            .append_instruction(
+                main,
+                sink,
+                InstructionKind::Store {
+                    pointer: destination,
+                    value: sink_value,
+                },
+                [],
+                None,
+            )
+            .unwrap();
+        builder
+            .set_terminator(main, sink, Terminator::Return { values: vec![] })
+            .unwrap();
+        builder
+            .set_terminator(
+                main,
+                forwarding,
+                Terminator::Branch {
+                    target: sink,
+                    arguments: vec![forwarding_value],
+                },
+            )
+            .unwrap();
+
+        assert!(escape_messages(builder.finish().unwrap()).contains("stored in global"));
     }
 
     #[test]
@@ -1251,6 +1770,75 @@ mod tests {
             .unwrap();
 
         assert_current_escape_check_misses(builder.finish().unwrap());
+    }
+
+    #[test]
+    fn rejects_returning_pointer_call_result_until_return_effects_are_modeled() {
+        let mut builder = IrBuilder::new(TargetSpec::for_test_64());
+        let i64 = builder.types().i64();
+        let pointer = pointer_type(&mut builder, i64);
+        let global = builder.add_global(IrGlobal {
+            symbol: "gane.value".into(),
+            typ: i64,
+            initializer: GlobalInitializer::Zero,
+        });
+        let source = builder.declare_function(
+            "gane.global_pointer".into(),
+            signature(vec![], vec![pointer]),
+            FunctionAttributes::default(),
+        );
+        let source_entry = builder.entry_block(source).unwrap();
+        let value = builder
+            .append_instruction(
+                source,
+                source_entry,
+                InstructionKind::GlobalAddr { global },
+                [pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .set_terminator(
+                source,
+                source_entry,
+                Terminator::Return {
+                    values: vec![value],
+                },
+            )
+            .unwrap();
+        let wrapper = builder.declare_function(
+            "gane.wrapper".into(),
+            signature(vec![], vec![pointer]),
+            FunctionAttributes::default(),
+        );
+        let wrapper_entry = builder.entry_block(wrapper).unwrap();
+        let result = builder
+            .append_instruction(
+                wrapper,
+                wrapper_entry,
+                InstructionKind::Call {
+                    callee: Callee::Function(source),
+                    arguments: vec![],
+                },
+                [pointer],
+                None,
+            )
+            .unwrap()[0];
+        builder
+            .set_terminator(
+                wrapper,
+                wrapper_entry,
+                Terminator::Return {
+                    values: vec![result],
+                },
+            )
+            .unwrap();
+        add_empty_main(&mut builder);
+
+        assert!(
+            escape_messages(builder.finish().unwrap())
+                .contains("unknown provenance returned from function")
+        );
     }
 
     #[test]
