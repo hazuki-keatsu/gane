@@ -1,8 +1,8 @@
 use crate::{
-    BlockId, Callee, FunctionId, InstructionKind, IrDiagnostic, IrFunction, IrTypeKind,
-    StackSlotId, Terminator, TypeId, UnverifiedIrPackage, ValueId,
+    BlockId, Callee, FunctionId, InstructionKind, IrDiagnostic, IrFunction, IrTypeKind, StackSlotId, Terminator::{self}, TypeId, UnverifiedIrPackage, ValueId, escape::ExternalDestination::{ExternalMemory, Global, UnknownMemory},
 };
-use std::collections::{BTreeSet, VecDeque};
+use core::fmt;
+use std::{collections::{BTreeSet, VecDeque}};
 
 #[cfg(test)]
 mod tests;
@@ -24,13 +24,53 @@ pub(crate) fn check(package: &UnverifiedIrPackage) -> Result<(), Vec<IrDiagnosti
     }
 }
 
+/// Conservative inter-procedural may-summary of a function's pointer escape
+/// effects. The vectors are indexed by function-parameter position. All facts
+/// are joined monotonically until the package summary reaches a fixed point;
+/// `false` means that this analysis found no such fact, not that the effect is
+/// impossible.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Summary {
+    /// The i-th parameter's pointer value or reachable pointer contents may
+    /// leave this invocation through a return, external memory, or a callee
+    /// parameter that the callee captures.
+    ///
+    /// For example, `global = p` sets `captures[0]` to `true`. A return
+    /// dependency is also a capture, so `return p` sets both `captures[0]`
+    /// and `returns_from[0]` to `true`.
     captures: Vec<bool>,
+    /// A pointer returned by the function may depend on the i-th parameter,
+    /// either directly or through pointer contents loaded from it.
+    /// `returns_from[i]` implies `captures[i]` and is used to propagate the
+    /// returned pointer's possible provenance to the caller.
     returns_from: Vec<bool>,
+    /// A returned pointer may originate from a package global or from pointer
+    /// contents reachable through a package global. `Static` in this analysis
+    /// denotes global storage; this is a may-source fact and does not exclude
+    /// other possible return sources.
     returns_static: bool,
+    /// The function may modify pointer contents in memory reachable outside
+    /// this invocation, through a parameter or a package global. This tracks
+    /// pointer provenance, including pointer-valued stores and pointer-bearing
+    /// aggregate copies/zeroing; it does not describe arbitrary scalar writes.
+    /// For example, `func store(p **int, q *int) { *p = q }` sets this to true.
     writes_external: bool,
+    /// A pointer derived from a stack slot in this function may reach a return,
+    /// external memory, or a callee parameter that the callee captures. This
+    /// marks an invalid escape from the current invocation, for example
+    /// `return &local`.
     invalid_local: bool,
+    /// The analysis cannot establish a sound effect bound at an escape sink.
+    /// It is set when an unknown source reaches a return or escaping call, an
+    /// external write targets unknown memory, or a call has no usable summary
+    /// or reports `unknown_effect`. A callee's `invalid_local` is propagated as
+    /// [`Object::Unknown`] through pointer results and sets this bit only if
+    /// such a result later reaches a sink.
+    ///
+    /// Unknown values may propagate through ordinary local operations without
+    /// immediate rejection; diagnostics are emitted when they reach a return,
+    /// external write, or captured call. A diagnostic may mention both known
+    /// stack slots and unknown provenance.
     unknown_effect: bool,
 }
 
@@ -46,6 +86,7 @@ impl Summary {
         }
     }
 
+    /// Join two [`Summary`]
     fn join(&mut self, other: &Self) -> bool {
         let mut changed = false;
         for (current, incoming) in self.captures.iter_mut().zip(&other.captures) {
@@ -78,6 +119,7 @@ fn join_bool(current: &mut bool, incoming: bool) -> bool {
 }
 
 fn summaries(package: &UnverifiedIrPackage) -> Vec<Summary> {
+    // Initialize summaries for all functions in the package.
     let mut summaries = package
         .functions()
         .map(|(_, function)| Summary::new(function.signature.parameters.len()))
@@ -125,30 +167,62 @@ fn contains_pointer(package: &UnverifiedIrPackage, typ: TypeId) -> bool {
     }
 }
 
+/// An abstract object identity used to track pointer provenance during escape
+/// analysis.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum Object {
-    /// The local object on the current call stack
+    /// A stack slot belonging to the current function invocation.
     Local(StackSlotId),
-    /// The external object borrowed by the usize-th argument
+    /// An object reachable through the function's `usize`-th parameter. The
+    /// object belongs to the caller or another external owner and is indexed
+    /// by the parameter's position.
     Borrowed(usize),
-    /// All the global objects and its sub-objects
+    /// A package-global object or one of its sub-objects.
     Static,
+    /// A pointer source or memory target whose source cannot be
+    /// established. It is propagated conservatively and rejected when it
+    /// reaches an escape sink.
     Unknown,
 }
 
 type ObjectSet = BTreeSet<Object>;
 
+/// Used for marking which type the sink is.
 #[derive(Clone, Copy)]
 enum SinkKind {
-    ExternalWrite(&'static str),
+    /// Writing the content of pointers into the external memory.
+    ExternalWrite(ExternalWriteAction),
+    /// Passing pointers to a callee who captures it.
     Call,
+    /// Return pointers to a caller who captures it.
     Return,
 }
 
+#[derive(Clone, Copy)]
+enum ExternalWriteAction {
+    Stored,
+    Copied,
+    Zeroed,
+}
+
+impl fmt::Display for ExternalWriteAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let result = match *self {
+            ExternalWriteAction::Copied => "copied",
+            ExternalWriteAction::Stored => "stored",
+            ExternalWriteAction::Zeroed => "zeroed",
+        };
+        write!(f, "{result}")
+    }
+}
+
+/// The dangerous entry for escape analysis
 struct Sink {
     location: String,
     kind: SinkKind,
+    /// The targets into where the pointer may be written
     targets: ObjectSet,
+    /// The sources where the pointer is from
     sources: ObjectSet,
     writes_external: bool,
     unknown_effect: bool,
@@ -157,13 +231,30 @@ struct Sink {
 struct Analysis<'a> {
     package: &'a UnverifiedIrPackage,
     function: &'a IrFunction,
+    /// Indicates whether each instruction block can be reached
     reachable: Vec<bool>,
+    /// The [`Object`] from which the SSA values are derived probably.
+    /// 
+    /// ```plaintext
+    /// points_to[SSA value index] = <ObjectSet>
+    /// ```
+    /// 
+    /// Why doesn't this value imply that the SSA value must originate from some object? 
+    /// Because a SSA value may have objects from multiple sources, this is very common in branches or loops.
     points_to: Vec<ObjectSet>,
     // ponytail: fields and array elements share their root slot; split paths only if false
     // positives show that root-object precision is insufficient.
+    /// Record the sources of the pointer in the stack slot in the local memory.
+    /// 
+    /// ```plaintext
+    /// local_memory[Stack slot index] = <ObjectSet>
+    /// ```
     local_memory: Vec<ObjectSet>,
     // ponytail: all borrowed objects and globals share one external view; add per-parameter
     // views only when this conservative aliasing rejects valid programs.
+    /// There may be any type of pointer outside the function.
+    /// 
+    /// external_memory means "there may be a global address", not "there must be a global address".
     external_memory: ObjectSet,
 }
 
@@ -182,7 +273,7 @@ impl<'a> Analysis<'a> {
                 if is_pointer(package, parameter.typ)
                     && let Some(value) = entry.parameters.get(index).copied()
                 {
-                    analysis.insert_point(value, Object::Borrowed(index));
+                    analysis.insert_points_to(value, Object::Borrowed(index));
                     analysis.external_memory.insert(Object::Borrowed(index));
                 }
             }
@@ -227,15 +318,15 @@ impl<'a> Analysis<'a> {
             InstructionKind::AggregateZero { .. } => false,
             InstructionKind::StackAddr { slot } => results
                 .first()
-                .is_some_and(|result| self.insert_point(*result, Object::Local(*slot))),
+                .is_some_and(|result| self.insert_points_to(*result, Object::Local(*slot))),
             InstructionKind::GlobalAddr { .. } => results
                 .first()
-                .is_some_and(|result| self.insert_point(*result, Object::Static)),
+                .is_some_and(|result| self.insert_points_to(*result, Object::Static)),
             InstructionKind::GepField { base, .. } | InstructionKind::GepIndex { base, .. } => {
-                let sources = self.points(*base).clone();
+                let sources = self.points_to(*base).clone();
                 results
                     .first()
-                    .is_some_and(|result| self.extend_points(*result, &sources))
+                    .is_some_and(|result| self.extend_points_to(*result, &sources))
             }
             InstructionKind::Load { pointer } => {
                 let Some(result) = results.first().copied().filter(|result| {
@@ -245,8 +336,8 @@ impl<'a> Analysis<'a> {
                 }) else {
                     return false;
                 };
-                let sources = self.contents(self.points(*pointer));
-                self.extend_points(result, &sources)
+                let sources = self.contents(self.points_to(*pointer));
+                self.extend_points_to(result, &sources)
             }
             InstructionKind::Store { pointer, value } => {
                 if !self
@@ -256,8 +347,8 @@ impl<'a> Analysis<'a> {
                 {
                     return false;
                 }
-                let targets = self.points(*pointer).clone();
-                let sources = self.points(*value).clone();
+                let targets = self.points_to(*pointer).clone();
+                let sources = self.points_to(*value).clone();
                 self.update_memory(&targets, &sources)
             }
             InstructionKind::AggregateCopy {
@@ -268,8 +359,8 @@ impl<'a> Analysis<'a> {
                 if !contains_pointer(self.package, *typ) {
                     return false;
                 }
-                let targets = self.points(*destination).clone();
-                let sources = self.contents(self.points(*source));
+                let targets = self.points_to(*destination).clone();
+                let sources = self.contents(self.points_to(*source));
                 self.update_memory(&targets, &sources)
             }
             InstructionKind::Call {
@@ -294,14 +385,14 @@ impl<'a> Analysis<'a> {
                     .value(*result)
                     .is_some_and(|value| is_pointer(self.package, value.typ))
                 {
-                    changed |= self.insert_point(*result, Object::Unknown);
+                    changed |= self.insert_points_to(*result, Object::Unknown);
                 }
             }
             return changed;
         };
         let argument_sources = arguments
             .iter()
-            .map(|argument| self.reach(self.points(*argument)))
+            .map(|argument| self.reach(self.points_to(*argument)))
             .collect::<Vec<_>>();
         let mut returned = ObjectSet::new();
         for (index, sources) in argument_sources.iter().enumerate() {
@@ -322,7 +413,7 @@ impl<'a> Analysis<'a> {
                 .value(*result)
                 .is_some_and(|value| is_pointer(self.package, value.typ))
             {
-                changed |= self.extend_points(*result, &returned);
+                changed |= self.extend_points_to(*result, &returned);
             }
         }
         if summary.writes_external {
@@ -367,8 +458,8 @@ impl<'a> Analysis<'a> {
         };
         let mut changed = false;
         for (parameter, argument) in parameters.into_iter().zip(arguments) {
-            let sources = self.points(*argument).clone();
-            changed |= self.extend_points(parameter, &sources);
+            let sources = self.points_to(*argument).clone();
+            changed |= self.extend_points_to(parameter, &sources);
         }
         changed
     }
@@ -457,9 +548,9 @@ impl<'a> Analysis<'a> {
                         self.push_external_sink(
                             &mut sinks,
                             location,
-                            self.points(*pointer),
-                            self.points(*value),
-                            "stored",
+                            self.points_to(*pointer),
+                            self.points_to(*value),
+                            Some(ExternalWriteAction::Stored),
                         );
                     }
                     InstructionKind::AggregateCopy {
@@ -467,13 +558,13 @@ impl<'a> Analysis<'a> {
                         source,
                         typ,
                     } if contains_pointer(self.package, *typ) => {
-                        let sources = self.contents(self.points(*source));
+                        let sources = self.contents(self.points_to(*source));
                         self.push_external_sink(
                             &mut sinks,
                             location,
-                            self.points(*destination),
+                            self.points_to(*destination),
                             &sources,
-                            "copied",
+                            Some(ExternalWriteAction::Copied),
                         );
                     }
                     InstructionKind::AggregateZero { destination, typ }
@@ -482,9 +573,9 @@ impl<'a> Analysis<'a> {
                         self.push_external_sink(
                             &mut sinks,
                             location,
-                            self.points(*destination),
+                            self.points_to(*destination),
                             &ObjectSet::new(),
-                            "zeroed",
+                            Some(ExternalWriteAction::Zeroed),
                         );
                     }
                     InstructionKind::Call {
@@ -499,7 +590,7 @@ impl<'a> Analysis<'a> {
                                 .copied()
                                 .unwrap_or(true)
                             {
-                                extend(&mut sources, self.points(*argument));
+                                extend(&mut sources, self.points_to(*argument));
                             }
                         }
                         sinks.push(Sink {
@@ -529,7 +620,7 @@ impl<'a> Analysis<'a> {
             if let Terminator::Return { values } = &block.terminator {
                 let mut sources = ObjectSet::new();
                 for value in values {
-                    extend(&mut sources, self.points(*value));
+                    extend(&mut sources, self.points_to(*value));
                 }
                 sinks.push(Sink {
                     location: format!(
@@ -554,7 +645,7 @@ impl<'a> Analysis<'a> {
         location: String,
         targets: &ObjectSet,
         sources: &ObjectSet,
-        action: &str,
+        action: Option<ExternalWriteAction>,
     ) {
         if external_destination(targets).is_none() {
             return;
@@ -562,10 +653,10 @@ impl<'a> Analysis<'a> {
         sinks.push(Sink {
             location,
             kind: SinkKind::ExternalWrite(match action {
-                "stored" => "stored",
-                "copied" => "copied",
-                "zeroed" => "zeroed",
-                _ => unreachable!(),
+                Some(ExternalWriteAction::Stored
+                | ExternalWriteAction::Copied
+                | ExternalWriteAction::Zeroed) => action.unwrap(),
+                None => unreachable!()
             }),
             targets: targets.clone(),
             sources: sources.clone(),
@@ -648,15 +739,20 @@ impl<'a> Analysis<'a> {
         diagnostics
     }
 
-    fn points(&self, value: ValueId) -> &ObjectSet {
+    /// Get an [`ObjectSet`] by a [`ValueId`]
+    fn points_to(&self, value: ValueId) -> &ObjectSet {
         &self.points_to[value.raw() as usize - 1]
     }
 
-    fn insert_point(&mut self, value: ValueId, object: Object) -> bool {
+    /// Insert an [`Object`] into [`Analysis::points_to`]. 
+    /// Returns whether the value was newly inserted.
+    fn insert_points_to(&mut self, value: ValueId, object: Object) -> bool {
         self.points_to[value.raw() as usize - 1].insert(object)
     }
 
-    fn extend_points(&mut self, value: ValueId, sources: &ObjectSet) -> bool {
+    /// Extend an [`Analysis::points_to`] with [`ObjectSet`]. 
+    /// Returns whether the one of the values was newly inserted.
+    fn extend_points_to(&mut self, value: ValueId, sources: &ObjectSet) -> bool {
         extend(&mut self.points_to[value.raw() as usize - 1], sources)
     }
 }
@@ -665,33 +761,41 @@ fn function_summary(summaries: &[Summary], function: FunctionId) -> Option<&Summ
     summaries.get(function.raw().checked_sub(1)? as usize)
 }
 
-fn external_destination(targets: &ObjectSet) -> Option<&'static str> {
+enum ExternalDestination {
+    Global,
+    ExternalMemory,
+    UnknownMemory,
+}
+
+fn external_destination(targets: &ObjectSet) -> Option<ExternalDestination> {
     if targets.contains(&Object::Static) {
-        Some("global")
+        Some(Global)
     } else if targets
         .iter()
         .any(|target| matches!(target, Object::Borrowed(_)))
     {
-        Some("external memory")
+        Some(ExternalMemory)
     } else if targets.contains(&Object::Unknown) {
-        Some("unknown memory")
+        Some(UnknownMemory)
     } else {
         None
     }
 }
 
-fn external_action(action: &str, targets: &ObjectSet) -> &'static str {
-    match (action, external_destination(targets)) {
-        ("stored", Some("global")) => "stored in global",
-        ("copied", Some("global")) => "copied into global",
-        ("zeroed", Some("global")) => "zeroed in global",
-        ("stored", Some("external memory")) => "stored outside current stack",
-        ("copied", Some("external memory")) => "copied outside current stack",
-        ("zeroed", Some("external memory")) => "zeroed outside current stack",
-        ("stored", Some("unknown memory")) => "stored through unknown pointer",
-        ("copied", Some("unknown memory")) => "copied through unknown pointer",
-        ("zeroed", Some("unknown memory")) => "zeroed through unknown pointer",
-        _ => unreachable!(),
+fn external_action(action: ExternalWriteAction, targets: &ObjectSet) -> &'static str {
+    match external_destination(targets) {
+        Some(target) => match (action,target) {
+            (ExternalWriteAction::Copied, ExternalDestination::Global) => "copied into global",
+            (ExternalWriteAction::Copied, ExternalDestination::ExternalMemory) => "copied outside current stack",
+            (ExternalWriteAction::Copied, ExternalDestination::UnknownMemory) => "copied through unknown pointer",
+            (ExternalWriteAction::Stored, ExternalDestination::Global) => "stored in global",
+            (ExternalWriteAction::Stored, ExternalDestination::ExternalMemory) => "stored outside current stack",
+            (ExternalWriteAction::Stored, ExternalDestination::UnknownMemory) => "stored in through unknown pointer",
+            (ExternalWriteAction::Zeroed, ExternalDestination::Global) => "zeroed in global",
+            (ExternalWriteAction::Zeroed, ExternalDestination::ExternalMemory) => "zeroed outside current stack",
+            (ExternalWriteAction::Zeroed, ExternalDestination::UnknownMemory) => "zeroed in through unknown pointer",
+        },
+        None => unreachable!(),
     }
 }
 
