@@ -48,7 +48,11 @@ pub(crate) enum PointerRoot {
     /// A package global, indexed in the interpreter's global storage.
     Global(usize),
     /// A stack slot in a specific call frame.
-    Stack { frame: usize, slot: usize },
+    Stack {
+        generation: u64,
+        frame: usize,
+        slot: usize,
+    },
 }
 
 /// One step through an aggregate object while resolving an address.

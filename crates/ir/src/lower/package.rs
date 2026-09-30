@@ -21,7 +21,7 @@
 //!
 //! This pass does not verify the resulting IR. Verification happens after
 //! lowering, and the resulting package is not suitable for the interpreter or
-//! codegen until it passes the verifier and the separate escape check.
+//! codegen until it passes the verifier.
 
 use super::*;
 

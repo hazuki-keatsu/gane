@@ -1,5 +1,8 @@
 //! Gane IR's public API.
 
+use crate::lower::lower_package;
+use gane_sema::{AnalysisResult, PackageInput};
+
 pub use crate::builder::{BuildError, IrBuilder};
 pub use crate::id::{BlockId, FunctionId, GlobalId, StackSlotId, TypeId, ValueId};
 pub use crate::ir::{
@@ -8,10 +11,28 @@ pub use crate::ir::{
     IrSignature, StackSlot, Terminator, TrapReason, UnaryOp, UnverifiedIrPackage, ValueDef,
     ValueOrigin, VerifiedIrPackage,
 };
-pub use crate::lower::{LowerError, lower_package};
+pub use crate::lower::LowerError;
 pub use crate::target::{Endianness, TargetSpec, TargetSpecError};
 pub use crate::types::{IrType, IrTypeKind, SourceOrigin, Symbol, TypeArena, TypeArenaError};
-pub use crate::verify::{IrDiagnostic, verify, verify_and_check_escape};
+pub use crate::verifier::{IrDiagnostic, verify, verify_package};
+
+pub enum CompilerError {
+    Lower(LowerError),
+    Verifier(Vec<IrDiagnostic>),
+}
+
+pub fn compile(
+    ast: &PackageInput<'_>,
+    analysis: &AnalysisResult,
+    target: crate::TargetSpec,
+) -> Result<VerifiedIrPackage, CompilerError> {
+    let raw_ir = match lower_package(ast, analysis, target) {
+        Ok(package) => package,
+        Err(error) => return Err(CompilerError::Lower(error)),
+    };
+
+    verify_package(raw_ir).map_err(CompilerError::Verifier)
+}
 
 #[cfg(test)]
 mod tests {

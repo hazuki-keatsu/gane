@@ -1,6 +1,6 @@
 ---
-version: v1.2
-date: 2026-09-29
+version: v1.3
+date: 2026-09-30
 author: hazuki-keatsu
 tag: ir
 state: v0
@@ -15,7 +15,7 @@ state: v0
 Gane 只维护一个面向后端的 IR。它把已经完成名字解析和类型检查的 Go-like 程序表示为可验证的、强类型的 SSA 控制流图。
 
 ```text
-source -> parser -> sema -> V0 validation -> raw IR -> verify/escape -> verified IR -> LLVM IR -> AOT
+source -> parser -> sema -> V0 validation -> raw IR -> verify -> verified IR -> LLVM IR -> AOT
                                                                                        \-> LLVM IR -> ORC JIT（后续）
 ```
 
@@ -25,7 +25,7 @@ IR 是 AOT 和 JIT 的共同输入。它需要：
 - 显式表示控制流、SSA value、内存访问、函数调用和失败路径；
 - 定义 no-std 程序仍然必须具备的 ABI 和错误行为；
 - 能局部、直接地 lowering 到 LLVM IR；
-- 通过 verifier 和 escape check 建立 codegen 可以信任的不变量，并用类型包装阻止未验证 IR 进入 backend。
+- 通过 verifier 建立 codegen 可以信任的结构不变量，并用类型包装阻止未验证 IR 进入 backend。
 
 IR 不负责：
 
@@ -47,7 +47,7 @@ IR 不负责：
 - 对当前语言子集之外特性的拒绝；
 - V0 全局初始化限制检查；
 
-保守的 stack-address escape check 在 raw IR 上运行，因为此时地址、GEP、load/store 和调用传播已经显式化。只有同时通过普通 verifier 与 escape check 的 package 才能包装为 verified IR，并交给 interpreter 或 codegen。raw IR 只是构造期数据，不是合法的后端输入。
+raw IR 经普通 verifier 后才能包装为 verified IR，并交给 interpreter 或 codegen。`VerifiedIrPackage` 只保证 IR 的结构和类型不变量；V0 当前不执行静态 escape analysis。interpreter 在解引用时检测已失效的栈帧并返回 `DanglingStackPointer`，AOT/no-GC 的生命周期策略仍留给未来设计。raw IR 只是构造期数据，不是合法的后端输入。
 
 lowering 的公开输入必须同时包含 package AST、`AnalysisResult` 和经过验证的 `TargetSpec`。AST 提供待遍历的语法结构，`AnalysisResult` 只提供语义事实；lowering 不允许仅凭 AST 重做名字解析或类型推导。
 
@@ -65,10 +65,9 @@ V0 明确拒绝 `:=`、复合赋值、三子句 `for`、if initializer、带标�
 
 ### 2.1 可执行的前端拒绝清单
 
-“进入 verified IR 前拒绝”是测试契约，而不是文字约定。sema/V0 validation 和 raw IR escape check 必须为下列输入建立 negative tests：
+“进入 verified IR 前拒绝”是测试契约，而不是文字约定。sema/V0 validation 和普通 verifier 必须为下列输入建立 negative tests：
 
 - 多返回值、aggregate 返回值和 aggregate 整体比较；
-- 返回 stack-derived pointer 或把它存入 global；
 - 非零 aggregate 全局初始化、非 null 全局 pointer 初始化及其他运行期全局初始化；
 - send、range、switch、type switch、select、defer、go statement；
 - short declaration、复合赋值、三子句 for、if initializer、带标签 branch；
@@ -150,10 +149,10 @@ pub struct IrPackage {
 // 构造器产生该类型；字段不对 backend 直接开放。
 pub struct UnverifiedIrPackage(IrPackage);
 
-// 只能由 verify_and_check_escape 成功构造。
+// 只能由 verify_package 成功构造。
 pub struct VerifiedIrPackage(IrPackage);
 
-pub fn verify_and_check_escape(
+pub fn verify_package(
     package: UnverifiedIrPackage,
 ) -> Result<VerifiedIrPackage, Vec<IrDiagnostic>>;
 
@@ -285,7 +284,7 @@ pub enum TrapReason {
 }
 ```
 
-`mutable` 是当前构造 API 保留的字段，不是 V0 的不可写承诺：production lowering 一律产生 `true`，而 verifier、interpreter 和 escape check 都不以它限制 `Store`。因此 V0 backend 必须把所有 global 视为可写，不能据此生成 LLVM `constant`。未来若需要 immutable global，必须先定义可写 alias 的禁止规则，并由 verifier 建立该不变量。
+`mutable` 是当前构造 API 保留的字段，不是 V0 的不可写承诺：production lowering 一律产生 `true`，而 verifier 和 interpreter 都不以它限制 `Store`。因此 V0 backend 必须把所有 global 视为可写，不能据此生成 LLVM `constant`。未来若需要 immutable global，必须先定义可写 alias 的禁止规则，并由 verifier 建立该不变量。
 
 `Constant` 的解释由 `Const` 指令携带的 `TypeId` 决定。V0 最大整数宽度为 64；verifier 必须检查 bool、integer、null 与目标类型相容，且 integer bit pattern 不含目标位宽以外的有效位。
 
@@ -503,26 +502,13 @@ join(%result: i64):
 - 源语言入口仍是 `func main()`，IR 内部符号为 mangled Gane ABI `void gane.main()`；
 - hosted codegen 自动生成 C ABI wrapper `i32 main()`，调用 `gane.main()` 并在正常结束后返回 `0`；
 - freestanding `_start`、初始化栈和退出/停机方式属于未来 target-specific 设计；
-- 没有隐式 heap allocation；`new`、`make` 由 sema 拒绝，局部地址逃逸由 raw IR escape check 拒绝；
+- 没有隐式 heap allocation；`new`、`make` 由 sema 拒绝；
 - panic、越界、除零等失败在 V0 进入对应 `Trap`；
 - V0 没有 I/O，也不接受无函数体的函数声明。
 
 所有 V0 调用都指向同一 package 内带函数体的 Gane ABI function。FFI 以后必须以独立的 binding 设计引入，明确链接 symbol、calling convention、平台 target、可传递类型、ownership/escape 规则和可信 ABI metadata；不能以“缺少函数体”隐式表示 extern。
 
-栈地址的 V0 生命周期规则：
-
-- 禁止从函数返回 stack-derived pointer；
-- 禁止把 stack-derived pointer 存入 global；
-- 可以在当前函数内读写和传给内部调用；内部函数同样必须满足不逃逸规则；
-- stack-derived 来源必须穿过 `GepField`、`GepIndex`、stack slot 的 store/load、aggregate copy、CFG 参数和函数调用传播。
-
-这些规则由独立的保守 escape check 负责，而不是普通 IR verifier。它为 pointer SSA value 维护 points-to 集合，为局部、借入、静态和未知对象维护 pointer 内容集合，并沿内容闭包检查 return、外部写入和捕获调用。aggregate 只传播按值包含的 pointer 内容；无法建立来源上界时传播 `Unknown`，不能默认为安全。
-
-跨函数分析使用由函数体推导的 capture、返回来源和外部写入效果摘要。每个函数先在当前摘要下求函数内不动点，全 package 再迭代摘要直到稳定，因此直接递归、互递归和 caller 可达内存写回使用同一套规则。所有函数都参与分析，包括 main 未调用的函数；普通 verifier 与 escape check 均成功后才能构造 `VerifiedIrPackage`。
-
-V0 有意采用 weak update、合并 aggregate 根对象和共享外部内存视图，并对调用写效果做保守 havoc。这些选择可以产生误报，但不得遗漏已知来源；不自动提升到 heap。
-
-verifier 只检查 IR 中直接可见的类型和 attribute 一致性，不声称重新完成跨函数 escape analysis。escape check 必须有返回局部地址、经临时 slot 传播、存 global、内部调用传播和递归调用的专项测试。
+V0 当前没有静态栈逃逸检查。普通 verifier 不证明 pointer 生命周期，`VerifiedIrPackage` 也不表示“局部地址不会逃逸”。interpreter 为每个运行时栈帧分配单调 generation，并在解引用 stack pointer 时核对 generation；已经弹出的帧或被复用的帧下标会返回 `InterpreterError::DanglingStackPointer`。未来 no-GC AOT mode 仍须单独定义静态拒绝、运行时插桩或显式分配机制。
 
 ## 13. AOT 与未来 JIT
 
@@ -549,7 +535,7 @@ OSR、deoptimization、safepoint 和代码回收必须另立设计，不能提�
 
 ## 14. Verifier 不变量
 
-interpreter、codegen 和 JIT 的 API 只接受 `VerifiedIrPackage`。`verify_and_check_escape(raw_package)` 至少执行以下普通 verifier 检查，并在其后执行第 12 节的 escape check：
+interpreter、codegen 和 JIT 的 API 只接受 `VerifiedIrPackage`。`verify_package(raw_package)` 执行以下普通 verifier 检查：
 
 1. 所有 ID 有效，`0`/`INVALID` 不出现在正常 IR。
 2. TargetSpec 的 pointer width 为 32/64，triple/data layout 非空；类型的私有构造保证其来源受控，codegen 另行匹配真实 TargetMachine。
@@ -564,7 +550,7 @@ interpreter、codegen 和 JIT 的 API 只接受 `VerifiedIrPackage`。`verify_an
 11. call 参数类型和结果顺序与 callee signature 一致。
 12. 每个 function 的 entry block parameters 与 signature 完全匹配，且 entry block 不是任何 `Branch` 或 `CondBranch` 的 target；普通 CFG block 只由 incoming edge 定义 parameters。
 13. return 的数量和类型与 signature 一致；V0 不允许 aggregate 或多结果返回。`no_return` function/call 满足第 9 节的 result、位置和 terminator 约束。
-14. `StackAddr` 结果类型是 `Ptr<slot.typ>`；普通 verifier 不重复执行第 12 节的跨函数 escape analysis。所有 stack slot 具有第 6 节规定的入口零值语义。
+14. `StackAddr` 结果类型是 `Ptr<slot.typ>`；所有 stack slot 具有第 6 节规定的入口零值语义。
 15. `AggregateZero` 的目标以及 `AggregateCopy` 两端是相同 aggregate 类型的 pointer，且类型具有确定布局；copy 允许重叠。
 16. 所有调用目标都是 package 内的 Gane ABI function；V0 不包含 extern、C ABI 或 variadic。
 17. `Trap` 只作为 terminator。verifier 不承诺通过值域分析证明 canonical guard；危险指令的 total semantics 由 backend/interpreter 和第 10 节 conformance tests 保证。
@@ -575,9 +561,7 @@ interpreter、codegen 和 JIT 的 API 只接受 `VerifiedIrPackage`。`verify_an
 22. pointer 只能进行 `Equal/NotEqual` 比较；signed/unsigned ordering predicate 只接受 integer。
 23. Array length 能由目标 pointer-width unsigned integer 表示。
 
-普通 verifier 成功后，escape check 额外保证：任何可达 return、global/借入内存写入或捕获调用都不含本函数的 `Local` 来源；`Unknown` 到达这些 sink 时必须拒绝。调用返回来源与可达内存写回必须由稳定的函数摘要实例化，不能只检查实参值本身。
-
-verifier 必须包含反向测试：跨分支非法 use、跳转到 function entry、错误 block argument、错误 GEP、错误 store/call、不可表示常量、symbol collision、非法递归/零尺寸类型和 `Void` value 都应被拒绝。escape violations 属于独立 escape check 的反向测试，不混入普通 verifier 测试集。
+verifier 必须包含反向测试：跨分支非法 use、跳转到 function entry、错误 block argument、错误 GEP、错误 store/call、不可表示常量、symbol collision、非法递归/零尺寸类型和 `Void` value 都应被拒绝。
 
 ## 15. 文本格式与实现阶段
 
@@ -595,7 +579,7 @@ IR 从阶段 1 起提供确定性的文本打印。相同输入和 target 必须
 1. 补齐第 2 节的 sema/V0 validation negative tests，保证无 error 的 sema 结果不含 IR V0 无法表示的源码结构。
 2. 定义 ID、类型、raw/verified package、受控 `TargetSpec` 和 builder，实现普通 verifier 与稳定 printer。
 3. 实现 `sema + AST -> raw IR`，只覆盖第 2 节的 V0 子集，建立 lowering golden tests；lowering 遇到缺失的 sema fact 必须返回 diagnostic，不能 panic 或自行推导。
-4. 在 raw IR 上实现独立 escape check，只有 verifier 与 escape check 均成功才产生 `VerifiedIrPackage`。
+4. escape analysis 暂缓；未来由 no-GC policy 或优化需求重新引入，不能改变普通 verifier 的结构验证职责。
 5. 实现最小 interpreter；先覆盖纯整数、结构化局部内存、total dangerous operations 和控制流，不要求真实物理布局。
 6. 实现 host target 的 LLVM IR lowering、wrapper main、结构化内存和 aggregate，写出 `.ll`，并以 `lli` 与 interpreter 做危险操作差分测试。
 7. LLVM IR 稳定后，单独实现 object 生成和链接，完成 AOT 可执行文件闭环。

@@ -21,6 +21,7 @@ impl fmt::Display for IrDiagnostic {
 }
 
 impl IrDiagnostic {
+    #[allow(dead_code)]
     pub(crate) fn new(location: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             location: location.into(),
@@ -55,12 +56,11 @@ pub fn verify(package: &UnverifiedIrPackage) -> Result<(), Vec<IrDiagnostic>> {
     }
 }
 
-/// Checks ordinary IR invariants and stack-address escape rules before producing backend input.
-pub fn verify_and_check_escape(
+/// Verifies a raw package and makes it available to IR consumers.
+pub fn verify_package(
     package: UnverifiedIrPackage,
 ) -> Result<VerifiedIrPackage, Vec<IrDiagnostic>> {
     verify(&package)?;
-    crate::escape::check(&package)?;
     Ok(VerifiedIrPackage::from_inner(package.into_inner()))
 }
 
@@ -1129,6 +1129,12 @@ mod tests {
     #[test]
     fn accepts_well_typed_package() {
         assert_eq!(verify(&empty_main()), Ok(()));
+    }
+
+    #[test]
+    fn verify_package_wraps_a_valid_package() {
+        let package = verify_package(empty_main()).unwrap();
+        assert_eq!(package.entry(), FunctionId::from_raw(1));
     }
 
     #[test]

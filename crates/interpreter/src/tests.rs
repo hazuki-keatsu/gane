@@ -3,7 +3,7 @@ use gane_ir::{
     BinaryOp, BlockId, Callee, ComparePredicate, Constant, FunctionAttributes, FunctionId,
     GlobalInitializer, InstructionKind, IntCastKind, IrBuilder, IrGlobal, IrParameter, IrSignature,
     IrTypeKind, TargetSpec, Terminator, TrapReason, TypeId, ValueId, VerifiedIrPackage,
-    verify_and_check_escape,
+    verify_package,
 };
 
 fn signature(parameters: Vec<IrParameter>, results: Vec<TypeId>) -> IrSignature {
@@ -24,7 +24,7 @@ fn main_function(builder: &mut IrBuilder) -> (FunctionId, BlockId) {
 }
 
 fn verified(builder: IrBuilder) -> VerifiedIrPackage {
-    verify_and_check_escape(builder.finish().unwrap()).unwrap()
+    verify_package(builder.finish().unwrap()).unwrap()
 }
 
 fn trap(reason: TrapReason) -> InterpreterError {
@@ -978,6 +978,103 @@ fn reports_total_operation_and_terminator_traps() {
         panic!("expected unreachable with stack details");
     };
     assert!(trace.contains("#0 gane.main"));
+}
+
+#[test]
+fn traps_when_a_reused_stack_frame_dereferences_a_dangling_pointer() {
+    let mut builder = IrBuilder::new(TargetSpec::for_test_64());
+    let i64 = builder.types().i64();
+    let pointer = builder.add_type(IrTypeKind::Ptr {
+        pointee: i64,
+        address_space: 0,
+    });
+
+    let producer = builder.declare_function(
+        "gane.producer".into(),
+        signature(Vec::new(), vec![pointer]),
+        FunctionAttributes::default(),
+    );
+    let producer_entry = builder.entry_block(producer).unwrap();
+    let producer_slot = builder.add_stack_slot(producer, i64, None, None).unwrap();
+    let local = builder
+        .append_instruction(
+            producer,
+            producer_entry,
+            InstructionKind::StackAddr {
+                slot: producer_slot,
+            },
+            [pointer],
+            None,
+        )
+        .unwrap()[0];
+    builder
+        .set_terminator(
+            producer,
+            producer_entry,
+            Terminator::Return {
+                values: vec![local],
+            },
+        )
+        .unwrap();
+
+    let consumer = builder.declare_function(
+        "gane.consumer".into(),
+        signature(vec![IrParameter { typ: pointer }], Vec::new()),
+        FunctionAttributes::default(),
+    );
+    let consumer_entry = builder.entry_block(consumer).unwrap();
+    let parameter = builder.entry_parameters(consumer).unwrap()[0];
+    builder.add_stack_slot(consumer, i64, None, None).unwrap();
+    builder
+        .append_instruction(
+            consumer,
+            consumer_entry,
+            InstructionKind::Load { pointer: parameter },
+            [i64],
+            None,
+        )
+        .unwrap();
+    builder
+        .set_terminator(
+            consumer,
+            consumer_entry,
+            Terminator::Return { values: Vec::new() },
+        )
+        .unwrap();
+
+    let (main, entry) = main_function(&mut builder);
+    let escaped = builder
+        .append_instruction(
+            main,
+            entry,
+            InstructionKind::Call {
+                callee: Callee::Function(producer),
+                arguments: Vec::new(),
+            },
+            [pointer],
+            None,
+        )
+        .unwrap()[0];
+    builder
+        .append_instruction(
+            main,
+            entry,
+            InstructionKind::Call {
+                callee: Callee::Function(consumer),
+                arguments: vec![escaped],
+            },
+            [],
+            None,
+        )
+        .unwrap();
+    builder
+        .set_terminator(main, entry, Terminator::Return { values: Vec::new() })
+        .unwrap();
+
+    assert_eq!(
+        interpret(&verified(builder)),
+        Err(InterpreterError::DanglingStackPointer { trace: None })
+    );
 }
 
 #[test]

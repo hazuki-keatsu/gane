@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use gane_codegen::LlvmBackend;
 use gane_diagnostics::{DiagnosticMode, Diagnostics};
 use gane_interpreter::{interpret, interpret_with_stack_details};
-use gane_ir::{lower_package, verify_and_check_escape};
+use gane_ir::{CompilerError, compile};
 use gane_parser::parser::{Mode, parse_file};
 use gane_parser::token::FileSet;
 use gane_sema::{FileId, PackageInput, analyze_package};
@@ -159,22 +159,23 @@ pub(crate) fn run(input: PathBuf, out_dir: PathBuf, disable_color: bool, trace: 
             return ExitCode::FAILURE;
         }
     };
-    let raw_ir = match lower_package(&package, &analysis, backend.target_spec().clone()) {
-        Ok(package) => package,
-        Err(error) => {
-            eprintln!("gane-driver: IR lowering failed: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let ir = match verify_and_check_escape(raw_ir) {
-        Ok(package) => package,
-        Err(diagnostics) => {
-            for diagnostic in diagnostics {
-                eprintln!("gane-driver: IR verification failed: {diagnostic}");
+
+    let ir = match compile(&package, &analysis, backend.target_spec().clone()) {
+        Ok(result) => result,
+        Err(error) => match error {
+            CompilerError::Lower(error) => {
+                eprintln!("gane-driver: IR lowering failed: {error}");
+                return ExitCode::FAILURE;
             }
-            return ExitCode::FAILURE;
-        }
+            CompilerError::Verifier(diagnostics) => {
+                for diagnostic in diagnostics {
+                    eprintln!("gane-driver: IR verification failed: {diagnostic}");
+                }
+                return ExitCode::FAILURE;
+            }
+        },
     };
+
     let ir_path = out_dir.join(format!("{stem}.ir.txt"));
     let ir_dump = ir.to_string();
     if let Err(e) = fs::write(&ir_path, &ir_dump) {

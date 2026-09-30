@@ -16,6 +16,7 @@ use gane_ir::{
 };
 
 struct Frame {
+    generation: u64,
     function: FunctionId,
     block: BlockId,
     /// `instruction == instructions.len()` means terminator is under execution.
@@ -36,6 +37,8 @@ pub(crate) struct Interpreter<'a> {
     globals: Vec<Object>,
     /// Calling stack frames
     frames: Vec<Frame>,
+    /// The generation assigned to the next pushed frame.
+    next_stack_frame_generation: u64,
 }
 
 impl fmt::Display for StackDisplay<'_> {
@@ -89,6 +92,7 @@ impl<'a> Interpreter<'a> {
             display_stack_details,
             globals,
             frames: Vec::new(),
+            next_stack_frame_generation: 0,
         }
     }
 
@@ -110,7 +114,12 @@ impl<'a> Interpreter<'a> {
             .function(function_id)
             .expect("verified IR has valid function IDs");
         let frame_id = self.frames.len();
+        let generation = self.next_stack_frame_generation;
+        self.next_stack_frame_generation = generation
+            .checked_add(1)
+            .expect("frame generation exhausted");
         self.frames.push(Frame {
+            generation,
             function: function_id,
             block: function.entry,
             instruction: 0,
@@ -254,6 +263,7 @@ impl<'a> Interpreter<'a> {
             }
             InstructionKind::StackAddr { slot } => one(RuntimeValue::Pointer(Pointer::Address {
                 root: PointerRoot::Stack {
+                    generation: self.frames[frame].generation,
                     frame,
                     slot: index(*slot),
                 },
@@ -396,7 +406,20 @@ impl<'a> Interpreter<'a> {
         let (root, projections) = pointer_parts(pointer)?;
         let object = match root {
             PointerRoot::Global(global) => &self.globals[global],
-            PointerRoot::Stack { frame, slot } => &self.frames[frame].slots[slot],
+            PointerRoot::Stack {
+                generation,
+                frame,
+                slot,
+            } => {
+                let frame = self
+                    .frames
+                    .get(frame)
+                    .filter(|frame| frame.generation == generation);
+                let Some(frame) = frame else {
+                    return Err(InterpreterError::dangling_stack_pointer());
+                };
+                &frame.slots[slot]
+            }
         };
         Ok(project_object(object, projections))
     }
@@ -405,7 +428,20 @@ impl<'a> Interpreter<'a> {
         let (root, projections) = pointer_parts(pointer)?;
         let object = match root {
             PointerRoot::Global(global) => &mut self.globals[global],
-            PointerRoot::Stack { frame, slot } => &mut self.frames[frame].slots[slot],
+            PointerRoot::Stack {
+                generation,
+                frame,
+                slot,
+            } => {
+                let frame = self
+                    .frames
+                    .get_mut(frame)
+                    .filter(|frame| frame.generation == generation);
+                let Some(frame) = frame else {
+                    return Err(InterpreterError::dangling_stack_pointer());
+                };
+                &mut frame.slots[slot]
+            }
         };
         Ok(project_object_mut(object, projections))
     }

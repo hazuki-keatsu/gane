@@ -1314,7 +1314,7 @@ mod tests {
 
     use gane_ir::{
         Constant, FunctionAttributes, IrBuilder, IrSignature, TargetSpec, Terminator,
-        verify_and_check_escape,
+        verify_package,
     };
 
     use super::*;
@@ -1424,7 +1424,7 @@ mod tests {
         builder
             .set_terminator(function, join, Terminator::Return { values: Vec::new() })
             .unwrap();
-        verify_and_check_escape(builder.finish().unwrap()).unwrap()
+        verify_package(builder.finish().unwrap()).unwrap()
     }
 
     fn aggregate_program(backend: &LlvmBackend) -> VerifiedIrPackage {
@@ -1486,7 +1486,7 @@ mod tests {
         builder
             .set_terminator(function, entry, Terminator::Return { values: Vec::new() })
             .unwrap();
-        verify_and_check_escape(builder.finish().unwrap()).unwrap()
+        verify_package(builder.finish().unwrap()).unwrap()
     }
 
     fn trap_program(backend: &LlvmBackend) -> VerifiedIrPackage {
@@ -1510,7 +1510,7 @@ mod tests {
                 },
             )
             .unwrap();
-        verify_and_check_escape(builder.finish().unwrap()).unwrap()
+        verify_package(builder.finish().unwrap()).unwrap()
     }
 
     fn run_lli(llvm_ir: &str) -> Option<std::process::ExitStatus> {
@@ -1588,7 +1588,7 @@ mod tests {
         builder
             .set_terminator(function, entry, Terminator::Return { values: Vec::new() })
             .unwrap();
-        let package = verify_and_check_escape(builder.finish().unwrap()).unwrap();
+        let package = verify_package(builder.finish().unwrap()).unwrap();
         assert!(matches!(
             backend.emit_llvm_ir(&package),
             Err(CodegenError::TargetMismatch { .. })

@@ -1,5 +1,5 @@
 use super::*;
-use crate::{InstructionKind, TargetSpec, verify};
+use crate::{InstructionKind, TargetSpec, verifier::verify};
 use gane_parser::{
     parser::{Mode, parse_file},
     token::FileSet,

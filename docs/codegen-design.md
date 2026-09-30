@@ -22,7 +22,7 @@ VerifiedIrPackage
     -> .ll text
 ```
 
-codegen 必须保持 [IR 设计](./ir-design.md) 已定义的整数、控制流、内存、调用和 trap 语义。它不能重新进行名字解析、类型推导或 escape analysis，也不能接收未经验证的 IR。
+codegen 必须保持 [IR 设计](./ir-design.md) 已定义的整数、控制流、内存、调用和 trap 语义。它不能重新进行名字解析、类型推导或建立 pointer 生命周期策略，也不能接收未经验证的 IR。
 
 本阶段不实现 object emission、链接、优化 pipeline、JIT、extern/FFI、debug info 和 cross compilation。它们在 `.ll` 生成稳定后分别设计，不能提前扩展 IR 或公共 API。
 
@@ -310,7 +310,7 @@ parse
 -> sema
 -> create host LlvmBackend
 -> lower with backend TargetSpec
--> verify_and_check_escape
+-> verify_package
 -> write <input>.ir.txt
 -> emit and verify LLVM IR
 -> write <input>.ll
