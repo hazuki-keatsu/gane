@@ -536,8 +536,7 @@ impl FileSet {
             .next_node
             .checked_add(1)
             .expect("AST node identity overflow");
-        let id = AstNodeId(((self.session as u64) << 32) | self.next_node as u64);
-        id
+        AstNodeId(((self.session as u64) << 32) | self.next_node as u64)
     }
 
     /// Returns the minimum base offset that must be provided to
@@ -651,11 +650,13 @@ impl FileSet {
     /// Returns the file that contains the position p, if any.
     fn lookup(&self, p: Pos) -> Option<Rc<File>> {
         // common case: p is in last file.
-        if let Some(f) = self.last.borrow().as_ref() {
-            if f.base <= p.0 && p.0 <= f.base + f.size {
-                return Some(f.clone());
-            }
+        if let Some(f) = self.last.borrow().as_ref()
+            && f.base <= p.0
+            && p.0 <= f.base + f.size
+        {
+            return Some(f.clone());
         }
+
         // files are sorted by base; the file containing p, if any, is the one
         // with the largest base <= p.
         let (_, f) = self.files.range(..=p.0).next_back()?;
@@ -678,11 +679,12 @@ impl FileSet {
     /// `//line` comments; otherwise those comments are ignored.
     /// p must be a [`Pos`] value in this file set or `NO_POS`.
     pub fn position_for(&self, p: Pos, adjusted: bool) -> Position {
-        if p != NO_POS {
-            if let Some(f) = self.lookup(p) {
-                return f.position_adj(p, adjusted);
-            }
+        if p != NO_POS
+            && let Some(f) = self.lookup(p)
+        {
+            return f.position_adj(p, adjusted);
         }
+
         Position::default()
     }
 

@@ -114,7 +114,7 @@ pub enum Token {
 }
 
 impl Token {
-    fn to_str(&self) -> &str {
+    fn to_str(self) -> &'static str {
         match self {
             Self::Illegal => "ILLEGAL",
             Self::EOF => "EOF",
@@ -361,7 +361,7 @@ pub fn is_keyword(name: &str) -> bool {
 }
 
 pub fn is_exported(name: &str) -> bool {
-    name.chars().next().map_or(false, |ch| ch.is_uppercase())
+    name.chars().next().is_some_and(|ch| ch.is_uppercase())
 }
 
 pub fn is_identifier(name: &str) -> bool {

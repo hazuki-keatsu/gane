@@ -1847,7 +1847,7 @@ impl<'ast> Checker<'ast> {
         typ: TypeId,
     ) -> ObjectId {
         let anchor = Some(ident.node_id());
-        let object = self.declare_in_scope(
+        self.declare_in_scope(
             self.package_scope.expect("package scope must exist"),
             name,
             kind,
@@ -1855,8 +1855,7 @@ impl<'ast> Checker<'ast> {
             anchor,
             typ,
             Some(ident.node_id()),
-        );
-        object
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -103,18 +103,18 @@ fn expected_errors(fset: &FileSet, filename: &str, src: &[u8]) -> BTreeMap<Pos, 
         match tok {
             Token::EOF => return errors,
             Token::Comment => {
-                if let Some(caps) = rx.captures(&lit) {
-                    if caps.len() == 3 {
-                        let mut pos = pos;
-                        if caps.get(1).is_some_and(|m| m.as_str() == "HERE") {
-                            pos = here; // position right after the previous token prior to comment
-                        } else if caps.get(1).is_some_and(|m| m.as_str() == "AFTER") {
-                            pos = pos + lit.len() as i64; // end of comment
-                        } else {
-                            pos = prev; // token prior to comment
-                        }
-                        errors.insert(pos, caps[2].to_string());
+                if let Some(caps) = rx.captures(&lit)
+                    && caps.len() == 3
+                {
+                    let mut pos = pos;
+                    if caps.get(1).is_some_and(|m| m.as_str() == "HERE") {
+                        pos = here; // position right after the previous token prior to comment
+                    } else if caps.get(1).is_some_and(|m| m.as_str() == "AFTER") {
+                        pos = pos + lit.len() as i64; // end of comment
+                    } else {
+                        pos = prev; // token prior to comment
                     }
+                    errors.insert(pos, caps[2].to_string());
                 }
             }
             Token::Semicolon => {
@@ -190,10 +190,7 @@ fn compare_errors(
 fn check_errors(filename: &str, input: &[u8], mode: Mode, expect_errors: bool) -> Vec<String> {
     let mut fset = FileSet::new();
     let (_f, err) = parse_file(&mut fset, filename, input, mode);
-    let mut found = match err {
-        Some(err) => err,
-        None => ErrorList::default(),
-    };
+    let mut found = err.unwrap_or_default();
     found.remove_multiples();
 
     let mut expected: BTreeMap<Pos, String> = BTreeMap::new();
@@ -918,7 +915,7 @@ fn test_parse_depth_limit() {
 
             let (pre, mid, post) = split(tt.format);
             let mid = if mid.contains('«') {
-                let (left, base, right) = split(&mid);
+                let (left, base, right) = split(mid);
                 left.repeat(n as usize) + base + &right.repeat(n as usize)
             } else {
                 mid.repeat(n as usize)
@@ -933,13 +930,12 @@ fn test_parse_depth_limit() {
                     let mut fset = FileSet::new();
                     // The parser depth is what is being tested here.
                     let (_f, err) = parse_file(&mut fset, "", input.as_bytes(), Mode::default());
-                    let msg = err.map(|e| {
+                    err.map(|e| {
                         e.iter()
                             .last()
                             .map(|er| er.msg.clone())
                             .unwrap_or_else(|| e.to_string())
-                    });
-                    msg
+                    })
                 })
                 .expect("spawn depth-test thread");
             let msg = handle.join().expect("depth-test thread panicked");

@@ -88,10 +88,10 @@ impl Directive {
 
                     // Check that the quoted string is followed by a space (or
                     // nothing).
-                    if let Some(r) = args.s.chars().next() {
-                        if !r.is_whitespace() {
-                            return Err(invalid_quoted(self, args.s));
-                        }
+                    if let Some(r) = args.s.chars().next()
+                        && !r.is_whitespace()
+                    {
+                        return Err(invalid_quoted(self, args.s));
                     }
                 }
                 _ => {
@@ -192,7 +192,7 @@ pub fn parse_directive(pos: Pos, c: &str) -> Option<Directive> {
 }
 
 fn is_alnum(b: u8) -> bool {
-    b'a' <= b && b <= b'z' || b'0' <= b && b <= b'9'
+    b.is_ascii_lowercase() || b.is_ascii_digit()
 }
 
 /// A helper for parsing directive comments while maintaining position
@@ -262,7 +262,7 @@ mod tests {
                 continue;
             }
             let b = c.as_bytes()[i];
-            if !(b'a' <= b && b <= b'z' || b'0' <= b && b <= b'9') {
+            if !(b.is_ascii_lowercase() || b.is_ascii_digit()) {
                 return false;
             }
         }

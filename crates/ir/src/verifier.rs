@@ -538,6 +538,7 @@ impl Verifier<'_> {
         (reachable, dominators)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn verify_uses(
         &mut self,
         function: &IrFunction,
@@ -798,6 +799,7 @@ impl Verifier<'_> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn verify_call(
         &mut self,
         _function_id: FunctionId,

@@ -132,10 +132,10 @@ impl<'a> Interpreter<'a> {
         });
 
         let mut result = self.execute_frame(frame_id, function, arguments);
-        if self.display_stack_details {
-            if let Err(error) = &mut result {
-                error.attach_trace_with(|| self.stack_frame_to_string());
-            }
+        if self.display_stack_details
+            && let Err(error) = &mut result
+        {
+            error.attach_trace_with(|| self.stack_frame_to_string());
         }
 
         debug_assert_eq!(self.frames.len(), frame_id + 1);

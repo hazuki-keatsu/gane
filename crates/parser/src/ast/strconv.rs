@@ -108,7 +108,7 @@ fn unescape(rest: &[u8]) -> Result<(char, usize), ()> {
         b'"' => simple('"'),
         b'x' => {
             let v = hex_value(&rest[1..], 2)?;
-            Ok((char::from_u32(v as u32).ok_or(())?, 3))
+            Ok((char::from_u32(v).ok_or(())?, 3))
         }
         b'u' => {
             let v = hex_value(&rest[1..], 4)?;

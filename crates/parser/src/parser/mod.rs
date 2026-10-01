@@ -13,6 +13,6 @@
 //!   1e3 (Go goroutine stacks grow; Rust thread stacks do not).
 
 mod interface;
-mod parser;
+mod parser_impl;
 
 pub use interface::*;

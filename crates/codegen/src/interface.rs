@@ -21,8 +21,8 @@ impl LlvmBackend {
     pub fn emit_llvm_ir(&self, package: &VerifiedIrPackage) -> Result<String, CodegenError> {
         if package.target() != &self.target {
             return Err(CodegenError::TargetMismatch {
-                package: package.target().clone(),
-                backend: self.target.clone(),
+                package: Box::new(package.target().clone()),
+                backend: Box::new(self.target.clone()),
             });
         }
         crate::lower::emit(self, package)
@@ -33,8 +33,8 @@ impl LlvmBackend {
 pub enum CodegenError {
     TargetInitialization(String),
     TargetMismatch {
-        package: TargetSpec,
-        backend: TargetSpec,
+        package: Box<TargetSpec>,
+        backend: Box<TargetSpec>,
     },
     Lowering(String),
     InvalidModule(String),

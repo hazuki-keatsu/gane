@@ -219,7 +219,7 @@ impl IntegerValue {
                 (magnitude <= i128::MAX as u128).then(|| -(magnitude as i128))
             }
         } else {
-            (magnitude <= i128::MAX as u128).then(|| magnitude as i128)
+            (magnitude <= i128::MAX as u128).then_some(magnitude as i128)
         }
     }
 }

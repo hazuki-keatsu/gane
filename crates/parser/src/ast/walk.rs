@@ -13,7 +13,7 @@
 //! unconditionally (e.g. `StructType.Fields`), which panics on malformed
 //! trees. In this port those fields are `Option`s and are simply skipped.
 
-use super::ast::*;
+use super::types::*;
 use crate::token::{AstNodeId, Pos};
 
 /// A lightweight, reference-based view of any AST node, used to traverse
@@ -796,7 +796,7 @@ mod tests {
         })
     }
 
-    fn preorder_file<'a>(decls: Vec<Decl>) -> File {
+    fn preorder_file(decls: Vec<Decl>) -> File {
         File {
             node_id: AstNodeId::INVALID,
             commands: vec![],
@@ -855,11 +855,11 @@ mod tests {
 
         let mut found_f = false;
         for n in preorder(NodeRef::File(&f)) {
-            if let NodeRef::Ident(id) = n {
-                if id.name == "F" {
-                    found_f = true;
-                    break;
-                }
+            if let NodeRef::Ident(id) = n
+                && id.name == "F"
+            {
+                found_f = true;
+                break;
             }
         }
         assert!(found_f, "expected to find ident F and break");
@@ -887,16 +887,16 @@ mod tests {
         let mut got_stack: Vec<&'static str> = vec![];
         preorder_stack(NodeRef::File(&f), vec![], |n, stack| {
             events.push(n.kind_name());
-            if let NodeRef::FuncDecl(d) = n {
-                if d.name.name == "f" {
-                    return false; // skip subtree of f()
-                }
+            if let NodeRef::FuncDecl(d) = n
+                && d.name.name == "f"
+            {
+                return false; // skip subtree of f()
             }
-            if let NodeRef::BasicLit(l) = n {
-                if l.value == "\"oops\"" {
-                    for n in stack {
-                        got_stack.push(n.kind_name());
-                    }
+            if let NodeRef::BasicLit(l) = n
+                && l.value == "\"oops\""
+            {
+                for n in stack {
+                    got_stack.push(n.kind_name());
                 }
             }
             true

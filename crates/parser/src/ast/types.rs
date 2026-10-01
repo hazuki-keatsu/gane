@@ -162,8 +162,8 @@ impl FieldList {
 // ----------------------------------------------------------------------------
 // Expressions and types
 
-/// An expression is represented by a tree consisting of one or more of the
-/// following concrete expression nodes.
+// An expression is represented by a tree consisting of one or more of the
+// following concrete expression nodes.
 
 /// A BadExpr node is a placeholder for an expression containing
 /// syntax errors for which a correct expression node cannot be created.
@@ -336,8 +336,8 @@ pub struct KeyValueExpr {
     pub value: Expr,
 }
 
-/// A type is represented by a tree consisting of one or more of the following
-/// type-specific expression nodes.
+// A type is represented by a tree consisting of one or more of the following
+// type-specific expression nodes.
 
 /// An ArrayType node represents an array or slice type.
 #[derive(Clone, Debug)]
@@ -677,8 +677,8 @@ pub fn is_exported(name: &str) -> bool {
 // ----------------------------------------------------------------------------
 // Statements
 
-/// A statement is represented by a tree consisting of one or more of the
-/// following concrete statement nodes.
+// A statement is represented by a tree consisting of one or more of the
+// following concrete statement nodes.
 
 /// A BadStmt node is a placeholder for statements containing
 /// syntax errors for which no correct statement nodes can be created.
@@ -1111,8 +1111,8 @@ impl RangeStmt {
 // ----------------------------------------------------------------------------
 // Declarations
 
-/// A Spec node represents a single (non-parenthesized) import,
-/// constant, type, or variable declaration.
+// A Spec node represents a single (non-parenthesized) import,
+// constant, type, or variable declaration.
 
 /// An ImportSpec node represents a single package import.
 ///
@@ -1194,7 +1194,7 @@ impl TypeSpec {
     }
 }
 
-/// A declaration is represented by one of the following declaration nodes.
+// A declaration is represented by one of the following declaration nodes.
 
 /// A BadDecl node is a placeholder for a declaration containing
 /// syntax errors for which a correct declaration node cannot be created.
@@ -1649,10 +1649,11 @@ fn assign_expr_nodes(expr: &mut Expr, files: &mut crate::token::FileSet) {
         }
         Expr::SliceExpr(node) => {
             assign_expr_nodes(&mut node.x, files);
-            for index in [&mut node.low, &mut node.high, &mut node.max] {
-                if let Some(index) = index {
-                    assign_expr_nodes(index, files);
-                }
+            for index in [&mut node.low, &mut node.high, &mut node.max]
+                .into_iter()
+                .flatten()
+            {
+                assign_expr_nodes(index, files);
             }
         }
         Expr::TypeAssertExpr(node) => {
@@ -1704,10 +1705,11 @@ fn assign_expr_nodes(expr: &mut Expr, files: &mut crate::token::FileSet) {
 
 fn assign_func_type_nodes(typ: &mut FuncType, files: &mut crate::token::FileSet) {
     assign_node_id!(files, typ);
-    for list in [&mut typ.type_params, &mut typ.params, &mut typ.results] {
-        if let Some(list) = list {
-            assign_field_list_nodes(list, files);
-        }
+    for list in [&mut typ.type_params, &mut typ.params, &mut typ.results]
+        .into_iter()
+        .flatten()
+    {
+        assign_field_list_nodes(list, files);
     }
 }
 

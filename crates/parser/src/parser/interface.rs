@@ -18,7 +18,7 @@ use crate::ast::{Expr, File, assign_file_node_ids, new_ident};
 use crate::scanner::ErrorList;
 use crate::token::{AstNodeId, FileSet, NO_POS, Pos};
 
-use super::parser::{Bailout, Parser};
+use super::parser_impl::{Bailout, Parser};
 
 /// A Mode value is a set of flags (or 0). They control parser behavior.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -282,14 +282,13 @@ impl<'src> Parser<'src> {
     /// expect2 is like expect, but it returns an invalid position
     /// if the expected token is not found.
     fn expect2(&mut self, tok: Token) -> Pos {
-        let pos;
-        if self.tok == tok {
-            pos = self.pos;
+        let pos = if self.tok == tok {
+            self.pos
         } else {
             let msg = format!("'{}'", tok);
             self.error_expected(self.pos, &msg);
-            pos = NO_POS;
-        }
+            NO_POS
+        };
         self.next(); // make progress
         pos
     }
@@ -796,14 +795,12 @@ impl<'src> Parser<'src> {
                             return f;
                         }
                     }
-                    Token::Or => {
-                        if type_sets_ok {
-                            // name "|" typeset
-                            let name4 = f.name.take().unwrap();
-                            f.typ = Some(self.embedded_elem(Some(Expr::Ident(name4))));
-                            f.name = None;
-                            return f;
-                        }
+                    Token::Or if type_sets_ok => {
+                        // name "|" typeset
+                        let name4 = f.name.take().unwrap();
+                        f.typ = Some(self.embedded_elem(Some(Expr::Ident(name4))));
+                        f.name = None;
+                        return f;
                     }
                     _ => {}
                 }
@@ -874,19 +871,18 @@ impl<'src> Parser<'src> {
         let mut typed = 0; // number of parameters that have an explicit type
 
         while name0.is_some() || (self.tok != closing && self.tok != Token::EOF) {
-            let par;
-            if typ0.is_some() {
+            let par = if typ0.is_some() {
                 if tparams {
                     typ0 = Some(self.embedded_elem(typ0));
                 }
-                par = ParamField {
+                ParamField {
                     commands: self.take_leading_commands(self.pos),
                     name: name0,
                     typ: typ0,
-                };
+                }
             } else {
-                par = self.parse_param_decl(name0, tparams);
-            }
+                self.parse_param_decl(name0, tparams)
+            };
             name0 = None; // 1st name was consumed if present
             typ0 = None; // 1st typ was consumed if present
             if par.name.is_some() || par.typ.is_some() {
@@ -1013,26 +1009,26 @@ impl<'src> Parser<'src> {
                 Some(Expr::Ellipsis(t)) => Some((t.ellipsis, t.pos(), t.end())),
                 _ => None,
             };
-            if let Some((ellipsis_pos, from, to)) = ellipsis_ellipsis {
-                if !dddok || i + 1 < nlist {
-                    if first {
-                        first = false;
-                        if dddok {
-                            self.error(
-                                ellipsis_pos,
-                                "can only use ... with final parameter".to_string(),
-                            );
-                        } else {
-                            self.error(ellipsis_pos, "invalid use of ...".to_string());
-                        }
+            if let Some((ellipsis_pos, from, to)) = ellipsis_ellipsis
+                && (!dddok || i + 1 < nlist)
+            {
+                if first {
+                    first = false;
+                    if dddok {
+                        self.error(
+                            ellipsis_pos,
+                            "can only use ... with final parameter".to_string(),
+                        );
+                    } else {
+                        self.error(ellipsis_pos, "invalid use of ...".to_string());
                     }
-                    // Use T instead of invalid ...T.
-                    f.typ = Some(Expr::BadExpr(BadExpr {
-                        node_id: AstNodeId::INVALID,
-                        from,
-                        to,
-                    }));
                 }
+                // Use T instead of invalid ...T.
+                f.typ = Some(Expr::BadExpr(BadExpr {
+                    node_id: AstNodeId::INVALID,
+                    from,
+                    to,
+                }));
             }
         }
 
@@ -1136,14 +1132,13 @@ impl<'src> Parser<'src> {
 
         let commands = self.take_leading_commands(self.pos);
         if let Some(typ) = self.try_ident_or_type() {
-            let mut list = Vec::with_capacity(1);
-            list.push(Field {
+            let list = vec![Field {
                 node_id: AstNodeId::INVALID,
                 commands,
                 names: Vec::new(),
                 typ: Some(typ),
                 tag: None,
-            });
+            }];
             return Some(FieldList {
                 node_id: AstNodeId::INVALID,
                 opening: NO_POS,
@@ -1969,12 +1964,12 @@ impl<'src> Parser<'src> {
                 let (pos, op) = (self.pos, self.tok);
                 self.next();
                 let x = self.parse_unary_expr();
-                return Expr::UnaryExpr(Box::new(UnaryExpr {
+                Expr::UnaryExpr(Box::new(UnaryExpr {
                     node_id: AstNodeId::INVALID,
                     op_pos: pos,
                     op,
                     x,
-                }));
+                }))
             }
 
             Token::Arrow => {
@@ -2032,11 +2027,11 @@ impl<'src> Parser<'src> {
                 let pos = self.pos;
                 self.next();
                 let x = self.parse_unary_expr();
-                return Expr::StarExpr(Box::new(StarExpr {
+                Expr::StarExpr(Box::new(StarExpr {
                     node_id: AstNodeId::INVALID,
                     star: pos,
                     x,
-                }));
+                }))
             }
 
             _ => self.parse_primary_expr(None),
@@ -2348,22 +2343,23 @@ impl<'src> Parser<'src> {
                 // labeled statement
                 let colon = self.pos;
                 self.next();
-                if mode == SimpleStmtMode::LabelOk {
-                    if let Expr::Ident(label) = &x[0] {
-                        // Go spec: The scope of a label is the body of the function
-                        // in which it is declared and excludes the body of any nested
-                        // function.
-                        let label = label.clone();
-                        let stmt = self.parse_stmt();
-                        let s = LabeledStmt {
-                            node_id: AstNodeId::INVALID,
-                            label,
-                            colon,
-                            stmt,
-                        };
-                        return (Stmt::LabeledStmt(Box::new(s)), false);
-                    }
+                if mode == SimpleStmtMode::LabelOk
+                    && let Expr::Ident(label) = &x[0]
+                {
+                    // Go spec: The scope of a label is the body of the function
+                    // in which it is declared and excludes the body of any nested
+                    // function.
+                    let label = label.clone();
+                    let stmt = self.parse_stmt();
+                    let s = LabeledStmt {
+                        node_id: AstNodeId::INVALID,
+                        label,
+                        colon,
+                        stmt,
+                    };
+                    return (Stmt::LabeledStmt(Box::new(s)), false);
                 }
+
                 // The label declaration typically starts at x[0].Pos(), but the label
                 // declaration may be erroneous due to a token after that position (and
                 // before the ':'). If SpuriousErrors is not set, the (only) error
@@ -2518,10 +2514,7 @@ impl<'src> Parser<'src> {
     }
 
     fn make_expr(&mut self, s: Option<Stmt>, want: &str) -> Option<Expr> {
-        let s = match s {
-            Some(s) => s,
-            None => return None,
-        };
+        let s = s?;
         if let Stmt::ExprStmt(es) = &s {
             return Some(es.x.clone());
         }
@@ -2699,23 +2692,19 @@ impl<'src> Parser<'src> {
                 // x.(type)
                 Self::is_type_switch_assert(&es.x)
             }
-            Stmt::AssignStmt(as_) => {
-                // v := x.(type)
+            Stmt::AssignStmt(as_)
                 if as_.lhs.len() == 1
                     && as_.rhs.len() == 1
-                    && Self::is_type_switch_assert(&as_.rhs[0])
-                {
-                    match as_.tok {
-                        Token::Assign => {
-                            // permit v = x.(type) but complain
-                            self.error(as_.tok_pos, "expected ':=', found '='".to_string());
-                            true
-                        }
-                        Token::Define => true,
-                        _ => false,
+                    && Self::is_type_switch_assert(&as_.rhs[0]) =>
+            {
+                match as_.tok {
+                    Token::Assign => {
+                        // permit v = x.(type) but complain
+                        self.error(as_.tok_pos, "expected ':=', found '='".to_string());
+                        true
                     }
-                } else {
-                    false
+                    Token::Define => true,
+                    _ => false,
                 }
             }
             _ => false,
@@ -3014,7 +3003,7 @@ impl<'src> Parser<'src> {
     fn parse_stmt(&mut self) -> Stmt {
         let _nest = inc_nest_lev(self);
 
-        let s = match self.tok {
+        match self.tok {
             Token::Const | Token::Type | Token::Var => Stmt::DeclStmt(DeclStmt {
         node_id: AstNodeId::INVALID,
                 decl: self.parse_decl(stmt_start),
@@ -3096,9 +3085,7 @@ impl<'src> Parser<'src> {
                     to: self.pos,
                 })
             }
-        };
-
-        s
+        }
     }
 
     /// Re-associates the "<-" of a receive expression with the channel type
@@ -3120,10 +3107,10 @@ impl<'src> Parser<'src> {
         ct.dir = ChanDir::RECV;
         *dir = new_dir;
         // descend while Go's loop would continue (ok && dir == ast.SEND)
-        if *dir == ChanDir::SEND {
-            if let Expr::ChanType(inner) = &mut ct.value {
-                self.re_associate_arrow(inner, arrow, dir);
-            }
+        if *dir == ChanDir::SEND
+            && let Expr::ChanType(inner) = &mut ct.value
+        {
+            self.re_associate_arrow(inner, arrow, dir);
         }
     }
 
@@ -3533,71 +3520,71 @@ fn parse_type_spec(p: &mut Parser, _keyword: Token) -> Spec {
 /// Examples:
 ///
 /// ```text
-///	x           force    name    expr
-///	------------------------------------
-///	P*[]int     T/F      P       *[]int
-///	P*E         T        P       *E
-///	P*E         F        nil     P*E
-///	P([]int)    T/F      P       ([]int)
-///	P(E)        T        P       (E)
-///	P(E)        F        nil     P(E)
-///	P*E|F|~G    T/F      P       *E|F|~G
-///	P*E|F|G     T        P       *E|F|G
-///	P*E|F|G     F        nil     P*E|F|G
+/// x           force    name    expr
+/// ------------------------------------
+/// P*[]int     T/F      P       *[]int
+/// P*E         T        P       *E
+/// P*E         F        nil     P*E
+/// P([]int)    T/F      P       ([]int)
+/// P(E)        T        P       (E)
+/// P(E)        F        nil     P(E)
+/// P*E|F|~G    T/F      P       *E|F|~G
+/// P*E|F|G     T        P       *E|F|G
+/// P*E|F|G     F        nil     P*E|F|G
 /// ```
 fn extract_name(x: &Expr, force: bool) -> (Option<Ident>, Option<Expr>) {
     match x {
         Expr::Ident(id) => return (Some(id.clone()), None),
         Expr::BinaryExpr(b) => {
             if b.op == Token::Mul {
-                if let Expr::Ident(name) = &b.x {
-                    if force || is_type_elem(&b.y) {
-                        // x = name *x.Y
-                        return (
-                            Some(name.clone()),
-                            Some(Expr::StarExpr(Box::new(StarExpr {
-                                node_id: AstNodeId::INVALID,
-                                star: b.op_pos,
-                                x: b.y.clone(),
-                            }))),
-                        );
-                    }
-                }
-            } else if b.op == Token::Or {
-                if let (Some(name), Some(lhs)) = extract_name(&b.x, force || is_type_elem(&b.y)) {
-                    // x = name lhs|x.Y
+                if let Expr::Ident(name) = &b.x
+                    && (force || is_type_elem(&b.y))
+                {
+                    // x = name *x.Y
                     return (
-                        Some(name),
-                        Some(Expr::BinaryExpr(Box::new(BinaryExpr {
+                        Some(name.clone()),
+                        Some(Expr::StarExpr(Box::new(StarExpr {
                             node_id: AstNodeId::INVALID,
-                            x: lhs,
-                            op_pos: b.op_pos,
-                            op: Token::Or,
-                            y: b.y.clone(),
+                            star: b.op_pos,
+                            x: b.y.clone(),
                         }))),
                     );
                 }
+            } else if b.op == Token::Or
+                && let (Some(name), Some(lhs)) = extract_name(&b.x, force || is_type_elem(&b.y))
+            {
+                // x = name lhs|x.Y
+                return (
+                    Some(name),
+                    Some(Expr::BinaryExpr(Box::new(BinaryExpr {
+                        node_id: AstNodeId::INVALID,
+                        x: lhs,
+                        op_pos: b.op_pos,
+                        op: Token::Or,
+                        y: b.y.clone(),
+                    }))),
+                );
             }
         }
         Expr::CallExpr(c) => {
-            if let Expr::Ident(name) = &c.fun {
-                if c.args.len() == 1 && !c.ellipsis.is_valid() {
-                    if force || is_type_elem(&c.args[0]) {
-                        // x = name (x.Args[0])
-                        // (Note that the cmd/compile/internal/syntax parser does
-                        // not care about syntax tree fidelity and does not
-                        // preserve parentheses here.)
-                        return (
-                            Some(name.clone()),
-                            Some(Expr::ParenExpr(Box::new(ParenExpr {
-                                node_id: AstNodeId::INVALID,
-                                lparen: c.lparen,
-                                x: c.args[0].clone(),
-                                rparen: c.rparen,
-                            }))),
-                        );
-                    }
-                }
+            if let Expr::Ident(name) = &c.fun
+                && c.args.len() == 1
+                && !c.ellipsis.is_valid()
+                && (force || is_type_elem(&c.args[0]))
+            {
+                // x = name (x.Args[0])
+                // (Note that the cmd/compile/internal/syntax parser does
+                // not care about syntax tree fidelity and does not
+                // preserve parentheses here.)
+                return (
+                    Some(name.clone()),
+                    Some(Expr::ParenExpr(Box::new(ParenExpr {
+                        node_id: AstNodeId::INVALID,
+                        lparen: c.lparen,
+                        x: c.args[0].clone(),
+                        rparen: c.rparen,
+                    }))),
+                );
             }
         }
         _ => {}

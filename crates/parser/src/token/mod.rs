@@ -1,5 +1,5 @@
 pub mod position;
-pub mod token;
+pub mod token_impl;
 
 pub use position::*;
-pub use token::*;
+pub use token_impl::*;
