@@ -11,6 +11,7 @@ pub struct IrType {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IrTypeKind {
+    /// Unused but reserved type
     Void,
     I1,
     I8,
