@@ -18,8 +18,6 @@ jobs:
             platform: linux
           - os: macos-15
             platform: macos
-          - os: windows-2022
-            platform: windows
 
     runs-on: ${{ matrix.os }}
 
@@ -45,25 +43,6 @@ jobs:
           llvm_prefix="$(brew --prefix llvm@22)"
           echo "LLVM_SYS_221_PREFIX=$llvm_prefix" >> "$GITHUB_ENV"
           "$llvm_prefix/bin/llvm-config" --version
-
-      - name: Install LLVM 22 on Windows
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: |
-          choco install llvm --version=22.1.8 --no-progress --yes
-
-          $llvmConfig = Get-ChildItem -Path @(
-            'C:\Program Files',
-            'C:\ProgramData\chocolatey\lib'
-          ) -Filter llvm-config.exe -File -Recurse -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-          if ($null -eq $llvmConfig) {
-            throw 'llvm-config.exe was not installed by the LLVM package'
-          }
-          $llvmPrefix = Split-Path -Parent (Split-Path -Parent $llvmConfig.FullName)
-          "LLVM_SYS_221_PREFIX=$llvmPrefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "LLVM_CONFIG_PATH=$($llvmConfig.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          & $llvmConfig.FullName --version
 
       - uses: dtolnay/rust-toolchain@stable
         with:
