@@ -14,9 +14,9 @@ facts into verified IR, `codegen` translates verified IR into LLVM IR, and
 - `cargo check --workspace` — fast type-check of every crate.
 - `cargo test --workspace` — run unit, integration, and doctests.
 - `cargo test -p gane_sema` — focus on one crate while iterating.
-- `cargo run -p gane_driver -- path/to/file.go [out-dir]` — parse and semantically
-  check a source file, writing AST/sema diagnostic dumps.
-- `cargo fmt --check` — verify Rust formatting.
+- `cargo run -p gane_driver -- single path/to/file.go --out [out-dir]` — 
+  parse and semantically check a source file, writing AST/sema diagnostic dumps.
+- `cargo fmt --all -- --check` — verify Rust formatting.
 
 ## Coding Style & Naming Conventions
 

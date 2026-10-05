@@ -129,7 +129,7 @@ tests/testdata/   Source inputs used by compiler-pipeline tests
 After setting `LLVM_SYS_221_PREFIX`, run the following commands from the repository root:
 
 ```sh
-cargo fmt --check
+cargo fmt --all -- --check
 cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
