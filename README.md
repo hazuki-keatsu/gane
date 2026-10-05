@@ -95,7 +95,7 @@ On other systems, install a matching LLVM 22.1.x distribution and set `LLVM_SYS_
 ## Current scope
 
 - **Types and data**: `bool`, `int`, `byte`, pointers, fixed-size arrays, non-empty structs, and a limited form of named types.
-- **Expressions and control flow**: limited integer operations and comparisons, field and array access, direct function calls, `if`, three-clause and loop `for`, assignment, and return statements.
+- **Expressions and control flow**: limited integer operations and comparisons, field and array access, direct function calls, `if`, condition and loop `for`, assignment, and return statements.
 - **Compilation pipeline**:
   ```mermaid
   flowchart LR
