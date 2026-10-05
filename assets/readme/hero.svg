@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" viewBox="0 0 1200 380" role="img" aria-labelledby="title desc">
+  <title id="title">Gane, an experimental Go-like compiler in Rust</title>
+  <desc id="desc">A source file flows through lexing, parsing, semantic analysis, Gane IR, verification, and LLVM IR.</desc>
+  <rect width="1200" height="380" rx="20" fill="#101921"/>
+  <g id="identity" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <text x="64" y="70" fill="#82D5CF" font-size="20" font-weight="650" letter-spacing="2">EXPERIMENTAL COMPILER</text>
+    <text x="60" y="188" fill="#F0F5F4" font-size="112" font-weight="760" letter-spacing="-6">Gane<tspan fill="#82D5CF">.</tspan></text>
+    <text x="64" y="250" fill="#E3ECEB" font-size="29" font-weight="550">A small Go-like compiler.</text>
+    <text x="64" y="290" fill="#E3ECEB" font-size="29" font-weight="550">JIT ambition, AOT discipline.</text>
+  </g>
+  <path d="M64 319 H1136" stroke="#36515A" stroke-width="1"/>
+  <g id="pipeline" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" fill="#E3ECEB">
+    <text x="64" y="352">.go</text>
+    <text x="138" y="352" fill="#82D5CF">-></text>
+    <text x="198" y="352">AST</text>
+    <text x="262" y="352" fill="#82D5CF">-></text>
+    <text x="320" y="352">Sema</text>
+    <text x="404" y="352" fill="#82D5CF">-></text>
+    <text x="466" y="352">Verified IR</text>
+    <text x="628" y="352" fill="#82D5CF">-></text>
+    <text x="678" y="352">.ll</text>
+  </g>
+  <g id="ir-proof" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+    <rect x="728" y="64" width="408" height="229" rx="10" fill="#192730" stroke="#42606A" stroke-width="1.5"/>
+    <rect x="728" y="64" width="408" height="42" rx="10" fill="#23363F"/>
+    <path d="M728 96 H1136" stroke="#42606A" stroke-width="1"/>
+    <text x="738" y="88" fill="#A8C7CA" font-size="19">GANE IR</text>
+    <text x="738" y="134" fill="#DCE8E7" font-size="20">func @1 <tspan fill="#82D5CF">"gane.main"</tspan>() -> ()</text>
+    <text x="756" y="170" fill="#DCE8E7" font-size="20">[no_return=false] <tspan fill="#82D5CF">entry ^1</tspan> {</text>
+    <text x="756" y="206" fill="#DCE8E7" font-size="20">^1():</text>
+    <text x="774" y="242" fill="#DCE8E7" font-size="20">return</text>
+    <text x="738" y="278" fill="#DCE8E7" font-size="20">}</text>
+  </g>
+</svg>
