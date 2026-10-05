@@ -64,6 +64,10 @@ func @2 "gane.main"() -> () [no_return=false] entry ^1 {
 entry @2
 ```
 
+## Motivation
+
+To know the reason why I decided to develop this project, see [Motivation](/docs/Motivation.md).
+
 ## Quick start
 
 You need a Rust toolchain and **LLVM 22.1.x**, including `llvm-config` and `libLLVM`. The workspace uses Inkwell with the `llvm22-1` feature. On macOS, LLVM can be installed with Homebrew:
