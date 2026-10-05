@@ -494,6 +494,34 @@ pub struct SemanticInfo {
     pub(crate) selections: HashMap<AstNodeId, Selection>,
 }
 
+/*
+TODO: In the future, this type should be extended:
+
+pub struct TypeAndValue {
+    pub typ: TypeId,
+    pub form: ExpressionForm,
+    pub capabilities: ExpressionCapabilities,
+    pub constant: Option<ConstValue>,
+}
+
+enum ExpressionForm {
+    Invalid,
+    NoValue,
+    Value,
+    TypeExpr,
+}
+
+bitflags! {
+    struct ExpressionCapabilities {
+        const ADDRESSABLE = 1 << 0;
+        const ASSIGNABLE  = 1 << 1;
+        const NIL         = 1 << 2;
+        const BUILTIN     = 1 << 3;
+    }
+}
+
+The model above will improve the capability to expression complicated value.
+*/
 #[derive(Clone, Debug)]
 pub struct TypeAndValue {
     pub typ: TypeId,
@@ -503,12 +531,19 @@ pub struct TypeAndValue {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ValueMode {
+    /// Used for error restore when expression checking occurs any errors
     Invalid,
+    /// The expression will not generate value, and can only be used as a statement.
     NoValue,
+    /// The normal value which can be used as operands, argument, return value and initializer.
     Value,
+    /// The expression can be used as a place that can be addressed of and assigned.
     Variable,
+    /// The expression represents a type, not a runtime value.
     TypeExpr,
+    /// The builtin expression, such as `len`, `make`, and so on.
     Builtin,
+    /// The pre-declared nil.
     Nil,
 }
 

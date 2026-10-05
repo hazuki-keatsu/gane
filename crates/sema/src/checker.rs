@@ -119,9 +119,16 @@ pub fn analyze_package(input: PackageInput<'_>) -> AnalysisResult {
 
 struct Checker<'ast> {
     input: PackageInput<'ast>,
+    /// The type arena for semantic checker, using [`TypeId`] as index.
     types: TypeArena,
+    /// The object arena for semantic checker, using [`ObjectId`] as index.
+    /// All the symbols like variable name, function name and so on are stored in it.
     symbols: SymbolTable,
+    /// The scope arena for scope management, using [`ScopeId`] as index.
+    /// The scope is a stack-like structure. And when old scope was quitted, it will be dispatched.
     scopes: ScopeArena,
+    /// All the semantic information is stored in this field. It contains
+    /// all the mapping form [`AstNodeId`] to [`ObjectId`], [`ScopeId`] and [`TypeId`].
     info: SemanticInfo,
     diagnostics: Diagnostics,
     package_name: Option<crate::types::NameId>,

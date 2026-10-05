@@ -1,0 +1,9 @@
+[package]
+name = "gane_unicode_diff"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+
+[dependencies]
+gane_parser = { path = "../../../crates/parser" }
+unicode-general-category = "=1.1.0"

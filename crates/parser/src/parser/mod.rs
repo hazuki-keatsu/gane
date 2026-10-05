@@ -10,7 +10,7 @@
 //!   `std::panic::catch_unwind` at the entry points;
 //! - the tracing infrastructure (`Trace` mode) is not ported;
 //! - the recursion depth guard is lowered from Go's `maxNestLev` 1e5 to
-//!   1e3 (Go goroutine stacks grow; Rust thread stacks do not).
+//!   1e4 (Go goroutine stacks grow; Rust thread stacks do not).
 
 mod interface;
 mod parser_impl;

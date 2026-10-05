@@ -207,6 +207,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gane_unicode_diff"
+version = "0.1.0"
+dependencies = [
+ "gane_parser",
+ "unicode-general-category",
+]
+
+[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
