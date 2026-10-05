@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 // MVP semantic-analysis smoke test: no imports and no Go runtime required.
 package main
 

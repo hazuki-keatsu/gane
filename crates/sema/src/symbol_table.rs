@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 //! Name interning and object storage for semantic analysis.
 //!
 //! This module is analogous to the object side of `go/types`: it provides

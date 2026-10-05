@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 //! The public seam of semantic analysis.
 //!
 //! An analysis is created with [`analyze_package`] and then queried through

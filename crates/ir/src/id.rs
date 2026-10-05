@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 //! Strongly typed identifiers used to refer to entities in Gane IR.
 //!
 //! Valid identifiers are one-based arena indices. The zero value is reserved

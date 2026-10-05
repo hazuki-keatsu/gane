@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 use crate::*;
 use gane_ir::{
     BinaryOp, BlockId, Callee, ComparePredicate, Constant, FunctionAttributes, FunctionId,

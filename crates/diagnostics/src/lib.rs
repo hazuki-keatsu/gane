@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 //! Shared diagnostic data structures for the Gane toolchain.
 //!
 //! Labels retain their source anchor until callers resolve it to a user-facing

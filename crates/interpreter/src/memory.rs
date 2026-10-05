@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 use gane_ir::{IrTypeKind, TypeArena, TypeId};
 
 use crate::runtime::{Pointer, Projection, RuntimeValue};

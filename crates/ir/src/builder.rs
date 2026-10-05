@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 use crate::{
     id::{BlockId, FunctionId, GlobalId, StackSlotId, TypeId, ValueId},
     ir::{

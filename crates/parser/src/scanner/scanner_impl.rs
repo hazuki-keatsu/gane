@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-FileCopyrightText: 2009 The Go Authors.
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+//
+// Adapted from the Go standard library for Gane.
+
 //! A scanner for Go source text.
 //!
 //! The scanner takes a `&[u8]` as source which can then be tokenized

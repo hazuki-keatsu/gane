@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 use super::*;
 use crate::{InstructionKind, TargetSpec, verifier::verify};
 use gane_parser::{

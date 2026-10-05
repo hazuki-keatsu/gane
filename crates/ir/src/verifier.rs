@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 use crate::ir::IrPackage;
 use crate::{
     BinaryOp, BlockId, Callee, ComparePredicate, Constant, FunctionId, GlobalInitializer,

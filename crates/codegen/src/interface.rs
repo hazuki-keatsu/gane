@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 use std::{error::Error, fmt};
 
 use gane_ir::{TargetSpec, VerifiedIrPackage};

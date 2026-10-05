@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 use crate::{
     CodegenError, LlvmBackend,
     lower::helper::{builder_error, compare_predicate, id_to_index, integer_width, trap_code},

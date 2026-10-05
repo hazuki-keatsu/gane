@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 use std::{env, fs, process};
 
 use gane_parser::{ast::Expr, parser::parse_expr};

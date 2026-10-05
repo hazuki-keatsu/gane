@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 /// A scalar value held by the interpreter.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RuntimeValue {

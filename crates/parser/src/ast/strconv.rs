@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-FileCopyrightText: 2009 The Go Authors.
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+//
+// Adapted from the Go standard library for Gane.
+
 //! A minimal subset of Go's `strconv` package: unquoting of Go string
 //! literals, as needed by the `go/ast` port (directive argument parsing).
 //!

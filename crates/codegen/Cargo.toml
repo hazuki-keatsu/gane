@@ -3,6 +3,7 @@ name = "gane_codegen"
 edition = "2024"
 version.workspace = true
 authors.workspace = true
+license.workspace = true
 
 [dependencies]
 gane_ir = { path = "../ir" }

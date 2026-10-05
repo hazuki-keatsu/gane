@@ -3,6 +3,7 @@ name = "gane_parser"
 edition = "2024"
 version.workspace = true
 authors.workspace = true
+license = "BSD-3-Clause"
 
 [dependencies]
 unicode-general-category = { workspace = true }

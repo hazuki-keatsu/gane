@@ -1,0 +1,64 @@
+Gane
+
+This repository contains original work licensed under the Apache License,
+Version 2.0. See LICENSE for the full license text.
+
+Third-party material
+====================
+
+Go standard library parser components
+-------------------------------------
+
+Parts of crates/parser are derived from the Go standard library, including
+code and test data originating from the following packages and components:
+
+- go/parser
+- go/scanner
+- go/token
+- go/ast
+- go/strconv (only the portions adapted for parser support)
+
+Original copyright:
+
+Copyright 2009 The Go Authors. All rights reserved.
+
+Additional years and copyright notices present in the upstream test data are
+retained in those files.
+
+Gane adapts this material to Rust and modifies it for the Gane compiler
+architecture. The Go-derived material remains subject to the following
+BSD-style license used by the Go project.
+
+BSD-style license for Go-derived material
+-----------------------------------------
+
+Copyright 2009 The Go Authors.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google LLC nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+This NOTICE file is provided for attribution and license-information
+purposes. It does not modify or replace the terms of any applicable license.

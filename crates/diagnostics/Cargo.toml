@@ -3,6 +3,7 @@ name = "gane_diagnostics"
 edition = "2024"
 version.workspace = true
 authors.workspace = true
+license.workspace = true
 
 [dependencies]
 colored = { workspace = true }

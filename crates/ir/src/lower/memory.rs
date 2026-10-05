@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 //! Lowering helpers for memory-backed values.
 //!
 //! A [`Place`] represents an address and the type stored at that address.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 Hazuki Keatsu
+
 //! Package-level AST-to-IR lowering orchestration.
 //!
 //! This module owns the parts of lowering that require package-wide state:
