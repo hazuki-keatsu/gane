@@ -28,7 +28,7 @@ pub struct IrFunction {
     pub signature: IrSignature,
     /// The additional attributes for the function
     ///
-    /// v0: no_return is false forever
+    /// m0: no_return is false forever
     pub attributes: FunctionAttributes,
     /// The local memory object for the function
     pub stack_slots: Vec<StackSlot>,
@@ -38,7 +38,7 @@ pub struct IrFunction {
     pub blocks: Vec<IrBlock>,
     /// The entry point of the function
     ///
-    /// v0: the entry will be ^1 forever
+    /// m0: the entry will be ^1 forever
     pub entry: BlockId,
 }
 

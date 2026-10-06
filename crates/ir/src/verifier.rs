@@ -86,7 +86,7 @@ impl Verifier<'_> {
     ///
     /// - whether primitive types are canonical
     /// - duplicate definition of primitive types
-    /// - whether Ptr's address space is zero (v0 required)
+    /// - whether Ptr's address space is zero (m0 required)
     /// - whether array's length is zero
     /// - whether the array's max length is more than pointer width
     /// - whether array's element is void
@@ -124,7 +124,7 @@ impl Verifier<'_> {
                     if *address_space != 0 {
                         self.error(
                             format!("type !{}", id.raw()),
-                            "address space must be zero in IR V0",
+                            "address space must be zero in IR m0",
                         );
                     }
                 }
@@ -276,7 +276,7 @@ impl Verifier<'_> {
             return;
         }
         if function.signature.results.len() > 1 {
-            self.error(prefix.clone(), "IR V0 functions have at most one result");
+            self.error(prefix.clone(), "IR m0 functions have at most one result");
         }
         if function.attributes.no_return && !function.signature.results.is_empty() {
             self.error(prefix.clone(), "no_return function cannot declare results");

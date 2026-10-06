@@ -1,14 +1,14 @@
 # Go programming language features supported by Gane
 
-> [!CAUTION] V0 LANGUAGE SUBSET
+> [!CAUTION] M0 LANGUAGE SUBSET
 >
-> Gane V0 implements only a small subset of Go. Parsing a construct does not mean it can be compiled.
+> Gane M0 implements only a small subset of Go. Parsing a construct does not mean it can be compiled.
 
-This document describes the current V0 implementation, from source text to LLVM IR. The parser recognizes more Go syntax than sema accepts, and some expressions that pass sema still fail during IR lowering. Unless stated otherwise, "supported" below means that valid source can pass the entire pipeline. For Go's language rules, see the [Go Programming Language Specification](https://go.dev/ref/spec).
+This document describes the current M0 implementation, from source text to LLVM IR. The parser recognizes more Go syntax than sema accepts, and some expressions that pass sema still fail during IR lowering. Unless stated otherwise, "supported" below means that valid source can pass the entire pipeline. For Go's language rules, see the [Go Programming Language Specification](https://go.dev/ref/spec).
 
-## Target of V0
+## Target of M0
 
-The goal of V0 is a minimal path from a `.go` file to `.ll` LLVM IR, not broad Go compatibility. The current CLI compiles one source file; sema itself can analyze multiple parsed files in one package.
+The goal of M0 is a minimal path from a `.go` file to `.ll` LLVM IR, not broad Go compatibility. The current CLI compiles one source file; sema itself can analyze multiple parsed files in one package.
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ The goal of V0 is a minimal path from a `.go` file to `.ll` LLVM IR, not broad G
 
 ## Lexical Elements
 
-Go 1.27.0 is the normative reference for lexical rules. This section describes Gane's implementation. Scanner/parser support means that source text can be tokenized and represented in the AST; it does not imply that sema or IR V0 accepts the construct.
+Go 1.27.0 is the normative reference for lexical rules. This section describes Gane's implementation. Scanner/parser support means that source text can be tokenized and represented in the AST; it does not imply that sema or IR M0 accepts the construct.
 
 ### Source Code Encoding
 
@@ -124,7 +124,7 @@ To get the difference, you can run [the script](/tests/unicode-diff/compare.sh).
 
 The keywords in Go will be recognized as keyword tokens, but names such as `true` and `false` are identifiers, not keywords, which is the same implementation like Go Compiler.
 
-The keywords will be recognized in Lexer/Parser, and the corresponding Abstract syntax tree node will be generated, but the semantic and intermediate representation will reject some of the keywords in v0. More detailed information will be revealed in the following chapters.
+The keywords will be recognized in Lexer/Parser, and the corresponding Abstract syntax tree node will be generated, but the semantic and intermediate representation will reject some of the keywords in m0. More detailed information will be revealed in the following chapters.
 
 ### Semicolon
 
@@ -153,9 +153,9 @@ The scanner recognizes Go operators and punctuation, but a recognized token does
 
 ### Literal
 
-Literal support is intentionally narrower than the scanner and parser support. The scanner and parser recognize all of Go's basic literal token kinds, but the v0 semantic analyzer and IR lowering only implement integer values.
+Literal support is intentionally narrower than the scanner and parser support. The scanner and parser recognize all of Go's basic literal token kinds, but the m0 semantic analyzer and IR lowering only implement integer values.
 
-| Literal kind       | Scanner/parser | Sema/IR v0                     |
+| Literal kind       | Scanner/parser | Sema/IR m0                     |
 | ------------------ | -------------- | ------------------------------ |
 | Integer            | Supported      | Partially supported; see below |
 | Floating-point     | Supported      | Not supported                  |
@@ -236,7 +236,7 @@ These checks are in `crates/ir/src/lower/types.rs`, in `lower_constant`. Values 
 
 #### Array-length-specific restrictions
 
-Array lengths are more restricted than ordinary integer expressions. In the current v0 implementation, `[N]T` requires `N` to be a directly parseable integer literal in the supported decimal/hexadecimal subset. The following are not supported as array lengths:
+Array lengths are more restricted than ordinary integer expressions. In the current m0 implementation, `[N]T` requires `N` to be a directly parseable integer literal in the supported decimal/hexadecimal subset. The following are not supported as array lengths:
 
 ```go
 const count = 3
@@ -252,13 +252,13 @@ A zero-length array is also rejected by Sema, even though the literal `0` itself
 var values [0]int
 ```
 
-The diagnostic is `zero-length arrays are not supported by IR V0`. Finally, IR lowering requires an array length to fit the target pointer-width unsigned integer; on a 32-bit target, an otherwise valid positive length larger than `u32::MAX` is rejected during lowering.
+The diagnostic is `zero-length arrays are not supported by IR M0`. Finally, IR lowering requires an array length to fit the target pointer-width unsigned integer; on a 32-bit target, an otherwise valid positive length larger than `u32::MAX` is rejected during lowering.
 
 ## Types
 
 ### Basic types
 
-The types below are supported in v0 design:
+The types below are supported in m0 design:
 
 - `int`: Gane keeps `int` as the source-level type. During lowering, its IR representation is `I32` when the target pointer width is 32 bits and `I64` when it is 64 bits. So, `int` ranges from `-2^31..=2^31-1` and `-2^63..=2^63-1`.
 - `bool`: Lowered to IR `I1`, used for boolean values and conditions.
@@ -266,7 +266,7 @@ The types below are supported in v0 design:
 
 > [!WARNING] 
 > 
-> `byte` is not the alias for `uint8`. In v0 design, there is not a source-level type named `uint8`.
+> `byte` is not the alias for `uint8`. In m0 design, there is not a source-level type named `uint8`.
 
 The unsupported ones:
 
@@ -278,7 +278,7 @@ The unsupported ones:
 
 ### Pointers
 
-Supported when `T` is a type supported by the current Gane subset. The pointer width follows the target pointer width. IR V0 uses address space `0`.
+Supported when `T` is a type supported by the current Gane subset. The pointer width follows the target pointer width. IR M0 uses address space `0`.
 
 The support detail:
 
@@ -312,7 +312,7 @@ Supported for non-zero lengths that the current sema/lowering path can represent
 
   func main() {}
   ```
-  Sema reports `E2102` (`zero-length arrays are not supported by IR V0`).
+  Sema reports `E2102` (`zero-length arrays are not supported by IR M0`).
 
 - Array lengths must currently be a directly parseable integer literal. Constant names, arithmetic expressions, and inferred lengths (`[...]T`) are not supported. The helper parses decimal and `0x`/`0X` hexadecimal forms into `u64`; binary/octal prefixes are not handled, and a legacy leading-zero octal literal is currently interpreted as decimal. Thus this is a Gane subset, not Go-correct handling of every integer-literal base.
 
@@ -345,9 +345,9 @@ Non-empty structs with explicitly named fields are supported, provided each fiel
 
 Both anonymous struct types and named defined struct types are supported. Named-type identity is checked by sema; IR lowering uses the underlying representation.
 
-Empty struct type, embedded fields, and field tags are not supported by the current v0. Duplicate field names are rejected.
+Empty struct type, embedded fields, and field tags are not supported by the current m0. Duplicate field names are rejected.
 
-Meanwhile, struct in v0 allow recursion, but only recursive by pointer not value.
+Meanwhile, struct in m0 allow recursion, but only recursive by pointer not value.
 
 ```go
 type Node struct {
@@ -456,9 +456,9 @@ Named-type resolution and underlying-type lookup are implemented in `crates/sema
 
 ### Summary for unsupported types
 
-The parser recognizes many Go type forms, but recognition by the parser does not imply semantic or IR support. The v0 semantic analyzer rejects type forms that do not have a supported type representation and lowering path.
+The parser recognizes many Go type forms, but recognition by the parser does not imply semantic or IR support. The m0 semantic analyzer rejects type forms that do not have a supported type representation and lowering path.
 
-| Type form                                 | Gane v0 status                  | Notes                                                                                                                                                                       |
+| Type form                                 | Gane m0 status                  | Notes                                                                                                                                                                       |
 | ----------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `bool`, `int`, `byte`                     | Supported                       | These are the available source-level basic types.                                                                                                                           |
 | `*T`                                      | Partially supported             | `T` must be supported. Addressing variables, dereference, pointer field access, zero/null pointer values are supported. Pointer equality between pointer expressions is supported, but comparisons with the `nil` literal are currently sema-only; pointer arithmetic and ordering are not.         |
@@ -470,7 +470,7 @@ The parser recognizes many Go type forms, but recognition by the parser does not
 | Maps (`map[K]V`)                          | Not supported                   | Map types and map operations are not implemented.                                                                                                                           |
 | Interfaces (`interface{...}`)             | Not supported                   | Interface types, method sets, assertions, and type switches are not implemented.                                                                                            |
 | Channels (`chan T`)                       | Not supported                   | Channel types and channel operations are not implemented.                                                                                                                   |
-| Function types (`func(...) ...`)          | Not supported as ordinary types | Function declarations may use supported parameter/result signatures, but function types as variables, fields, or named underlying types are not part of the v0 type subset. |
+| Function types (`func(...) ...`)          | Not supported as ordinary types | Function declarations may use supported parameter/result signatures, but function types as variables, fields, or named underlying types are not part of the m0 type subset. |
 | Type parameters and generic instances     | Not supported                   | Type parameter declarations, constraints, and instantiated types are rejected.                                                                                              |
 | `unsafe.Pointer` and other Go basic types | Not supported                   | Only `bool`, `int`, and `byte` are pre-declared source-level basic types.                                                                                                    |
 
@@ -514,7 +514,7 @@ Scope creation is performed by the semantic checker. It will create scopes in fo
 
 The universe scope contains names that are available to every package without an explicit declaration. It is the root scope of the semantic scope tree.
 
-The current V0 implementation declares:
+The current M0 implementation declares:
 
 | Name | Kind | Description |
 |---|---|---|
@@ -527,7 +527,7 @@ The current V0 implementation declares:
 
 The internal `void` type is also created by the type system, but it is not declared as a source-level name in the universe scope.
 
-Most Go pre-declared types and built-in functions are not implemented in V0.
+Most Go pre-declared types and built-in functions are not implemented in M0.
 
 ### Package Scope
 
@@ -535,7 +535,7 @@ The package scope represents the package block of the analyzed package. It is cr
 
 Package scope will be created after package clause check and universe scope creating.
 
-All the top-level declaration will be put at this layer. In v0 design, there will be four types of declarations:
+All the top-level declaration will be put at this layer. In m0 design, there will be four types of declarations:
 
 1. Global variable
 2. Global constant
@@ -579,17 +579,17 @@ A local `var` declaration is represented by a declaration statement in the AST. 
 
 Local variables do not enter Function scope. Function scope is reserved for parameters and named result variables.
 
-But you can not declare a constant in function. Because in v0, local `const` and local `type` declarations are parsed by the parser but are rejected by sema. The checker currently accepts only local `var` declarations. It will report error: `local declaration is not supported by the MVP`. Meanwhile, short variable declaration (`:=`) are also parsed but rejected by sema as an unsupported MVP feature.
+But you can not declare a constant in function. Because in m0, local `const` and local `type` declarations are parsed by the parser but are rejected by sema. The checker currently accepts only local `var` declarations. It will report error: `local declaration is not supported by the MVP`. Meanwhile, short variable declaration (`:=`) are also parsed but rejected by sema as an unsupported MVP feature.
 
 ### Block Scope
 
-Gane creates a `BlockScope` for the function body and every nested block. The checker also uses `ScopeKind::Block` for the implicit scopes of `if` and `for` statements. By the way, there is no `IfScope` or `ForScope` kinds in v0 design.
+Gane creates a `BlockScope` for the function body and every nested block. The checker also uses `ScopeKind::Block` for the implicit scopes of `if` and `for` statements. By the way, there is no `IfScope` or `ForScope` kinds in m0 design.
 
 Local `var` declarations are inserted into the current `BlockScope`. Parameters and named result variables belong to the enclosing `FunctionScope`. Name lookup walks through parent scopes, so an inner declaration may shadow an outer one, while duplicate declarations in the same scope are rejected.
 
 As in Go, a local variable is not visible in its own initializer. That is because the initializer and explicit type are checked before the declaration is inserted.
 
-The following local declarations are parsed but rejected by v0 sema:
+The following local declarations are parsed but rejected by m0 sema:
 
 - local `const` declarations
 - local type declarations
@@ -599,11 +599,11 @@ Block scope are semantic scopes only. During IR lowering, local variables become
 
 ## Expression and Constant
 
-The parser recognizes more Go expression forms than the v0 semantic checker and IR lowering pipeline can support. An expression is part of the Gane v0 language only when it passes semantic checking and can be represented by v0 IR.
+The parser recognizes more Go expression forms than the m0 semantic checker and IR lowering pipeline can support. An expression is part of the Gane m0 language only when it passes semantic checking and can be represented by m0 IR.
 
 ### Supported expression forms
 
-| Expression | Gane v0 status | Notes |
+| Expression | Gane m0 status | Notes |
 | --- | --- | --- |
 | Integer literals | Partially supported | Decimal and hexadecimal forms are supported. See [Literal](#literal) for more information. |
 | `true` and `false` | Supported | They are pre-declared boolean constants, which is the same as Go's implementation. |
@@ -622,7 +622,7 @@ The parser recognizes more Go expression forms than the v0 semantic checker and 
 | Struct field selection | Supported | Direct fields and one-level pointer-indirect fields are supported. Embedded fields, promoted fields, and methods are not supported. |
 | Empty aggregate literals | Partially supported | Explicit empty literals such as `Pair{}` and `[2]int{}` are supported as zero aggregate values. Non-empty and keyed literals are not supported. |
 
-The following expression forms are not supported by the v0 semantic or IR pipeline:
+The following expression forms are not supported by the m0 semantic or IR pipeline:
 
 - floating-point, imaginary, rune, and string expressions;
 - bitwise and shift operators;
@@ -650,24 +650,24 @@ Gane's semantic checker records more than the type of an expression. It also rec
 
 The code implementation about this is located at [`TypeAndValue`](/crates/sema/src/types.rs).
 
-Gane v0 uses exact type identity for assignment and operator checking. It does not implement Go's full implicit conversion and assignability rules. In particular, integer literals have semantic type `int`, rather than an untyped integer constant. Therefore, the following assignment is currently rejected:
+Gane m0 uses exact type identity for assignment and operator checking. It does not implement Go's full implicit conversion and assignability rules. In particular, integer literals have semantic type `int`, rather than an untyped integer constant. Therefore, the following assignment is currently rejected:
 
 ```go
 var value byte = 1
 ```
 
-`byte` is also a distinct Gane source type in v0; it is not treated as an alias for another source-level integer type.
+`byte` is also a distinct Gane source type in m0; it is not treated as an alias for another source-level integer type.
 
 ### Constants and constant expressions
 
-Gane v0 implements a smaller and more concrete constant model than Go. Only package-level constant declarations are supported. Local `const` declarations are parsed but rejected by semantic analysis.
+Gane m0 implements a smaller and more concrete constant model than Go. Only package-level constant declarations are supported. Local `const` declarations are parsed but rejected by semantic analysis.
 
 The supported constant value kinds are:
 
 - boolean constants;
 - integer constants.
 
-String, rune, floating-point, imaginary, and complex constants are not supported. Gane v0 also does not implement `iota`.
+String, rune, floating-point, imaginary, and complex constants are not supported. Gane m0 also does not implement `iota`.
 
 A constant may refer to another package-level constant, including a constant declared later in the source file:
 
@@ -685,9 +685,9 @@ The semantic checker folds supported constant expressions when all operands have
 - equality comparisons between known constants;
 - boolean `&&` and `||`.
 
-Constant folding is narrower than expression checking. For example, boolean negation is a valid runtime expression, but it is not currently folded into a `ConstValue`. Bitwise operators, shifts, calls, indexing, field selection, and other runtime-dependent expressions are not constant expressions in v0.
+Constant folding is narrower than expression checking. For example, boolean negation is a valid runtime expression, but it is not currently folded into a `ConstValue`. Bitwise operators, shifts, calls, indexing, field selection, and other runtime-dependent expressions are not constant expressions in m0.
 
-A folded constant is not automatically accepted in every Go constant context. Array lengths are a current example: Gane v0 requires an array length to be a directly parseable integer literal. Consequently, both of the following forms are rejected as array lengths, even though Go accepts them:
+A folded constant is not automatically accepted in every Go constant context. Array lengths are a current example: Gane m0 requires an array length to be a directly parseable integer literal. Consequently, both of the following forms are rejected as array lengths, even though Go accepts them:
 
 ```go
 var values [1 + 2]int
@@ -698,7 +698,7 @@ var other [count]int
 
 See [Array-length-specific restrictions](#array-length-specific-restrictions) for the current array rules. See [Checker.rs `fn fold_*`](/crates/sema/src/checker.rs) for more detailed implementations about folding. 
 
-For global variables, v0 accepts only initializers that can be represented as a scalar constant, a null pointer, or a zero initializer. A runtime expression such as a function call or an address computation cannot be used as a global initializer.
+For global variables, m0 accepts only initializers that can be represented as a scalar constant, a null pointer, or a zero initializer. A runtime expression such as a function call or an address computation cannot be used as a global initializer.
 
 ### The `nil` comparison limitation
 
@@ -719,7 +719,7 @@ Pointer equality between two ordinary pointer expressions, such as `left == righ
 
 ### Runtime behavior
 
-Several expressions require runtime checks in the v0 IR:
+Several expressions require runtime checks in the m0 IR:
 
 - `&&` and `||` preserve short-circuit evaluation;
 - division and remainder check for division by zero;
@@ -730,11 +730,11 @@ These checks are represented in the IR as guarded operations or traps rather tha
 
 ## Statement and Control Flow
 
-Gane v0 parses the Go statement syntax broadly, but accepts only the subset that can be represented by the current semantic checker and IR. A parsed statement is not necessarily part of the executable Gane v0 language.
+Gane m0 parses the Go statement syntax broadly, but accepts only the subset that can be represented by the current semantic checker and IR. A parsed statement is not necessarily part of the executable Gane m0 language.
 
-Gane v0 supports block statements, local var declarations, simple assignment, self-increment and self-decrement, if, conditional and infinite for loops, unlabeled break and continue, direct calls with no result, and return with zero or one scalar result. Function signatures can name result variables, but a function with a result still requires an explicit return expression. Bare `return` is not currently accepted.
+Gane m0 supports block statements, local var declarations, simple assignment, self-increment and self-decrement, if, conditional and infinite for loops, unlabeled break and continue, direct calls with no result, and return with zero or one scalar result. Function signatures can name result variables, but a function with a result still requires an explicit return expression. Bare `return` is not currently accepted.
 
-| Go construct | Gane v0 difference |
+| Go construct | Gane m0 difference |
 | ------------ | ------------------ |
 | Local declarations | Only local var declarations are accepted. Local constants, local type declarations, and short declarations are rejected. |
 | Assignment | Only ordinary (`=`) assignment is supported. Compound assignments (`+=` etc.) are rejected. Blank assignment (`_ = expression`) discards the result but still checks and evaluates the expression. A no-value expression cannot be assigned to `_`. |
@@ -742,7 +742,7 @@ Gane v0 supports block statements, local var declarations, simple assignment, se
 | `if` | The condition must have the type `bool`. Go-style initializer statements in `if` are parsed but rejected. |
 | `for` | Only `for condition { ... }` and `for { ... }` are supported. Three-clause loops and range loops are rejected. |
 | Branches | Only unlabeled break and continue inside a `for` loop are supported. `goto`, `label`s, `fallthrough`, and labeled branches are rejected. |
-| Selection and concurrency | `switch`, type switch, `select`, channel send, `go`, and `defer` are parsed but rejected. Gane v0 therefore has no Go concurrency or deferred-call semantics. |
+| Selection and concurrency | `switch`, type switch, `select`, channel send, `go`, and `defer` are parsed but rejected. Gane m0 therefore has no Go concurrency or deferred-call semantics. |
 
 ### Expression Statements
 
@@ -808,7 +808,7 @@ The implementation currently doesn't fully support builtin mechanism.
 
 ### Scope and control-flow semantics
 
-As in Go, each block introduces a lexical scope and inner declarations may shadow outer declarations. A local variable is not visible in its own initializer. Gane additionally creates semantic block scopes for `if` and `for` statements, but these scopes do not imply a separate runtime stack lifetime: local variables in `if` and `for` scopes will be lowered to function-level stack slots in v0.
+As in Go, each block introduces a lexical scope and inner declarations may shadow outer declarations. A local variable is not visible in its own initializer. Gane additionally creates semantic block scopes for `if` and `for` statements, but these scopes do not imply a separate runtime stack lifetime: local variables in `if` and `for` scopes will be lowered to function-level stack slots in m0.
 
 The checker validates boolean loop and conditional guards, valid branch placement, return arity, and exact result-type compatibility before IR lowering. It also records whether a statement guarantees termination. In particular, an unconditional `for` without a reachable break is treated as non-`fallthrough`.
 
@@ -816,11 +816,11 @@ Lowering preserves source-order side effects. Conditions and short-circuit boole
 
 ## Pre-declaration and Built-in Functions
 
-Gane v0 creates a universe scope containing a minimal set of pre-declared names: `bool`, `int`, `byte`, `true`, `false`, and `nil`. The internal `void` type is used to represent functions without results, but is not exposed as a source-level name. This is substantially smaller than Go's universe scope.
+Gane m0 creates a universe scope containing a minimal set of pre-declared names: `bool`, `int`, `byte`, `true`, `false`, and `nil`. The internal `void` type is used to represent functions without results, but is not exposed as a source-level name. This is substantially smaller than Go's universe scope.
 
 Pre-declared names are resolved before package declarations and can be shadowed by declarations in nested scopes. `nil` is modeled as a special value rather than as an ordinary pointer type, and therefore cannot be used to infer a variable's type.
 
-Gane v0 does not yet implement Go built-in functions such as `len`, `make`, `new`, `append`, or `panic`. Their syntax may be parsed, but calls are rejected by the semantic checker or IR lowering. The builtin object category is reserved for future language extensions and does not currently provide callable builtin values.
+Gane m0 does not yet implement Go built-in functions such as `len`, `make`, `new`, `append`, or `panic`. Their syntax may be parsed, but calls are rejected by the semantic checker or IR lowering. The builtin object category is reserved for future language extensions and does not currently provide callable builtin values.
 
 ## Package and Initialization
 
@@ -830,7 +830,7 @@ Package-level names can refer to later declarations, subject to initialization-c
 
 ## Runtime and Backend Practice
 
-Gane v0 does not provide Go runtime compatibility. It has no garbage collector, goroutines, channels, maps, reflection, or standard-library runtime. The executable model is intentionally small: programs use statically known types, function calls, stack slots, globals, and explicit memory operations.
+Gane m0 does not provide Go runtime compatibility. It has no garbage collector, goroutines, channels, maps, reflection, or standard-library runtime. The executable model is intentionally small: programs use statically known types, function calls, stack slots, globals, and explicit memory operations.
 
 The compilation pipeline is:
 
@@ -854,10 +854,10 @@ Operations that may be invalid at runtime are represented with explicit checks r
 - array bounds violations
 - division or remainder by zero
 - invalid integer division cases
-- invalid shift counts in IR (source-level shift operators are not supported in V0)
-- dangling stack-pointer access in the interpreter (Only used for test, static escape detection was given up in v0)
+- invalid shift counts in IR (source-level shift operators are not supported in M0)
+- dangling stack-pointer access in the interpreter (Only used for test, static escape detection was given up in m0)
 
-A failed check produces a Gane trap. Traps terminate the current execution. V0 does not provide recovery, deferred cleanup, or Go-style panic handling.
+A failed check produces a Gane trap. Traps terminate the current execution. M0 does not provide recovery, deferred cleanup, or Go-style panic handling.
 
 The interpreter uses structured values and memory objects, so it does not need to reproduce the physical layout of a target machine. It nevertheless follows the same IR-level behavior as the LLVM backend, including zero initialization, evaluation order, memory effects, and traps.
 
@@ -867,4 +867,4 @@ The LLVM backend lowers only verified IR. It obtains target-dependent facts such
 
 Gane source types are represented by their underlying IR representation. For example, a source-level named integer type keeps its semantic identity during type checking but uses an integer representation in IR. Local variables are lowered to stack slots, and control-flow constructs are lowered to explicit LLVM basic blocks and branches.
 
-The backend currently targets LLVM IR generation rather than full Go-compatible execution. It emits a hosted main wrapper and internal trap support, but Gane v0 does not yet provide a Go runtime, automatic linking, or a complete standard library. Interpreter and LLVM execution are tested against the same verified IR so that normal results and trap behavior remain consistent.
+The backend currently targets LLVM IR generation rather than full Go-compatible execution. It emits a hosted main wrapper and internal trap support, but Gane m0 does not yet provide a Go runtime, automatic linking, or a complete standard library. Interpreter and LLVM execution are tested against the same verified IR so that normal results and trap behavior remain consistent.

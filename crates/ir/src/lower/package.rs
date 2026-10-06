@@ -10,13 +10,13 @@
 //!
 //! The lowering flow is:
 //!
-//! 1. Require a package-level `main` function. (v0 required)
+//! 1. Require a package-level `main` function. (m0 required)
 //! 2. Visit all input files. Constants are already folded by sema and have no
 //!    runtime declaration here; named types are lowered lazily by
 //!    [`lower_type()`]; global variables are converted to IR globals; and every
 //!    function is declared with its lowered signature.
 //! 3. Mark the IR function corresponding to `main` as the package entry.
-//! 4. Require the V0 `main()` signature: no parameters and no results.
+//! 4. Require the m0 `main()` signature: no parameters and no results.
 //! 5. Lower every function body using `FunctionLowerer`, after all function
 //!    declarations are known so calls can refer to functions declared later in
 //!    the source package.
@@ -133,7 +133,7 @@ impl<'a> PackageLowerer<'a> {
 
     /// Converts a sema function object into an IR signature.
     ///
-    /// V0 accepts only non-method, non-variadic functions with scalar
+    /// m0 accepts only non-method, non-variadic functions with scalar
     /// parameters/results and at most one result. The function body is not
     /// touched here.
     fn function_signature(

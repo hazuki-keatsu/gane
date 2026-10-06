@@ -7,7 +7,7 @@
 Gane is an **experimental Go-like compiler written in Rust**. It takes a small subset of Go through parsing, semantic analysis, and IR verification, then lowers it to LLVM IR. The project also includes an interpreter for Gane IR, which helps validate the behavior of the compilation pipeline.
 
 > [!IMPORTANT]
-> Gane is **not a replacement for the Go compiler**. The current development driver handles one source file at a time and does not support imports, the standard library, or automatic executable linking. A construct being parseable does not mean that it can be compiled. See the [language support document](docs/v0/language-support.md) before trying larger Go programs.
+> Gane is **not a replacement for the Go compiler**. The current development driver handles one source file at a time and does not support imports, the standard library, or automatic executable linking. A construct being parseable does not mean that it can be compiled. See the [language support document](docs/m0/language-support.md) before trying larger Go programs.
 
 ## What it can do
 
@@ -110,7 +110,7 @@ On other systems, install a matching LLVM 22.1.x distribution and set `LLVM_SYS_
   ```
 - **Not supported**: multi-file CLI compilation, imports, strings, floating-point values, slices, maps, interfaces, methods, goroutines, channels, the Go standard library, garbage collection, automatic linking and so on.
 
-See the [M0 language support document](docs/v0/language-support.md) for more information.
+See the [M0 language support document](docs/m0/language-support.md) for more information.
 
 ## Repository structure
 

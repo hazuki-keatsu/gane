@@ -62,7 +62,7 @@ pub enum LowerError {
     /// the length of array is not positive integer,
     /// in the 32-bit target, the length of array exceeds the max value of u32,
     /// constant type does not match the target type,
-    /// there is any constant type not being supported by v0,
+    /// there is any constant type not being supported by m0,
     /// and so on.
     InvalidConstant { node: AstNodeId },
     /// When lowerer try to build an IR by calling `IrBuilder` but builder rejects the request,

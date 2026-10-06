@@ -49,7 +49,7 @@ impl FunctionLowerer<'_, '_> {
 
     /// Loads a scalar value from a place.
     ///
-    /// Aggregate values are intentionally rejected because V0 represents them
+    /// Aggregate values are intentionally rejected because m0 represents them
     /// in memory rather than as ordinary SSA values.
     pub(super) fn load(&mut self, node: AstNodeId, place: Place) -> Result<ValueId, LowerError> {
         if self.is_aggregate(place.typ) {

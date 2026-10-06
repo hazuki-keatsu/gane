@@ -4,7 +4,7 @@ Thank you for your interest in Gane.
 
 This project is still in its early stages, so before you plan to make any kind of contribution, please express your ideas in the issue first. This will reduce the risk of being rejected.
 
-This is an experimental Go-like compiler, not a complete Go implementation. Before proposing language support, read the [README](../README.md) and the [M0 language support document](../docs/v0/language-support.md): syntax accepted by the parser may still be rejected by semantic analysis or IR lowering.
+This is an experimental Go-like compiler, not a complete Go implementation. Before proposing language support, read the [README](../README.md) and the [M0 language support document](../docs/m0/language-support.md): syntax accepted by the parser may still be rejected by semantic analysis or IR lowering.
 
 ## Before you start
 

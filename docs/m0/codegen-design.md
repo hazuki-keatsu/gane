@@ -3,7 +3,7 @@ version: v1.2
 date: 2026-09-17
 author: hazuki-keatsu
 tag: codegen
-state: v0
+state: m0
 ---
 
 # Gane LLVM Codegen 设计
@@ -155,7 +155,7 @@ lower.rs      Verified IR -> LLVM Module
 - Gane globals 和 functions 使用 internal linkage；
 - `GlobalInitializer::Zero` 使用目标类型的 LLVM typed zero；
 - scalar initializer 根据目标类型生成 integer、bool 或 null pointer constant；
-- V0 中 `IrGlobal::mutable` 没有经 verifier 保证的不可写语义；所有 Gane global 都生成 LLVM `global`，不得生成 LLVM `constant`；
+- m0 中 `IrGlobal::mutable` 没有经 verifier 保证的不可写语义；所有 Gane global 都生成 LLVM `global`，不得生成 LLVM `constant`；
 - 函数只接受 verifier 已保证的 scalar 参数和零或一个 scalar result；
 - `FunctionAttributes::no_return` 映射为 LLVM `noreturn` attribute；
 - call 只能指向当前 package 内预声明的函数。
@@ -227,9 +227,9 @@ synthetic prologue 是 LLVM function 的物理 entry block；它只做 allocas�
 
 ## 9. LLVM safety legalization、trap 与 total semantics
 
-LLVM 的部分 instruction 对合法 Gane IR 输入会产生 UB 或 poison。codegen 必须在危险 instruction 本身实现 IR 的 total semantics，不能依赖 canonical frontend 已经生成 guard，也不能只依赖 LLVM verifier。所有 guard 都先 branch 到 continuation 或 trap block；可能 poison 的 value 不得流入 branch condition、load/store pointer、call argument/callee、return 或 GEP index。V0 不做值域分析、支配性 guard 识别或 guard elimination：即使 canonical lowering 已经有检查，backend 仍为每个危险 IR instruction 发出本地防御检查；重复 guard 是有意的正确性优先策略。
+LLVM 的部分 instruction 对合法 Gane IR 输入会产生 UB 或 poison。codegen 必须在危险 instruction 本身实现 IR 的 total semantics，不能依赖 canonical frontend 已经生成 guard，也不能只依赖 LLVM verifier。所有 guard 都先 branch 到 continuation 或 trap block；可能 poison 的 value 不得流入 branch condition、load/store pointer、call argument/callee、return 或 GEP index。m0 不做值域分析、支配性 guard 识别或 guard elimination：即使 canonical lowering 已经有检查，backend 仍为每个危险 IR instruction 发出本地防御检查；重复 guard 是有意的正确性优先策略。
 
-| LLVM 危险点 | V0 codegen 规则 |
+| LLVM 危险点 | m0 codegen 规则 |
 |---|---|
 | `add/sub/mul/shl` 的 `nsw`/`nuw` | 一律不添加 flag，保持 modulo bit-width 语义 |
 | `sdiv/srem` 的零除或 `MIN / -1` | 先 guard 零除；用安全 divisor 和 `select` 避免 LLVM overflow operand |
@@ -261,7 +261,7 @@ declare void @llvm.trap()
 declare void @llvm.memmove.p0.p0.iPTR(ptr, ptr, iPTR, i1)
 ```
 
-其中 `iPTR` 是 target pointer width 的 `i32` 或 `i64`。在 body lowering 前创建 `__gane_trap` 保证 guard 可直接 call；最终 module 中它是调用 `llvm.trap` 后 `unreachable` 的 definition，而非单独的 internal declaration。V0 只产生 address space 0，因此 memmove 名称固定为 `p0.p0`；未来扩展地址空间时必须按 intrinsic overload 规则另行设计。
+其中 `iPTR` 是 target pointer width 的 `i32` 或 `i64`。在 body lowering 前创建 `__gane_trap` 保证 guard 可直接 call；最终 module 中它是调用 `llvm.trap` 后 `unreachable` 的 definition，而非单独的 internal declaration。m0 只产生 address space 0，因此 memmove 名称固定为 `p0.p0`；未来扩展地址空间时必须按 intrinsic overload 规则另行设计。
 
 ### 9.1 Division 与 remainder
 
