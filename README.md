@@ -139,6 +139,10 @@ cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
+## Want to Contribute
+
+See [CONTRIBUTING](/.github/CONTRIBUTING.md) for more information.
+
 ## License
 
 Gane's original code is licensed under the [Apache License, Version 2.0](LICENSE).

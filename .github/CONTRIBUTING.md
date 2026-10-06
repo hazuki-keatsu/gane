@@ -6,11 +6,33 @@ This project is still in its early stages, so before you plan to make any kind o
 
 This is an experimental Go-like compiler, not a complete Go implementation. Before proposing language support, read the [README](../README.md) and the [M0 language support document](../docs/m0/language-support.md): syntax accepted by the parser may still be rejected by semantic analysis or IR lowering.
 
+## What contribution I Look Forwards to
+
+The following contributions are especially welcome:
+
+- **Documentation revisions:** improve explanations, fix inaccuracies, or add build and development instructions for platforms that are not currently covered. At present, the repository does not provide complete build documentation for every supported development platform.
+- **Bug reports:** report reproducible failures with a minimal `.go` example, the command you ran, expected and actual behavior, diagnostics, and your Rust/LLVM versions and operating system when relevant. Say whether the failure occurs in parsing, semantic analysis, IR lowering/verification, interpretation, or code generation.
+- **Feature requests:** propose focused improvements or new language/compiler capabilities. For larger changes, open an issue first so that scope and design can be discussed before implementation.
+
 ## Before you start
 
-- For bugs, open an issue with a minimal `.go` reproducer, the command you ran, expected and actual behavior, diagnostics, and your Rust/LLVM versions and operating system when relevant. Say whether the failure occurs in parsing, semantic analysis, IR lowering/verification, interpretation, or code generation.
-- For larger changes or new language features, open an issue first to discuss scope and design.
+- **For any code change, first fork the repository from the `dev` branch.** Create your working branch from `dev` in your fork; do not base implementation work on `main` or submit changes directly to the upstream repository.
+- **All pull requests must target the upstream `dev` branch.** Pull requests opened against `main` may be redirected or closed so that the development history remains on `dev`.
+- Documentation revisions, bug reports, and feature requests are welcome even when you are not proposing a code change. For implementation work, open or reference an issue first when the change is substantial.
 - Consult the relevant design notes in [`docs/`](../docs/) before changing a compiler layer. Keep proposals within the current subset unless the scope has been agreed on.
+
+A typical code-contribution workflow is:
+
+```sh
+# Fork Gane to your github account at first, and then...
+git clone https://github.com/<your-account>/gane.git
+cd gane
+git remote add upstream https://github.com/hazuki-keatsu/gane.git
+git fetch upstream dev
+git switch -c <your-branch> upstream/dev
+```
+
+Make changes on `<your-branch>` in your fork, keep the branch focused, and push it to your fork. When the work is ready, open a pull request from your fork's branch to the upstream `dev` branch.
 
 ## Set up and test
 
@@ -50,5 +72,7 @@ During development, use focused tests such as `cargo test -p gane_sema`; run the
 Gane's original code is licensed under [Apache-2.0](../LICENSE). The parser crate contains adaptations of Go standard library code under Go's BSD-style license; see the [NOTICE](../NOTICE) for attribution and the full license text. Only submit material you have the right to contribute under the applicable license. Preserve existing copyright and license headers, and identify any new third-party source or test fixtures in your pull request so their attribution can be reviewed. Do not relabel Go-derived code as Apache-only.
 
 ## Pull requests
+
+Open pull requests **from a branch in your fork to the upstream `dev` branch**. Do not target `main`, and do not submit changes directly against the upstream repository.
 
 Keep pull requests narrow and explain the affected compiler layer, user-visible behavior and diagnostic changes, and tests run. Link relevant issues and include a minimal before/after example when useful. If you cannot run a platform or LLVM-dependent check, mention that explicitly. Use descriptive commit subjects; the repository uses Conventional Commit-style subjects such as `fix(parser): ...` and `feat(sema): ...`.
